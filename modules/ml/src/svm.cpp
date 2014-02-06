@@ -40,6 +40,9 @@
 
 #include "precomp.hpp"
 
+#include <stdarg.h>
+#include <ctype.h>
+
 /****************************************************************************************\
                                 COPYRIGHT NOTICE
                                 ----------------
@@ -81,304 +84,294 @@
     SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 \****************************************************************************************/
 
-using namespace cv;
+namespace cv { namespace ml {
 
 #define CV_SVM_MIN_CACHE_SIZE  (40 << 20)  /* 40Mb */
 
-#include <stdarg.h>
-#include <ctype.h>
-
-#if 1
 typedef float Qfloat;
 #define QFLOAT_TYPE CV_32F
-#else
-typedef double Qfloat;
-#define QFLOAT_TYPE CV_64F
-#endif
 
 // Param Grid
-bool CvParamGrid::check() const
+static void checkParamGrid(const ParamGrid& pg)
 {
-    bool ok = false;
-
-    CV_FUNCNAME( "CvParamGrid::check" );
-    __BEGIN__;
-
-    if( min_val > max_val )
-        CV_ERROR( CV_StsBadArg, "Lower bound of the grid must be less then the upper one" );
-    if( min_val < DBL_EPSILON )
-        CV_ERROR( CV_StsBadArg, "Lower bound of the grid must be positive" );
-    if( step < 1. + FLT_EPSILON )
-        CV_ERROR( CV_StsBadArg, "Grid step must greater then 1" );
-
-    ok = true;
-
-    __END__;
-
-    return ok;
-}
-
-CvParamGrid CvSVM::get_default_grid( int param_id )
-{
-    CvParamGrid grid;
-    if( param_id == CvSVM::C )
-    {
-        grid.min_val = 0.1;
-        grid.max_val = 500;
-        grid.step = 5; // total iterations = 5
-    }
-    else if( param_id == CvSVM::GAMMA )
-    {
-        grid.min_val = 1e-5;
-        grid.max_val = 0.6;
-        grid.step = 15; // total iterations = 4
-    }
-    else if( param_id == CvSVM::P )
-    {
-        grid.min_val = 0.01;
-        grid.max_val = 100;
-        grid.step = 7; // total iterations = 4
-    }
-    else if( param_id == CvSVM::NU )
-    {
-        grid.min_val = 0.01;
-        grid.max_val = 0.2;
-        grid.step = 3; // total iterations = 3
-    }
-    else if( param_id == CvSVM::COEF )
-    {
-        grid.min_val = 0.1;
-        grid.max_val = 300;
-        grid.step = 14; // total iterations = 3
-    }
-    else if( param_id == CvSVM::DEGREE )
-    {
-        grid.min_val = 0.01;
-        grid.max_val = 4;
-        grid.step = 7; // total iterations = 3
-    }
-    else
-        cvError( CV_StsBadArg, "CvSVM::get_default_grid", "Invalid type of parameter "
-            "(use one of CvSVM::C, CvSVM::GAMMA et al.)", __FILE__, __LINE__ );
-    return grid;
+    if( pg.minVal > pg.maxVal )
+        CV_Error( CV_StsBadArg, "Lower bound of the grid must be less then the upper one" );
+    if( pg.minVal < DBL_EPSILON )
+        CV_Error( CV_StsBadArg, "Lower bound of the grid must be positive" );
+    if( pg.logStep < 1. + FLT_EPSILON )
+        CV_Error( CV_StsBadArg, "Grid step must greater then 1" );
 }
 
 // SVM training parameters
-CvSVMParams::CvSVMParams() :
-    svm_type(CvSVM::C_SVC), kernel_type(CvSVM::RBF), degree(0),
-    gamma(1), coef0(0), C(1), nu(0), p(0), class_weights(0)
+SVM::Params::Params()
 {
-    term_crit = cvTermCriteria( CV_TERMCRIT_ITER+CV_TERMCRIT_EPS, 1000, FLT_EPSILON );
+    svmType = SVM::C_SVC;
+    kernelType = SVM::RBF;
+    degree = 0;
+    gamma = 1;
+    coef0 = 0;
+    C = 1;
+    nu = 0;
+    p = 0;
+    termCrit = TermCriteria( CV_TERMCRIT_ITER+CV_TERMCRIT_EPS, 1000, FLT_EPSILON );
 }
 
 
-CvSVMParams::CvSVMParams( int _svm_type, int _kernel_type,
-    double _degree, double _gamma, double _coef0,
-    double _Con, double _nu, double _p,
-    CvMat* _class_weights, CvTermCriteria _term_crit ) :
-    svm_type(_svm_type), kernel_type(_kernel_type),
-    degree(_degree), gamma(_gamma), coef0(_coef0),
-    C(_Con), nu(_nu), p(_p), class_weights(_class_weights), term_crit(_term_crit)
+SVM::Params::Params( int _svmType, int _kernelType,
+                     double _degree, double _gamma, double _coef0,
+                     double _Con, double _nu, double _p,
+                     const Mat& _classWeights, TermCriteria _termCrit )
 {
+    svmType = _svmType;
+    kernelType = _kernelType;
+    degree = _degree;
+    gamma = _gamma;
+    coef0 = _coef0;
+    C = _Con;
+    nu = _nu;
+    p = _p;
+    classWeights = _classWeights;
+    termCrit = _termCrit;
 }
 
 
 /////////////////////////////////////// SVM kernel ///////////////////////////////////////
-
-CvSVMKernel::CvSVMKernel()
+class SVMKernelImpl : public SVM::Kernel
 {
-    clear();
-}
-
-
-void CvSVMKernel::clear()
-{
-    params = 0;
-    calc_func = 0;
-}
-
-
-CvSVMKernel::~CvSVMKernel()
-{
-}
-
-
-CvSVMKernel::CvSVMKernel( const CvSVMParams* _params, Calc _calc_func )
-{
-    clear();
-    create( _params, _calc_func );
-}
-
-
-bool CvSVMKernel::create( const CvSVMParams* _params, Calc _calc_func )
-{
-    clear();
-    params = _params;
-    calc_func = _calc_func;
-
-    if( !calc_func )
-        calc_func = params->kernel_type == CvSVM::RBF ? &CvSVMKernel::calc_rbf :
-                    params->kernel_type == CvSVM::POLY ? &CvSVMKernel::calc_poly :
-                    params->kernel_type == CvSVM::SIGMOID ? &CvSVMKernel::calc_sigmoid :
-                    params->kernel_type == CvSVM::CHI2 ? &CvSVMKernel::calc_chi2 :
-                    params->kernel_type == CvSVM::INTER ? &CvSVMKernel::calc_intersec :
-                    &CvSVMKernel::calc_linear;
-
-    return true;
-}
-
-
-void CvSVMKernel::calc_non_rbf_base( int vcount, int var_count, const float** vecs,
-                                     const float* another, Qfloat* results,
-                                     double alpha, double beta )
-{
-    int j, k;
-    for( j = 0; j < vcount; j++ )
+public:
+    SVMKernelImpl()
     {
-        const float* sample = vecs[j];
-        double s = 0;
-        for( k = 0; k <= var_count - 4; k += 4 )
-            s += sample[k]*another[k] + sample[k+1]*another[k+1] +
-                 sample[k+2]*another[k+2] + sample[k+3]*another[k+3];
-        for( ; k < var_count; k++ )
-            s += sample[k]*another[k];
-        results[j] = (Qfloat)(s*alpha + beta);
     }
-}
 
-
-void CvSVMKernel::calc_linear( int vcount, int var_count, const float** vecs,
-                               const float* another, Qfloat* results )
-{
-    calc_non_rbf_base( vcount, var_count, vecs, another, results, 1, 0 );
-}
-
-
-void CvSVMKernel::calc_poly( int vcount, int var_count, const float** vecs,
-                             const float* another, Qfloat* results )
-{
-    CvMat R = cvMat( 1, vcount, QFLOAT_TYPE, results );
-    calc_non_rbf_base( vcount, var_count, vecs, another, results, params->gamma, params->coef0 );
-    if( vcount > 0 )
-        cvPow( &R, &R, params->degree );
-}
-
-
-void CvSVMKernel::calc_sigmoid( int vcount, int var_count, const float** vecs,
-                                const float* another, Qfloat* results )
-{
-    int j;
-    calc_non_rbf_base( vcount, var_count, vecs, another, results,
-                       -2*params->gamma, -2*params->coef0 );
-    // TODO: speedup this
-    for( j = 0; j < vcount; j++ )
+    SVMKernelImpl( const SVM::Params& _params )
     {
-        Qfloat t = results[j];
-        double e = exp(-fabs(t));
-        if( t > 0 )
-            results[j] = (Qfloat)((1. - e)/(1. + e));
-        else
-            results[j] = (Qfloat)((e - 1.)/(e + 1.));
+        params = _params;
     }
-}
 
-
-void CvSVMKernel::calc_rbf( int vcount, int var_count, const float** vecs,
-                            const float* another, Qfloat* results )
-{
-    CvMat R = cvMat( 1, vcount, QFLOAT_TYPE, results );
-    double gamma = -params->gamma;
-    int j, k;
-
-    for( j = 0; j < vcount; j++ )
+    virtual ~SVMKernelImpl()
     {
-        const float* sample = vecs[j];
-        double s = 0;
+    }
 
-        for( k = 0; k <= var_count - 4; k += 4 )
+    void calc_non_rbf_base( int vcount, int var_count, const float** vecs,
+                            const float* another, Qfloat* results,
+                            double alpha, double beta )
+    {
+        int j, k;
+        for( j = 0; j < vcount; j++ )
         {
-            double t0 = sample[k] - another[k];
-            double t1 = sample[k+1] - another[k+1];
-
-            s += t0*t0 + t1*t1;
-
-            t0 = sample[k+2] - another[k+2];
-            t1 = sample[k+3] - another[k+3];
-
-            s += t0*t0 + t1*t1;
-        }
-
-        for( ; k < var_count; k++ )
-        {
-            double t0 = sample[k] - another[k];
-            s += t0*t0;
-        }
-        results[j] = (Qfloat)(s*gamma);
-    }
-
-    if( vcount > 0 )
-        cvExp( &R, &R );
-}
-
-/// Histogram intersection kernel
-void CvSVMKernel::calc_intersec( int vcount, int var_count, const float** vecs,
-                            const float* another, Qfloat* results )
-{
-    int j, k;
-    for( j = 0; j < vcount; j++ )
-    {
-        const float* sample = vecs[j];
-        double s = 0;
-        for( k = 0; k <= var_count - 4; k += 4 )
-            s += std::min(sample[k],another[k]) + std::min(sample[k+1],another[k+1]) +
-                 std::min(sample[k+2],another[k+2]) + std::min(sample[k+3],another[k+3]);
-        for( ; k < var_count; k++ )
-            s += std::min(sample[k],another[k]);
-        results[j] = (Qfloat)(s);
-    }
-}
-
-/// Exponential chi2 kernel
-void CvSVMKernel::calc_chi2( int vcount, int var_count, const float** vecs,
-                            const float* another, Qfloat* results )
-{
-    CvMat R = cvMat( 1, vcount, QFLOAT_TYPE, results );
-    double gamma = -params->gamma;
-    int j, k;
-    for( j = 0; j < vcount; j++ )
-    {
-        const float* sample = vecs[j];
-        double chi2 = 0;
-        for(k = 0 ; k < var_count; k++ )
-    {
-            double d = sample[k]-another[k];
-        double devisor = sample[k]+another[k];
-        /// if devisor == 0, the Chi2 distance would be zero, but calculation would rise an error because of deviding by zero
-        if (devisor != 0)
-        {
-          chi2 += d*d/devisor;
+            const float* sample = vecs[j];
+            double s = 0;
+            for( k = 0; k <= var_count - 4; k += 4 )
+                s += sample[k]*another[k] + sample[k+1]*another[k+1] +
+                sample[k+2]*another[k+2] + sample[k+3]*another[k+3];
+            for( ; k < var_count; k++ )
+                s += sample[k]*another[k];
+            results[j] = (Qfloat)(s*alpha + beta);
         }
     }
-        results[j] = (Qfloat) (gamma*chi2);
+
+    void calc_linear( int vcount, int var_count, const float** vecs,
+                      const float* another, Qfloat* results )
+    {
+        calc_non_rbf_base( vcount, var_count, vecs, another, results, 1, 0 );
     }
-    if( vcount > 0 )
-      cvExp( &R, &R );
+
+    void calc_poly( int vcount, int var_count, const float** vecs,
+                    const float* another, Qfloat* results )
+    {
+        Mat R( 1, vcount, QFLOAT_TYPE, results );
+        calc_non_rbf_base( vcount, var_count, vecs, another, results, params.gamma, params.coef0 );
+        if( vcount > 0 )
+            cv::pow( R, params.degree, R );
+    }
+
+    void calc_sigmoid( int vcount, int var_count, const float** vecs,
+                       const float* another, Qfloat* results )
+    {
+        int j;
+        calc_non_rbf_base( vcount, var_count, vecs, another, results,
+                          -2*params.gamma, -2*params.coef0 );
+        // TODO: speedup this
+        for( j = 0; j < vcount; j++ )
+        {
+            Qfloat t = results[j];
+            double e = exp(-fabs(t));
+            if( t > 0 )
+                results[j] = (Qfloat)((1. - e)/(1. + e));
+            else
+                results[j] = (Qfloat)((e - 1.)/(e + 1.));
+        }
+    }
 
 
-}
+    void calc_rbf( int vcount, int var_count, const float** vecs,
+                   const float* another, Qfloat* results )
+    {
+        Mat R( 1, vcount, QFLOAT_TYPE, results );
+        double gamma = -params.gamma;
+        int j, k;
 
-void CvSVMKernel::calc( int vcount, int var_count, const float** vecs,
+        for( j = 0; j < vcount; j++ )
+        {
+            const float* sample = vecs[j];
+            double s = 0;
+
+            for( k = 0; k <= var_count - 4; k += 4 )
+            {
+                double t0 = sample[k] - another[k];
+                double t1 = sample[k+1] - another[k+1];
+
+                s += t0*t0 + t1*t1;
+
+                t0 = sample[k+2] - another[k+2];
+                t1 = sample[k+3] - another[k+3];
+
+                s += t0*t0 + t1*t1;
+            }
+
+            for( ; k < var_count; k++ )
+            {
+                double t0 = sample[k] - another[k];
+                s += t0*t0;
+            }
+            results[j] = (Qfloat)(s*gamma);
+        }
+
+        if( vcount > 0 )
+            cvExp( &R, &R );
+    }
+
+    /// Histogram intersection kernel
+    void calc_intersec( int vcount, int var_count, const float** vecs,
                         const float* another, Qfloat* results )
-{
-    const Qfloat max_val = (Qfloat)(FLT_MAX*1e-3);
-    int j;
-    (this->*calc_func)( vcount, var_count, vecs, another, results );
-    for( j = 0; j < vcount; j++ )
     {
-        if( results[j] > max_val )
-            results[j] = max_val;
+        int j, k;
+        for( j = 0; j < vcount; j++ )
+        {
+            const float* sample = vecs[j];
+            double s = 0;
+            for( k = 0; k <= var_count - 4; k += 4 )
+                s += std::min(sample[k],another[k]) + std::min(sample[k+1],another[k+1]) +
+                std::min(sample[k+2],another[k+2]) + std::min(sample[k+3],another[k+3]);
+            for( ; k < var_count; k++ )
+                s += std::min(sample[k],another[k]);
+            results[j] = (Qfloat)(s);
+        }
     }
-}
+
+    /// Exponential chi2 kernel
+    void calc_chi2( int vcount, int var_count, const float** vecs,
+                    const float* another, Qfloat* results )
+    {
+        Mat R( 1, vcount, QFLOAT_TYPE, results );
+        double gamma = -params.gamma;
+        int j, k;
+        for( j = 0; j < vcount; j++ )
+        {
+            const float* sample = vecs[j];
+            double chi2 = 0;
+            for(k = 0 ; k < var_count; k++ )
+            {
+                double d = sample[k]-another[k];
+                double devisor = sample[k]+another[k];
+                /// if devisor == 0, the Chi2 distance would be zero,
+                // but calculation would rise an error because of deviding by zero
+                if (devisor != 0)
+                {
+                    chi2 += d*d/devisor;
+                }
+            }
+            results[j] = (Qfloat) (gamma*chi2);
+        }
+        if( vcount > 0 )
+            exp( R, R );
+    }
+    
+    void calc( int vcount, int var_count, const float** vecs,
+               const float* another, Qfloat* results )
+    {
+        switch( params.kernelType )
+        {
+        case SVM::RBF:
+            calc_rbf(vcount, var_count, vecs, another, results);
+            break;
+        case SVM::POLY:
+            calc_poly(vcount, var_count, vecs, another, results);
+            break;
+        case SVM::SIGMOID:
+            calc_sigmoid(vcount, var_count, vecs, another, results);
+            break;
+        case SVM::CHI2:
+            calc_chi2(vcount, var_count, vecs, another, results);
+            break;
+        case SVM::INTER:
+            calc_intersec(vcount, var_count, vecs, another, results);
+            break;
+        default:
+            CV_Error(CV_StsBadArg, "Unknown kernel type");
+        }
+        const Qfloat max_val = (Qfloat)(FLT_MAX*1e-3);
+        for( int j = 0; j < vcount; j++ )
+        {
+            if( results[j] > max_val )
+                results[j] = max_val;
+        }
+    }
+
+    SVM::Params params;
+};
+
+
+class SVMImpl : public SVM
+{
+    virtual ~SVMImpl() {}
+
+    virtual ParamGrid getDefaultGrid( int param_id ) const
+    {
+        ParamGrid grid;
+        if( param_id == SVM::C )
+        {
+            grid.minVal = 0.1;
+            grid.maxVal = 500;
+            grid.logStep = 5; // total iterations = 5
+        }
+        else if( param_id == SVM::GAMMA )
+        {
+            grid.minVal = 1e-5;
+            grid.maxVal = 0.6;
+            grid.logStep = 15; // total iterations = 4
+        }
+        else if( param_id == SVM::P )
+        {
+            grid.minVal = 0.01;
+            grid.maxVal = 100;
+            grid.logStep = 7; // total iterations = 4
+        }
+        else if( param_id == SVM::NU )
+        {
+            grid.minVal = 0.01;
+            grid.maxVal = 0.2;
+            grid.logStep = 3; // total iterations = 3
+        }
+        else if( param_id == SVM::COEF )
+        {
+            grid.minVal = 0.1;
+            grid.maxVal = 300;
+            grid.logStep = 14; // total iterations = 3
+        }
+        else if( param_id == SVM::DEGREE )
+        {
+            grid.minVal = 0.01;
+            grid.maxVal = 4;
+            grid.logStep = 7; // total iterations = 3
+        }
+        else
+            cvError( CV_StsBadArg, "SVM::getDefaultGrid", "Invalid type of parameter "
+                     "(use one of SVM::C, SVM::GAMMA et al.)", __FILE__, __LINE__ );
+        return grid;
+    }
+
+};
 
 
 // Generalized SMO+SVMlight algorithm
@@ -448,7 +441,7 @@ bool CvSVMSolver::create( int _sample_count, int _var_count, const float** _samp
                 SelectWorkingSet _select_working_set, CalcRho _calc_rho )
 {
     bool ok = false;
-    int i, svm_type;
+    int i, svmType;
 
     CV_FUNCNAME( "CvSVMSolver::create" );
 
@@ -468,8 +461,8 @@ bool CvSVMSolver::create( int _sample_count, int _var_count, const float** _samp
 
     C[0] = _Cn;
     C[1] = _Cp;
-    eps = kernel->params->term_crit.epsilon;
-    max_iter = kernel->params->term_crit.max_iter;
+    eps = kernel->params->termCrit.epsilon;
+    max_iter = kernel->params->termCrit.max_iter;
     storage = cvCreateChildMemStorage( _storage );
 
     b = (double*)cvMemStorageAlloc( storage, alpha_count*sizeof(b[0]));
@@ -477,24 +470,24 @@ bool CvSVMSolver::create( int _sample_count, int _var_count, const float** _samp
     G = (double*)cvMemStorageAlloc( storage, alpha_count*sizeof(G[0]));
     for( i = 0; i < 2; i++ )
         buf[i] = (Qfloat*)cvMemStorageAlloc( storage, sample_count*2*sizeof(buf[i][0]) );
-    svm_type = kernel->params->svm_type;
+    svmType = kernel->params->svmType;
 
     select_working_set_func = _select_working_set;
     if( !select_working_set_func )
-        select_working_set_func = svm_type == CvSVM::NU_SVC || svm_type == CvSVM::NU_SVR ?
+        select_working_set_func = svmType == CvSVM::NU_SVC || svmType == CvSVM::NU_SVR ?
         &CvSVMSolver::select_working_set_nu_svm : &CvSVMSolver::select_working_set;
 
     calc_rho_func = _calc_rho;
     if( !calc_rho_func )
-        calc_rho_func = svm_type == CvSVM::NU_SVC || svm_type == CvSVM::NU_SVR ?
+        calc_rho_func = svmType == CvSVM::NU_SVC || svmType == CvSVM::NU_SVR ?
             &CvSVMSolver::calc_rho_nu_svm : &CvSVMSolver::calc_rho;
 
     get_row_func = _get_row;
     if( !get_row_func )
-        get_row_func = params->svm_type == CvSVM::EPS_SVR ||
-                       params->svm_type == CvSVM::NU_SVR ? &CvSVMSolver::get_row_svr :
-                       params->svm_type == CvSVM::C_SVC ||
-                       params->svm_type == CvSVM::NU_SVC ? &CvSVMSolver::get_row_svc :
+        get_row_func = params->svmType == CvSVM::EPS_SVR ||
+                       params->svmType == CvSVM::NU_SVR ? &CvSVMSolver::get_row_svr :
+                       params->svmType == CvSVM::C_SVC ||
+                       params->svmType == CvSVM::NU_SVC ? &CvSVMSolver::get_row_svc :
                        &CvSVMSolver::get_row_one_class;
 
     cache_line_size = sample_count*sizeof(Qfloat);
@@ -1253,58 +1246,58 @@ bool CvSVM::set_params( const CvSVMParams& _params )
 
     __BEGIN__;
 
-    int kernel_type, svm_type;
+    int kernelType, svmType;
 
     params = _params;
 
-    kernel_type = params.kernel_type;
-    svm_type = params.svm_type;
+    kernelType = params.kernelType;
+    svmType = params.svmType;
 
-    if( kernel_type != LINEAR && kernel_type != POLY &&
-        kernel_type != SIGMOID && kernel_type != RBF &&
-        kernel_type != INTER && kernel_type != CHI2)
+    if( kernelType != LINEAR && kernelType != POLY &&
+        kernelType != SIGMOID && kernelType != RBF &&
+        kernelType != INTER && kernelType != CHI2)
         CV_ERROR( CV_StsBadArg, "Unknown/unsupported kernel type" );
 
-    if( kernel_type == LINEAR )
+    if( kernelType == LINEAR )
         params.gamma = 1;
     else if( params.gamma <= 0 )
         CV_ERROR( CV_StsOutOfRange, "gamma parameter of the kernel must be positive" );
 
-    if( kernel_type != SIGMOID && kernel_type != POLY )
+    if( kernelType != SIGMOID && kernelType != POLY )
         params.coef0 = 0;
     else if( params.coef0 < 0 )
         CV_ERROR( CV_StsOutOfRange, "The kernel parameter <coef0> must be positive or zero" );
 
-    if( kernel_type != POLY )
+    if( kernelType != POLY )
         params.degree = 0;
     else if( params.degree <= 0 )
         CV_ERROR( CV_StsOutOfRange, "The kernel parameter <degree> must be positive" );
 
-    if( svm_type != C_SVC && svm_type != NU_SVC &&
-        svm_type != ONE_CLASS && svm_type != EPS_SVR &&
-        svm_type != NU_SVR )
+    if( svmType != C_SVC && svmType != NU_SVC &&
+        svmType != ONE_CLASS && svmType != EPS_SVR &&
+        svmType != NU_SVR )
         CV_ERROR( CV_StsBadArg, "Unknown/unsupported SVM type" );
 
-    if( svm_type == ONE_CLASS || svm_type == NU_SVC )
+    if( svmType == ONE_CLASS || svmType == NU_SVC )
         params.C = 0;
     else if( params.C <= 0 )
         CV_ERROR( CV_StsOutOfRange, "The parameter C must be positive" );
 
-    if( svm_type == C_SVC || svm_type == EPS_SVR )
+    if( svmType == C_SVC || svmType == EPS_SVR )
         params.nu = 0;
     else if( params.nu <= 0 || params.nu >= 1 )
         CV_ERROR( CV_StsOutOfRange, "The parameter nu must be between 0 and 1" );
 
-    if( svm_type != EPS_SVR )
+    if( svmType != EPS_SVR )
         params.p = 0;
     else if( params.p <= 0 )
         CV_ERROR( CV_StsOutOfRange, "The parameter p must be positive" );
 
-    if( svm_type != C_SVC )
+    if( svmType != C_SVC )
         params.class_weights = 0;
 
-    params.term_crit = cvCheckTermCriteria( params.term_crit, DBL_EPSILON, INT_MAX );
-    params.term_crit.epsilon = MAX( params.term_crit.epsilon, DBL_EPSILON );
+    params.termCrit = cvCheckTermCriteria( params.termCrit, DBL_EPSILON, INT_MAX );
+    params.termCrit.epsilon = MAX( params.termCrit.epsilon, DBL_EPSILON );
     ok = true;
 
     __END__;
@@ -1338,19 +1331,19 @@ bool CvSVM::train1( int sample_count, int var_count, const float** samples,
     __BEGIN__;
 
     CvSVMSolutionInfo si;
-    int svm_type = params.svm_type;
+    int svmType = params.svmType;
 
     si.rho = 0;
 
-    ok = svm_type == C_SVC ? solver->solve_c_svc( sample_count, var_count, samples, (schar*)_responses,
+    ok = svmType == C_SVC ? solver->solve_c_svc( sample_count, var_count, samples, (schar*)_responses,
                                                   Cp, Cn, _storage, kernel, alpha, si ) :
-         svm_type == NU_SVC ? solver->solve_nu_svc( sample_count, var_count, samples, (schar*)_responses,
+         svmType == NU_SVC ? solver->solve_nu_svc( sample_count, var_count, samples, (schar*)_responses,
                                                     _storage, kernel, alpha, si ) :
-         svm_type == ONE_CLASS ? solver->solve_one_class( sample_count, var_count, samples,
+         svmType == ONE_CLASS ? solver->solve_one_class( sample_count, var_count, samples,
                                                           _storage, kernel, alpha, si ) :
-         svm_type == EPS_SVR ? solver->solve_eps_svr( sample_count, var_count, samples, (float*)_responses,
+         svmType == EPS_SVR ? solver->solve_eps_svr( sample_count, var_count, samples, (float*)_responses,
                                                       _storage, kernel, alpha, si ) :
-         svm_type == NU_SVR ? solver->solve_nu_svr( sample_count, var_count, samples, (float*)_responses,
+         svmType == NU_SVR ? solver->solve_nu_svr( sample_count, var_count, samples, (float*)_responses,
                                                     _storage, kernel, alpha, si ) : false;
 
     rho = si.rho;
@@ -1361,7 +1354,7 @@ bool CvSVM::train1( int sample_count, int var_count, const float** samples,
 }
 
 
-bool CvSVM::do_train( int svm_type, int sample_count, int var_count, const float** samples,
+bool CvSVM::do_train( int svmType, int sample_count, int var_count, const float** samples,
                     const CvMat* responses, CvMemStorage* temp_storage, double* alpha )
 {
     bool ok = false;
@@ -1376,7 +1369,7 @@ bool CvSVM::do_train( int svm_type, int sample_count, int var_count, const float
 
     cvClearMemStorage( storage );
 
-    if( svm_type == ONE_CLASS || svm_type == EPS_SVR || svm_type == NU_SVR )
+    if( svmType == ONE_CLASS || svmType == EPS_SVR || svmType == NU_SVR )
     {
         int sv_count = 0;
 
@@ -1384,7 +1377,7 @@ bool CvSVM::do_train( int svm_type, int sample_count, int var_count, const float
             (CvSVMDecisionFunc*)cvAlloc( sizeof(df[0]) ));
 
         df->rho = 0;
-        if( !train1( sample_count, var_count, samples, svm_type == ONE_CLASS ? 0 :
+        if( !train1( sample_count, var_count, samples, svmType == ONE_CLASS ? 0 :
             responses->data.i, 0, 0, temp_storage, alpha, df->rho ))
             EXIT;
 
@@ -1414,9 +1407,9 @@ bool CvSVM::do_train( int svm_type, int sample_count, int var_count, const float
         const float** temp_samples = 0;
         int* class_ranges = 0;
         schar* temp_y = 0;
-        assert( svm_type == CvSVM::C_SVC || svm_type == CvSVM::NU_SVC );
+        assert( svmType == CvSVM::C_SVC || svmType == CvSVM::NU_SVC );
 
-        if( svm_type == CvSVM::C_SVC && params.class_weights )
+        if( svmType == CvSVM::C_SVC && params.class_weights )
         {
             const CvMat* cw = params.class_weights;
 
@@ -1449,7 +1442,7 @@ bool CvSVM::do_train( int svm_type, int sample_count, int var_count, const float
             CV_ERROR( CV_StsBadArg, "While cross-validation one or more of the classes have "
             "been fell out of the sample. Try to enlarge <CvSVMParams::k_fold>" );
 
-        if( svm_type == NU_SVC )
+        if( svmType == NU_SVC )
         {
             // check if nu is feasible
             for(i = 0; i < class_count; i++ )
@@ -1579,11 +1572,11 @@ bool CvSVM::do_train( int svm_type, int sample_count, int var_count, const float
 void CvSVM::optimize_linear_svm()
 {
     // we optimize only linear SVM: compress all the support vectors into one.
-    if( params.kernel_type != LINEAR )
+    if( params.kernelType != LINEAR )
         return;
 
     int class_count = class_labels ? class_labels->cols :
-            params.svm_type == CvSVM::ONE_CLASS ? 1 : 0;
+            params.svmType == CvSVM::ONE_CLASS ? 1 : 0;
 
     int i, df_count = class_count > 1 ? class_count*(class_count-1)/2 : 1;
     CvSVMDecisionFunc* df = decision_func;
@@ -1643,20 +1636,20 @@ bool CvSVM::train( const CvMat* _train_data, const CvMat* _responses,
 
     __BEGIN__;
 
-    int svm_type, sample_count, var_count, sample_size;
+    int svmType, sample_count, var_count, sample_size;
     int block_size = 1 << 16;
     double* alpha;
 
     clear();
     CV_CALL( set_params( _params ));
 
-    svm_type = _params.svm_type;
+    svmType = _params.svmType;
 
     /* Prepare training data and related parameters */
     CV_CALL( cvPrepareTrainData( "CvSVM::train", _train_data, CV_ROW_SAMPLE,
-                                 svm_type != CvSVM::ONE_CLASS ? _responses : 0,
-                                 svm_type == CvSVM::C_SVC ||
-                                 svm_type == CvSVM::NU_SVC ? CV_VAR_CATEGORICAL :
+                                 svmType != CvSVM::ONE_CLASS ? _responses : 0,
+                                 svmType == CvSVM::C_SVC ||
+                                 svmType == CvSVM::NU_SVC ? CV_VAR_CATEGORICAL :
                                  CV_VAR_ORDERED, _var_idx, _sample_idx,
                                  false, &samples, &sample_count, &var_count, &var_all,
                                  &responses, &class_labels, &var_idx ));
@@ -1677,7 +1670,7 @@ bool CvSVM::train( const CvMat* _train_data, const CvMat* _responses,
     create_kernel();
     create_solver();
 
-    if( !do_train( svm_type, sample_count, var_count, samples, responses, temp_storage, alpha ))
+    if( !do_train( svmType, sample_count, var_count, samples, responses, temp_storage, alpha ))
         EXIT;
 
     ok = true; // model has been trained succesfully
@@ -1728,7 +1721,7 @@ bool CvSVM::train_auto( const CvMat* _train_data, const CvMat* _responses,
     CV_FUNCNAME( "CvSVM::train_auto" );
     __BEGIN__;
 
-    int svm_type, sample_count, var_count, sample_size;
+    int svmType, sample_count, var_count, sample_size;
     int block_size = 1 << 16;
     double* alpha;
     RNG* rng = &theRNG();
@@ -1739,7 +1732,7 @@ bool CvSVM::train_auto( const CvMat* _train_data, const CvMat* _responses,
     double best_degree = 0, best_gamma = 0, best_coef = 0, best_C = 0, best_nu = 0, best_p = 0;
     float min_error = FLT_MAX, error;
 
-    if( _params.svm_type == CvSVM::ONE_CLASS )
+    if( _params.svmType == CvSVM::ONE_CLASS )
     {
         if(!train( _train_data, _responses, _var_idx, _sample_idx, _params ))
             EXIT;
@@ -1752,80 +1745,80 @@ bool CvSVM::train_auto( const CvMat* _train_data, const CvMat* _responses,
         CV_ERROR( CV_StsBadArg, "Parameter <k_fold> must be > 1" );
 
     CV_CALL(set_params( _params ));
-    svm_type = _params.svm_type;
+    svmType = _params.svmType;
 
     // All the parameters except, possibly, <coef0> are positive.
     // <coef0> is nonnegative
-    if( C_grid.step <= 1 )
+    if( C_grid.logStep <= 1 )
     {
-        C_grid.min_val = C_grid.max_val = params.C;
-        C_grid.step = 10;
+        C_grid.minVal = C_grid.maxVal = params.C;
+        C_grid.logStep = 10;
     }
     else
         CV_CALL(C_grid.check());
 
-    if( gamma_grid.step <= 1 )
+    if( gamma_grid.logStep <= 1 )
     {
-        gamma_grid.min_val = gamma_grid.max_val = params.gamma;
-        gamma_grid.step = 10;
+        gamma_grid.minVal = gamma_grid.maxVal = params.gamma;
+        gamma_grid.logStep = 10;
     }
     else
         CV_CALL(gamma_grid.check());
 
-    if( p_grid.step <= 1 )
+    if( p_grid.logStep <= 1 )
     {
-        p_grid.min_val = p_grid.max_val = params.p;
-        p_grid.step = 10;
+        p_grid.minVal = p_grid.maxVal = params.p;
+        p_grid.logStep = 10;
     }
     else
         CV_CALL(p_grid.check());
 
-    if( nu_grid.step <= 1 )
+    if( nu_grid.logStep <= 1 )
     {
-        nu_grid.min_val = nu_grid.max_val = params.nu;
-        nu_grid.step = 10;
+        nu_grid.minVal = nu_grid.maxVal = params.nu;
+        nu_grid.logStep = 10;
     }
     else
         CV_CALL(nu_grid.check());
 
-    if( coef_grid.step <= 1 )
+    if( coef_grid.logStep <= 1 )
     {
-        coef_grid.min_val = coef_grid.max_val = params.coef0;
-        coef_grid.step = 10;
+        coef_grid.minVal = coef_grid.maxVal = params.coef0;
+        coef_grid.logStep = 10;
     }
     else
         CV_CALL(coef_grid.check());
 
-    if( degree_grid.step <= 1 )
+    if( degree_grid.logStep <= 1 )
     {
-        degree_grid.min_val = degree_grid.max_val = params.degree;
-        degree_grid.step = 10;
+        degree_grid.minVal = degree_grid.maxVal = params.degree;
+        degree_grid.logStep = 10;
     }
     else
         CV_CALL(degree_grid.check());
 
     // these parameters are not used:
-    if( params.kernel_type != CvSVM::POLY )
-        degree_grid.min_val = degree_grid.max_val = params.degree;
-    if( params.kernel_type == CvSVM::LINEAR )
-        gamma_grid.min_val = gamma_grid.max_val = params.gamma;
-    if( params.kernel_type != CvSVM::POLY && params.kernel_type != CvSVM::SIGMOID )
-        coef_grid.min_val = coef_grid.max_val = params.coef0;
-    if( svm_type == CvSVM::NU_SVC || svm_type == CvSVM::ONE_CLASS )
-        C_grid.min_val = C_grid.max_val = params.C;
-    if( svm_type == CvSVM::C_SVC || svm_type == CvSVM::EPS_SVR )
-        nu_grid.min_val = nu_grid.max_val = params.nu;
-    if( svm_type != CvSVM::EPS_SVR )
-        p_grid.min_val = p_grid.max_val = params.p;
+    if( params.kernelType != CvSVM::POLY )
+        degree_grid.minVal = degree_grid.maxVal = params.degree;
+    if( params.kernelType == CvSVM::LINEAR )
+        gamma_grid.minVal = gamma_grid.maxVal = params.gamma;
+    if( params.kernelType != CvSVM::POLY && params.kernelType != CvSVM::SIGMOID )
+        coef_grid.minVal = coef_grid.maxVal = params.coef0;
+    if( svmType == CvSVM::NU_SVC || svmType == CvSVM::ONE_CLASS )
+        C_grid.minVal = C_grid.maxVal = params.C;
+    if( svmType == CvSVM::C_SVC || svmType == CvSVM::EPS_SVR )
+        nu_grid.minVal = nu_grid.maxVal = params.nu;
+    if( svmType != CvSVM::EPS_SVR )
+        p_grid.minVal = p_grid.maxVal = params.p;
 
     CV_ASSERT( g_step > 1 && degree_step > 1 && coef_step > 1);
     CV_ASSERT( p_step > 1 && C_step > 1 && nu_step > 1 );
 
     /* Prepare training data and related parameters */
     CV_CALL(cvPrepareTrainData( "CvSVM::train_auto", _train_data, CV_ROW_SAMPLE,
-                                 svm_type != CvSVM::ONE_CLASS ? _responses : 0,
-                                 svm_type == CvSVM::C_SVC ||
-                                 svm_type == CvSVM::NU_SVC ? CV_VAR_CATEGORICAL :
+                                 svmType != CvSVM::ONE_CLASS ? _responses : 0,
+                                 svmType == CvSVM::C_SVC ||
+                                 svmType == CvSVM::NU_SVC ? CV_VAR_CATEGORICAL :
                                  CV_VAR_ORDERED, _var_idx, _sample_idx,
                                  false, &samples, &sample_count, &var_count, &var_all,
                                  &responses, &class_labels, &var_idx ));
@@ -1850,7 +1843,7 @@ bool CvSVM::train_auto( const CvMat* _train_data, const CvMat* _responses,
     const int trainset_size = sample_count - testset_size;
     const int last_testset_size = sample_count - testset_size*(k_fold-1);
     const int last_trainset_size = sample_count - last_testset_size;
-    const bool is_regression = (svm_type == EPS_SVR) || (svm_type == NU_SVR);
+    const bool is_regression = (svmType == EPS_SVR) || (svmType == NU_SVR);
 
     size_t resp_elem_size = CV_ELEM_SIZE(responses->type);
     size_t size = 2*last_trainset_size*sizeof(samples[0]);
@@ -1977,27 +1970,27 @@ bool CvSVM::train_auto( const CvMat* _train_data, const CvMat* _responses,
     }
 
     int* cls_lbls = class_labels ? class_labels->data.i : 0;
-    curr_c = C_grid.min_val;
+    curr_c = C_grid.minVal;
     do
     {
       params.C = curr_c;
-      gamma = gamma_grid.min_val;
+      gamma = gamma_grid.minVal;
       do
       {
         params.gamma = gamma;
-        p = p_grid.min_val;
+        p = p_grid.minVal;
         do
         {
           params.p = p;
-          nu = nu_grid.min_val;
+          nu = nu_grid.minVal;
           do
           {
             params.nu = nu;
-            coef = coef_grid.min_val;
+            coef = coef_grid.minVal;
             do
             {
               params.coef0 = coef;
-              degree = degree_grid.min_val;
+              degree = degree_grid.minVal;
               do
               {
                 params.degree = degree;
@@ -2027,7 +2020,7 @@ bool CvSVM::train_auto( const CvMat* _train_data, const CvMat* _responses,
                     }
 
                     // Train SVM on <train_size> samples
-                    if( !do_train( svm_type, train_size, var_count,
+                    if( !do_train( svmType, train_size, var_count,
                         (const float**)samples_local, responses_local, temp_storage, alpha ) )
                         EXIT;
 
@@ -2049,24 +2042,24 @@ bool CvSVM::train_auto( const CvMat* _train_data, const CvMat* _responses,
                     best_nu     = nu;
                     best_p      = p;
                 }
-                degree *= degree_grid.step;
+                degree *= degree_grid.logStep;
               }
-              while( degree < degree_grid.max_val );
-              coef *= coef_grid.step;
+              while( degree < degree_grid.maxVal );
+              coef *= coef_grid.logStep;
             }
-            while( coef < coef_grid.max_val );
-            nu *= nu_grid.step;
+            while( coef < coef_grid.maxVal );
+            nu *= nu_grid.logStep;
           }
-          while( nu < nu_grid.max_val );
-          p *= p_grid.step;
+          while( nu < nu_grid.maxVal );
+          p *= p_grid.logStep;
         }
-        while( p < p_grid.max_val );
-        gamma *= gamma_grid.step;
+        while( p < p_grid.maxVal );
+        gamma *= gamma_grid.logStep;
       }
-      while( gamma < gamma_grid.max_val );
-      curr_c *= C_grid.step;
+      while( gamma < gamma_grid.maxVal );
+      curr_c *= C_grid.logStep;
     }
-    while( curr_c < C_grid.max_val );
+    while( curr_c < C_grid.maxVal );
     }
 
     min_error /= (float) sample_count;
@@ -2078,7 +2071,7 @@ bool CvSVM::train_auto( const CvMat* _train_data, const CvMat* _responses,
     params.degree = best_degree;
     params.coef0  = best_coef;
 
-    CV_CALL(ok = do_train( svm_type, sample_count, var_count, samples, responses, temp_storage, alpha ));
+    CV_CALL(ok = do_train( svmType, sample_count, var_count, samples, responses, temp_storage, alpha ));
 
     __END__;
 
@@ -2106,15 +2099,15 @@ float CvSVM::predict( const float* row_sample, int row_len, bool returnDFVal ) c
     (void)row_len;
 
     int class_count = class_labels ? class_labels->cols :
-                  params.svm_type == ONE_CLASS ? 1 : 0;
+                  params.svmType == ONE_CLASS ? 1 : 0;
 
     float result = 0;
     cv::AutoBuffer<float> _buffer(sv_total + (class_count+1)*2);
     float* buffer = _buffer;
 
-    if( params.svm_type == EPS_SVR ||
-        params.svm_type == NU_SVR ||
-        params.svm_type == ONE_CLASS )
+    if( params.svmType == EPS_SVR ||
+        params.svmType == NU_SVR ||
+        params.svmType == ONE_CLASS )
     {
         CvSVMDecisionFunc* df = (CvSVMDecisionFunc*)decision_func;
         int i, sv_count = df->sv_count;
@@ -2124,10 +2117,10 @@ float CvSVM::predict( const float* row_sample, int row_len, bool returnDFVal ) c
         for( i = 0; i < sv_count; i++ )
             sum += buffer[i]*df->alpha[i];
 
-        result = params.svm_type == ONE_CLASS ? (float)(sum > 0) : (float)sum;
+        result = params.svmType == ONE_CLASS ? (float)(sum > 0) : (float)sum;
     }
-    else if( params.svm_type == C_SVC ||
-             params.svm_type == NU_SVC )
+    else if( params.svmType == C_SVC ||
+             params.svmType == NU_SVC )
     {
         CvSVMDecisionFunc* df = (CvSVMDecisionFunc*)decision_func;
         int* vote = (int*)(buffer + sv_total);
@@ -2179,7 +2172,7 @@ float CvSVM::predict( const CvMat* sample, bool returnDFVal ) const
         CV_ERROR( CV_StsBadArg, "The SVM should be trained first" );
 
     class_count = class_labels ? class_labels->cols :
-                  params.svm_type == ONE_CLASS ? 1 : 0;
+                  params.svmType == ONE_CLASS ? 1 : 0;
 
     CV_CALL( cvPreparePredictData( sample, var_all, var_idx,
                                    class_count, 0, &row_sample ));
@@ -2283,29 +2276,25 @@ float CvSVM::predict( const Mat& _sample, bool returnDFVal ) const
 
 void CvSVM::write_params( CvFileStorage* fs ) const
 {
-    //CV_FUNCNAME( "CvSVM::write_params" );
-
-    __BEGIN__;
-
-    int svm_type = params.svm_type;
-    int kernel_type = params.kernel_type;
+    int svmType = params.svmType;
+    int kernelType = params.kernelType;
 
     const char* svm_type_str =
-        svm_type == CvSVM::C_SVC ? "C_SVC" :
-        svm_type == CvSVM::NU_SVC ? "NU_SVC" :
-        svm_type == CvSVM::ONE_CLASS ? "ONE_CLASS" :
-        svm_type == CvSVM::EPS_SVR ? "EPS_SVR" :
-        svm_type == CvSVM::NU_SVR ? "NU_SVR" : 0;
+        svmType == CvSVM::C_SVC ? "C_SVC" :
+        svmType == CvSVM::NU_SVC ? "NU_SVC" :
+        svmType == CvSVM::ONE_CLASS ? "ONE_CLASS" :
+        svmType == CvSVM::EPS_SVR ? "EPS_SVR" :
+        svmType == CvSVM::NU_SVR ? "NU_SVR" : 0;
     const char* kernel_type_str =
-        kernel_type == CvSVM::LINEAR ? "LINEAR" :
-        kernel_type == CvSVM::POLY ? "POLY" :
-        kernel_type == CvSVM::RBF ? "RBF" :
-        kernel_type == CvSVM::SIGMOID ? "SIGMOID" : 0;
+        kernelType == CvSVM::LINEAR ? "LINEAR" :
+        kernelType == CvSVM::POLY ? "POLY" :
+        kernelType == CvSVM::RBF ? "RBF" :
+        kernelType == CvSVM::SIGMOID ? "SIGMOID" : 0;
 
     if( svm_type_str )
-        cvWriteString( fs, "svm_type", svm_type_str );
+        cvWriteString( fs, "svmType", svm_type_str );
     else
-        cvWriteInt( fs, "svm_type", svm_type );
+        cvWriteInt( fs, "svmType", svmType );
 
     // save kernel
     cvStartWriteStruct( fs, "kernel", CV_NODE_MAP + CV_NODE_FLOW );
@@ -2313,38 +2302,36 @@ void CvSVM::write_params( CvFileStorage* fs ) const
     if( kernel_type_str )
         cvWriteString( fs, "type", kernel_type_str );
     else
-        cvWriteInt( fs, "type", kernel_type );
+        cvWriteInt( fs, "type", kernelType );
 
-    if( kernel_type == CvSVM::POLY || !kernel_type_str )
+    if( kernelType == CvSVM::POLY || !kernel_type_str )
         cvWriteReal( fs, "degree", params.degree );
 
-    if( kernel_type != CvSVM::LINEAR || !kernel_type_str )
+    if( kernelType != CvSVM::LINEAR || !kernel_type_str )
         cvWriteReal( fs, "gamma", params.gamma );
 
-    if( kernel_type == CvSVM::POLY || kernel_type == CvSVM::SIGMOID || !kernel_type_str )
+    if( kernelType == CvSVM::POLY || kernelType == CvSVM::SIGMOID || !kernel_type_str )
         cvWriteReal( fs, "coef0", params.coef0 );
 
     cvEndWriteStruct(fs);
 
-    if( svm_type == CvSVM::C_SVC || svm_type == CvSVM::EPS_SVR ||
-        svm_type == CvSVM::NU_SVR || !svm_type_str )
+    if( svmType == CvSVM::C_SVC || svmType == CvSVM::EPS_SVR ||
+        svmType == CvSVM::NU_SVR || !svm_type_str )
         cvWriteReal( fs, "C", params.C );
 
-    if( svm_type == CvSVM::NU_SVC || svm_type == CvSVM::ONE_CLASS ||
-        svm_type == CvSVM::NU_SVR || !svm_type_str )
+    if( svmType == CvSVM::NU_SVC || svmType == CvSVM::ONE_CLASS ||
+        svmType == CvSVM::NU_SVR || !svm_type_str )
         cvWriteReal( fs, "nu", params.nu );
 
-    if( svm_type == CvSVM::EPS_SVR || !svm_type_str )
+    if( svmType == CvSVM::EPS_SVR || !svm_type_str )
         cvWriteReal( fs, "p", params.p );
 
     cvStartWriteStruct( fs, "term_criteria", CV_NODE_MAP + CV_NODE_FLOW );
-    if( params.term_crit.type & CV_TERMCRIT_EPS )
-        cvWriteReal( fs, "epsilon", params.term_crit.epsilon );
-    if( params.term_crit.type & CV_TERMCRIT_ITER )
-        cvWriteInt( fs, "iterations", params.term_crit.max_iter );
+    if( params.termCrit.type & CV_TERMCRIT_EPS )
+        cvWriteReal( fs, "epsilon", params.termCrit.epsilon );
+    if( params.termCrit.type & CV_TERMCRIT_ITER )
+        cvWriteInt( fs, "iterations", params.termCrit.max_iter );
     cvEndWriteStruct( fs );
-
-    __END__;
 }
 
 
@@ -2356,13 +2343,9 @@ static bool isSvmModelApplicable(int sv_total, int var_all, int var_count, int c
 
 void CvSVM::write( CvFileStorage* fs, const char* name ) const
 {
-    CV_FUNCNAME( "CvSVM::write" );
-
-    __BEGIN__;
-
     int i, var_count = get_var_count(), df_count;
     int class_count = class_labels ? class_labels->cols :
-                      params.svm_type == CvSVM::ONE_CLASS ? 1 : 0;
+                      params.svmType == CvSVM::ONE_CLASS ? 1 : 0;
     const CvSVMDecisionFunc* df = decision_func;
     if( !isSvmModelApplicable(sv_total, var_all, var_count, class_count) )
         CV_ERROR( CV_StsParseError, "SVM model data is invalid, check sv_count, var_* and class_count tags" );
@@ -2426,38 +2409,32 @@ void CvSVM::write( CvFileStorage* fs, const char* name ) const
     }
     cvEndWriteStruct( fs );
     cvEndWriteStruct( fs );
-
-    __END__;
 }
 
 
 void CvSVM::read_params( CvFileStorage* fs, CvFileNode* svm_node )
 {
-    CV_FUNCNAME( "CvSVM::read_params" );
-
-    __BEGIN__;
-
-    int svm_type, kernel_type;
+    int svmType, kernelType;
     CvSVMParams _params;
 
-    CvFileNode* tmp_node = cvGetFileNodeByName( fs, svm_node, "svm_type" );
+    CvFileNode* tmp_node = cvGetFileNodeByName( fs, svm_node, "svmType" );
     CvFileNode* kernel_node;
     if( !tmp_node )
-        CV_ERROR( CV_StsBadArg, "svm_type tag is not found" );
+        CV_ERROR( CV_StsBadArg, "svmType tag is not found" );
 
     if( CV_NODE_TYPE(tmp_node->tag) == CV_NODE_INT )
-        svm_type = cvReadInt( tmp_node, -1 );
+        svmType = cvReadInt( tmp_node, -1 );
     else
     {
         const char* svm_type_str = cvReadString( tmp_node, "" );
-        svm_type =
+        svmType =
             strcmp( svm_type_str, "C_SVC" ) == 0 ? CvSVM::C_SVC :
             strcmp( svm_type_str, "NU_SVC" ) == 0 ? CvSVM::NU_SVC :
             strcmp( svm_type_str, "ONE_CLASS" ) == 0 ? CvSVM::ONE_CLASS :
             strcmp( svm_type_str, "EPS_SVR" ) == 0 ? CvSVM::EPS_SVR :
             strcmp( svm_type_str, "NU_SVR" ) == 0 ? CvSVM::NU_SVR : -1;
 
-        if( svm_type < 0 )
+        if( svmType < 0 )
             CV_ERROR( CV_StsParseError, "Missing of invalid SVM type" );
     }
 
@@ -2470,22 +2447,22 @@ void CvSVM::read_params( CvFileStorage* fs, CvFileNode* svm_node )
         CV_ERROR( CV_StsParseError, "SVM kernel type tag is not found" );
 
     if( CV_NODE_TYPE(tmp_node->tag) == CV_NODE_INT )
-        kernel_type = cvReadInt( tmp_node, -1 );
+        kernelType = cvReadInt( tmp_node, -1 );
     else
     {
         const char* kernel_type_str = cvReadString( tmp_node, "" );
-        kernel_type =
+        kernelType =
             strcmp( kernel_type_str, "LINEAR" ) == 0 ? CvSVM::LINEAR :
             strcmp( kernel_type_str, "POLY" ) == 0 ? CvSVM::POLY :
             strcmp( kernel_type_str, "RBF" ) == 0 ? CvSVM::RBF :
             strcmp( kernel_type_str, "SIGMOID" ) == 0 ? CvSVM::SIGMOID : -1;
 
-        if( kernel_type < 0 )
+        if( kernelType < 0 )
             CV_ERROR( CV_StsParseError, "Missing of invalid SVM kernel type" );
     }
 
-    _params.svm_type = svm_type;
-    _params.kernel_type = kernel_type;
+    _params.svmType = svmType;
+    _params.kernelType = kernelType;
     _params.degree = cvReadRealByName( fs, kernel_node, "degree", 0 );
     _params.gamma = cvReadRealByName( fs, kernel_node, "gamma", 0 );
     _params.coef0 = cvReadRealByName( fs, kernel_node, "coef0", 0 );
@@ -2498,17 +2475,15 @@ void CvSVM::read_params( CvFileStorage* fs, CvFileNode* svm_node )
     tmp_node = cvGetFileNodeByName( fs, svm_node, "term_criteria" );
     if( tmp_node )
     {
-        _params.term_crit.epsilon = cvReadRealByName( fs, tmp_node, "epsilon", -1. );
-        _params.term_crit.max_iter = cvReadIntByName( fs, tmp_node, "iterations", -1 );
-        _params.term_crit.type = (_params.term_crit.epsilon >= 0 ? CV_TERMCRIT_EPS : 0) +
-                               (_params.term_crit.max_iter >= 0 ? CV_TERMCRIT_ITER : 0);
+        _params.termCrit.epsilon = cvReadRealByName( fs, tmp_node, "epsilon", -1. );
+        _params.termCrit.max_iter = cvReadIntByName( fs, tmp_node, "iterations", -1 );
+        _params.termCrit.type = (_params.termCrit.epsilon >= 0 ? CV_TERMCRIT_EPS : 0) +
+                               (_params.termCrit.max_iter >= 0 ? CV_TERMCRIT_ITER : 0);
     }
     else
-        _params.term_crit = cvTermCriteria( CV_TERMCRIT_EPS + CV_TERMCRIT_ITER, 1000, FLT_EPSILON );
+        _params.termCrit = cvTermCriteria( CV_TERMCRIT_EPS + CV_TERMCRIT_ITER, 1000, FLT_EPSILON );
 
     set_params( _params );
-
-    __END__;
 }
 
 void CvSVM::read( CvFileStorage* fs, CvFileNode* svm_node )
@@ -2638,370 +2613,258 @@ void CvSVM::read( CvFileStorage* fs, CvFileNode* svm_node )
     __END__;
 }
 
-#if 0
 
-static void*
-icvCloneSVM( const void* _src )
+typedef struct CvSampleResponsePair
 {
-    CvSVMModel* dst = 0;
+    const float* sample;
+    const uchar* mask;
+    int response;
+    int index;
+}
+CvSampleResponsePair;
 
-    CV_FUNCNAME( "icvCloneSVM" );
+
+static int
+CV_CDECL icvCmpSampleResponsePairs( const void* a, const void* b )
+{
+    int ra = ((const CvSampleResponsePair*)a)->response;
+    int rb = ((const CvSampleResponsePair*)b)->response;
+    int ia = ((const CvSampleResponsePair*)a)->index;
+    int ib = ((const CvSampleResponsePair*)b)->index;
+
+    return ra < rb ? -1 : ra > rb ? 1 : ia - ib;
+    //return (ra > rb ? -1 : 0)|(ra < rb);
+}
+
+void
+cvSortSamplesByClasses( const float** samples, const CvMat* classes,
+                       int* class_ranges, const uchar** mask )
+{
+    CvSampleResponsePair* pairs = 0;
+    CV_FUNCNAME( "cvSortSamplesByClasses" );
 
     __BEGIN__;
 
-    const CvSVMModel* src = (const CvSVMModel*)_src;
-    int var_count, class_count;
-    int i, sv_total, df_count;
-    int sv_size;
+    int i, k = 0, sample_count;
 
-    if( !CV_IS_SVM(src) )
-        CV_ERROR( !src ? CV_StsNullPtr : CV_StsBadArg, "Input pointer is NULL or invalid" );
+    if( !samples || !classes || !class_ranges )
+        CV_ERROR( CV_StsNullPtr, "INTERNAL ERROR: some of the args are NULL pointers" );
 
-    // 0. create initial CvSVMModel structure
-    CV_CALL( dst = icvCreateSVM() );
-    dst->params = src->params;
-    dst->params.weight_labels = 0;
-    dst->params.weights = 0;
+    if( classes->rows != 1 || CV_MAT_TYPE(classes->type) != CV_32SC1 )
+        CV_ERROR( CV_StsBadArg, "classes array must be a single row of integers" );
 
-    dst->var_all = src->var_all;
-    if( src->class_labels )
-        dst->class_labels = cvCloneMat( src->class_labels );
-    if( src->class_weights )
-        dst->class_weights = cvCloneMat( src->class_weights );
-    if( src->comp_idx )
-        dst->comp_idx = cvCloneMat( src->comp_idx );
+    sample_count = classes->cols;
+    CV_CALL( pairs = (CvSampleResponsePair*)cvAlloc( (sample_count+1)*sizeof(pairs[0])));
 
-    var_count = src->comp_idx ? src->comp_idx->cols : src->var_all;
-    class_count = src->class_labels ? src->class_labels->cols :
-                  src->params.svm_type == CvSVM::ONE_CLASS ? 1 : 0;
-    sv_total = dst->sv_total = src->sv_total;
-    CV_CALL( dst->storage = cvCreateMemStorage( src->storage->block_size ));
-    CV_CALL( dst->sv = (float**)cvMemStorageAlloc( dst->storage,
-                                    sv_total*sizeof(dst->sv[0]) ));
-
-    sv_size = var_count*sizeof(dst->sv[0][0]);
-
-    for( i = 0; i < sv_total; i++ )
+    for( i = 0; i < sample_count; i++ )
     {
-        CV_CALL( dst->sv[i] = (float*)cvMemStorageAlloc( dst->storage, sv_size ));
-        memcpy( dst->sv[i], src->sv[i], sv_size );
+        pairs[i].sample = samples[i];
+        pairs[i].mask = (mask) ? (mask[i]) : 0;
+        pairs[i].response = classes->data.i[i];
+        pairs[i].index = i;
+        assert( classes->data.i[i] >= 0 );
     }
 
-    df_count = class_count > 1 ? class_count*(class_count-1)/2 : 1;
+    qsort( pairs, sample_count, sizeof(pairs[0]), icvCmpSampleResponsePairs );
+    pairs[sample_count].response = -1;
+    class_ranges[0] = 0;
 
-    CV_CALL( dst->decision_func = cvAlloc( df_count*sizeof(CvSVMDecisionFunc) ));
-
-    for( i = 0; i < df_count; i++ )
+    for( i = 0; i < sample_count; i++ )
     {
-        const CvSVMDecisionFunc *sdf =
-            (const CvSVMDecisionFunc*)src->decision_func+i;
-        CvSVMDecisionFunc *ddf =
-            (CvSVMDecisionFunc*)dst->decision_func+i;
-        int sv_count = sdf->sv_count;
-        ddf->sv_count = sv_count;
-        ddf->rho = sdf->rho;
-        CV_CALL( ddf->alpha = (double*)cvMemStorageAlloc( dst->storage,
-                                        sv_count*sizeof(ddf->alpha[0])));
-        memcpy( ddf->alpha, sdf->alpha, sv_count*sizeof(ddf->alpha[0]));
+        samples[i] = pairs[i].sample;
+        if (mask)
+            mask[i] = pairs[i].mask;
+        classes->data.i[i] = pairs[i].response;
 
-        if( class_count > 1 )
+        if( pairs[i].response != pairs[i+1].response )
+            class_ranges[++k] = i+1;
+    }
+
+    __END__;
+
+    cvFree( &pairs );
+}
+
+
+void
+cvPreparePredictData( const CvArr* _sample, int dims_all,
+                     const CvMat* comp_idx, int class_count,
+                     const CvMat* prob, float** _row_sample,
+                     int as_sparse )
+{
+    float* row_sample = 0;
+    int* inverse_comp_idx = 0;
+
+    CV_FUNCNAME( "cvPreparePredictData" );
+
+    __BEGIN__;
+
+    const CvMat* sample = (const CvMat*)_sample;
+    float* sample_data;
+    int sample_step;
+    int is_sparse = CV_IS_SPARSE_MAT(sample);
+    int d, sizes[CV_MAX_DIM];
+    int i, dims_selected;
+    int vec_size;
+
+    if( !is_sparse && !CV_IS_MAT(sample) )
+        CV_ERROR( !sample ? CV_StsNullPtr : CV_StsBadArg, "The sample is not a valid vector" );
+
+    if( cvGetElemType( sample ) != CV_32FC1 )
+        CV_ERROR( CV_StsUnsupportedFormat, "Input sample must have 32fC1 type" );
+
+    CV_CALL( d = cvGetDims( sample, sizes ));
+
+    if( !((is_sparse && d == 1) || (!is_sparse && d == 2 && (sample->rows == 1 || sample->cols == 1))) )
+        CV_ERROR( CV_StsBadSize, "Input sample must be 1-dimensional vector" );
+
+    if( d == 1 )
+        sizes[1] = 1;
+
+    if( sizes[0] + sizes[1] - 1 != dims_all )
+        CV_ERROR( CV_StsUnmatchedSizes,
+                 "The sample size is different from what has been used for training" );
+
+    if( !_row_sample )
+        CV_ERROR( CV_StsNullPtr, "INTERNAL ERROR: The row_sample pointer is NULL" );
+
+    if( comp_idx && (!CV_IS_MAT(comp_idx) || comp_idx->rows != 1 ||
+                     CV_MAT_TYPE(comp_idx->type) != CV_32SC1) )
+        CV_ERROR( CV_StsBadArg, "INTERNAL ERROR: invalid comp_idx" );
+
+    dims_selected = comp_idx ? comp_idx->cols : dims_all;
+
+    if( prob )
+    {
+        if( !CV_IS_MAT(prob) )
+            CV_ERROR( CV_StsBadArg, "The output matrix of probabilities is invalid" );
+
+        if( (prob->rows != 1 && prob->cols != 1) ||
+           (CV_MAT_TYPE(prob->type) != CV_32FC1 &&
+            CV_MAT_TYPE(prob->type) != CV_64FC1) )
+            CV_ERROR( CV_StsBadSize,
+                     "The matrix of probabilities must be 1-dimensional vector of 32fC1 type" );
+
+        if( prob->rows + prob->cols - 1 != class_count )
+            CV_ERROR( CV_StsUnmatchedSizes,
+                     "The vector of probabilities must contain as many elements as "
+                     "the number of classes in the training set" );
+    }
+
+    vec_size = !as_sparse ? dims_selected*sizeof(row_sample[0]) :
+    (dims_selected + 1)*sizeof(CvSparseVecElem32f);
+
+    if( CV_IS_MAT(sample) )
+    {
+        sample_data = sample->data.fl;
+        sample_step = CV_IS_MAT_CONT(sample->type) ? 1 : sample->step/sizeof(row_sample[0]);
+
+        if( !comp_idx && CV_IS_MAT_CONT(sample->type) && !as_sparse )
+            *_row_sample = sample_data;
+        else
         {
-            CV_CALL( ddf->sv_index = (int*)cvMemStorageAlloc( dst->storage,
-                                                sv_count*sizeof(ddf->sv_index[0])));
-            memcpy( ddf->sv_index, sdf->sv_index, sv_count*sizeof(ddf->sv_index[0]));
+            CV_CALL( row_sample = (float*)cvAlloc( vec_size ));
+
+            if( !comp_idx )
+                for( i = 0; i < dims_selected; i++ )
+                    row_sample[i] = sample_data[sample_step*i];
+            else
+            {
+                int* comp = comp_idx->data.i;
+                for( i = 0; i < dims_selected; i++ )
+                    row_sample[i] = sample_data[sample_step*comp[i]];
+            }
+
+            *_row_sample = row_sample;
+        }
+
+        if( as_sparse )
+        {
+            const float* src = (const float*)row_sample;
+            CvSparseVecElem32f* dst = (CvSparseVecElem32f*)row_sample;
+
+            dst[dims_selected].idx = -1;
+            for( i = dims_selected - 1; i >= 0; i-- )
+            {
+                dst[i].idx = i;
+                dst[i].val = src[i];
+            }
+        }
+    }
+    else
+    {
+        CvSparseNode* node;
+        CvSparseMatIterator mat_iterator;
+        const CvSparseMat* sparse = (const CvSparseMat*)sample;
+        assert( is_sparse );
+
+        node = cvInitSparseMatIterator( sparse, &mat_iterator );
+        CV_CALL( row_sample = (float*)cvAlloc( vec_size ));
+
+        if( comp_idx )
+        {
+            CV_CALL( inverse_comp_idx = (int*)cvAlloc( dims_all*sizeof(int) ));
+            memset( inverse_comp_idx, -1, dims_all*sizeof(int) );
+            for( i = 0; i < dims_selected; i++ )
+                inverse_comp_idx[comp_idx->data.i[i]] = i;
+        }
+
+        if( !as_sparse )
+        {
+            memset( row_sample, 0, vec_size );
+
+            for( ; node != 0; node = cvGetNextSparseNode(&mat_iterator) )
+            {
+                int idx = *CV_NODE_IDX( sparse, node );
+                if( inverse_comp_idx )
+                {
+                    idx = inverse_comp_idx[idx];
+                    if( idx < 0 )
+                        continue;
+                }
+                row_sample[idx] = *(float*)CV_NODE_VAL( sparse, node );
+            }
         }
         else
-            ddf->sv_index = 0;
-    }
-
-    __END__;
-
-    if( cvGetErrStatus() < 0 && dst )
-        icvReleaseSVM( &dst );
-
-    return dst;
-}
-
-static int icvRegisterSVMType()
-{
-    CvTypeInfo info;
-    memset( &info, 0, sizeof(info) );
-
-    info.flags = 0;
-    info.header_size = sizeof( info );
-    info.is_instance = icvIsSVM;
-    info.release = (CvReleaseFunc)icvReleaseSVM;
-    info.read = icvReadSVM;
-    info.write = icvWriteSVM;
-    info.clone = icvCloneSVM;
-    info.type_name = CV_TYPE_NAME_ML_SVM;
-    cvRegisterType( &info );
-
-    return 1;
-}
-
-
-static int svm = icvRegisterSVMType();
-
-/* The function trains SVM model with optimal parameters, obtained by using cross-validation.
-The parameters to be estimated should be indicated by setting theirs values to FLT_MAX.
-The optimal parameters are saved in <model_params> */
-CV_IMPL CvStatModel*
-cvTrainSVM_CrossValidation( const CvMat* train_data, int tflag,
-            const CvMat* responses,
-            CvStatModelParams* model_params,
-            const CvStatModelParams* cross_valid_params,
-            const CvMat* comp_idx,
-            const CvMat* sample_idx,
-            const CvParamGrid* degree_grid,
-            const CvParamGrid* gamma_grid,
-            const CvParamGrid* coef_grid,
-            const CvParamGrid* C_grid,
-            const CvParamGrid* nu_grid,
-            const CvParamGrid* p_grid )
-{
-    CvStatModel* svm = 0;
-
-    CV_FUNCNAME("cvTainSVMCrossValidation");
-    __BEGIN__;
-
-    double degree_step = 7,
-           g_step      = 15,
-           coef_step   = 14,
-           C_step      = 20,
-           nu_step     = 5,
-           p_step      = 7; // all steps must be > 1
-    double degree_begin = 0.01, degree_end = 2;
-    double g_begin      = 1e-5, g_end      = 0.5;
-    double coef_begin   = 0.1,  coef_end   = 300;
-    double C_begin      = 0.1,  C_end      = 6000;
-    double nu_begin     = 0.01,  nu_end    = 0.4;
-    double p_begin      = 0.01, p_end      = 100;
-
-    double rate = 0, gamma = 0, C = 0, degree = 0, coef = 0, p = 0, nu = 0;
-
-    double best_rate    = 0;
-    double best_degree  = degree_begin;
-    double best_gamma   = g_begin;
-    double best_coef    = coef_begin;
-    double best_C       = C_begin;
-    double best_nu      = nu_begin;
-    double best_p       = p_begin;
-
-    CvSVMModelParams svm_params, *psvm_params;
-    CvCrossValidationParams* cv_params = (CvCrossValidationParams*)cross_valid_params;
-    int svm_type, kernel;
-    int is_regression;
-
-    if( !model_params )
-        CV_ERROR( CV_StsBadArg, "" );
-    if( !cv_params )
-        CV_ERROR( CV_StsBadArg, "" );
-
-    svm_params = *(CvSVMModelParams*)model_params;
-    psvm_params = (CvSVMModelParams*)model_params;
-    svm_type = svm_params.svm_type;
-    kernel = svm_params.kernel_type;
-
-    svm_params.degree = svm_params.degree > 0 ? svm_params.degree : 1;
-    svm_params.gamma = svm_params.gamma > 0 ? svm_params.gamma : 1;
-    svm_params.coef0 = svm_params.coef0 > 0 ? svm_params.coef0 : 1e-6;
-    svm_params.C = svm_params.C > 0 ? svm_params.C : 1;
-    svm_params.nu = svm_params.nu > 0 ? svm_params.nu : 1;
-    svm_params.p = svm_params.p > 0 ? svm_params.p : 1;
-
-    if( degree_grid )
-    {
-        if( !(degree_grid->max_val == 0 && degree_grid->min_val == 0 &&
-              degree_grid->step == 0) )
         {
-            if( degree_grid->min_val > degree_grid->max_val )
-                CV_ERROR( CV_StsBadArg,
-                "low bound of grid should be less then the upper one");
-            if( degree_grid->step <= 1 )
-                CV_ERROR( CV_StsBadArg, "grid step should be greater 1" );
-            degree_begin = degree_grid->min_val;
-            degree_end   = degree_grid->max_val;
-            degree_step  = degree_grid->step;
-        }
-    }
-    else
-        degree_begin = degree_end = svm_params.degree;
-
-    if( gamma_grid )
-    {
-        if( !(gamma_grid->max_val == 0 && gamma_grid->min_val == 0 &&
-              gamma_grid->step == 0) )
-        {
-            if( gamma_grid->min_val > gamma_grid->max_val )
-                CV_ERROR( CV_StsBadArg,
-                "low bound of grid should be less then the upper one");
-            if( gamma_grid->step <= 1 )
-                CV_ERROR( CV_StsBadArg, "grid step should be greater 1" );
-            g_begin = gamma_grid->min_val;
-            g_end   = gamma_grid->max_val;
-            g_step  = gamma_grid->step;
-        }
-    }
-    else
-        g_begin = g_end = svm_params.gamma;
-
-    if( coef_grid )
-    {
-        if( !(coef_grid->max_val == 0 && coef_grid->min_val == 0 &&
-              coef_grid->step == 0) )
-        {
-            if( coef_grid->min_val > coef_grid->max_val )
-                CV_ERROR( CV_StsBadArg,
-                "low bound of grid should be less then the upper one");
-            if( coef_grid->step <= 1 )
-                CV_ERROR( CV_StsBadArg, "grid step should be greater 1" );
-            coef_begin = coef_grid->min_val;
-            coef_end   = coef_grid->max_val;
-            coef_step  = coef_grid->step;
-        }
-    }
-    else
-        coef_begin = coef_end = svm_params.coef0;
-
-    if( C_grid )
-    {
-        if( !(C_grid->max_val == 0 && C_grid->min_val == 0 && C_grid->step == 0))
-        {
-            if( C_grid->min_val > C_grid->max_val )
-                CV_ERROR( CV_StsBadArg,
-                "low bound of grid should be less then the upper one");
-            if( C_grid->step <= 1 )
-                CV_ERROR( CV_StsBadArg, "grid step should be greater 1" );
-            C_begin = C_grid->min_val;
-            C_end   = C_grid->max_val;
-            C_step  = C_grid->step;
-        }
-    }
-    else
-        C_begin = C_end = svm_params.C;
-
-    if( nu_grid )
-    {
-        if(!(nu_grid->max_val == 0 && nu_grid->min_val == 0 && nu_grid->step==0))
-        {
-            if( nu_grid->min_val > nu_grid->max_val )
-                CV_ERROR( CV_StsBadArg,
-                "low bound of grid should be less then the upper one");
-            if( nu_grid->step <= 1 )
-                CV_ERROR( CV_StsBadArg, "grid step should be greater 1" );
-            nu_begin = nu_grid->min_val;
-            nu_end   = nu_grid->max_val;
-            nu_step  = nu_grid->step;
-        }
-    }
-    else
-        nu_begin = nu_end = svm_params.nu;
-
-    if( p_grid )
-    {
-        if( !(p_grid->max_val == 0 && p_grid->min_val == 0 && p_grid->step == 0))
-        {
-            if( p_grid->min_val > p_grid->max_val )
-                CV_ERROR( CV_StsBadArg,
-                "low bound of grid should be less then the upper one");
-            if( p_grid->step <= 1 )
-                CV_ERROR( CV_StsBadArg, "grid step should be greater 1" );
-            p_begin = p_grid->min_val;
-            p_end   = p_grid->max_val;
-            p_step  = p_grid->step;
-        }
-    }
-    else
-        p_begin = p_end = svm_params.p;
-
-    // these parameters are not used:
-    if( kernel != CvSVM::POLY )
-        degree_begin = degree_end = svm_params.degree;
-
-   if( kernel == CvSVM::LINEAR )
-        g_begin = g_end = svm_params.gamma;
-
-    if( kernel != CvSVM::POLY && kernel != CvSVM::SIGMOID )
-        coef_begin = coef_end = svm_params.coef0;
-
-    if( svm_type == CvSVM::NU_SVC || svm_type == CvSVM::ONE_CLASS )
-        C_begin = C_end = svm_params.C;
-
-    if( svm_type == CvSVM::C_SVC || svm_type == CvSVM::EPS_SVR )
-        nu_begin = nu_end = svm_params.nu;
-
-    if( svm_type != CvSVM::EPS_SVR )
-        p_begin = p_end = svm_params.p;
-
-    is_regression = cv_params->is_regression;
-    best_rate = is_regression ? FLT_MAX : 0;
-
-    assert( g_step > 1 && degree_step > 1 && coef_step > 1);
-    assert( p_step > 1 && C_step > 1 && nu_step > 1 );
-
-    for( degree = degree_begin; degree <= degree_end; degree *= degree_step )
-    {
-      svm_params.degree = degree;
-      //printf("degree = %.3f\n", degree );
-      for( gamma= g_begin; gamma <= g_end; gamma *= g_step )
-      {
-        svm_params.gamma = gamma;
-        //printf("   gamma = %.3f\n", gamma );
-        for( coef = coef_begin; coef <= coef_end; coef *= coef_step )
-        {
-          svm_params.coef0 = coef;
-          //printf("      coef = %.3f\n", coef );
-          for( C = C_begin; C <= C_end; C *= C_step )
-          {
-            svm_params.C = C;
-            //printf("         C = %.3f\n", C );
-            for( nu = nu_begin; nu <= nu_end; nu *= nu_step )
+            CvSparseVecElem32f* ptr = (CvSparseVecElem32f*)row_sample;
+            
+            for( ; node != 0; node = cvGetNextSparseNode(&mat_iterator) )
             {
-              svm_params.nu = nu;
-              //printf("            nu = %.3f\n", nu );
-              for( p = p_begin; p <= p_end; p *= p_step )
-              {
-                int well;
-                svm_params.p = p;
-                //printf("               p = %.3f\n", p );
-
-                CV_CALL(rate = cvCrossValidation( train_data, tflag, responses, &cvTrainSVM,
-                    cross_valid_params, (CvStatModelParams*)&svm_params, comp_idx, sample_idx ));
-
-                well =  rate > best_rate && !is_regression || rate < best_rate && is_regression;
-                if( well || (rate == best_rate && C < best_C) )
+                int idx = *CV_NODE_IDX( sparse, node );
+                if( inverse_comp_idx )
                 {
-                    best_rate   = rate;
-                    best_degree = degree;
-                    best_gamma  = gamma;
-                    best_coef   = coef;
-                    best_C      = C;
-                    best_nu     = nu;
-                    best_p      = p;
+                    idx = inverse_comp_idx[idx];
+                    if( idx < 0 )
+                        continue;
                 }
-                //printf("                  rate = %.2f\n", rate );
-              }
+                ptr->idx = idx;
+                ptr->val = *(float*)CV_NODE_VAL( sparse, node );
+                ptr++;
             }
-          }
+            
+            qsort( row_sample, ptr - (CvSparseVecElem32f*)row_sample,
+                  sizeof(ptr[0]), icvCmpSparseVecElems );
+            ptr->idx = -1;
         }
-      }
+        
+        *_row_sample = row_sample;
     }
-    //printf("The best:\nrate = %.2f%% degree = %f gamma = %f coef = %f c = %f nu = %f p = %f\n",
-      //  best_rate, best_degree, best_gamma, best_coef, best_C, best_nu, best_p );
-
-    psvm_params->C      = best_C;
-    psvm_params->nu     = best_nu;
-    psvm_params->p      = best_p;
-    psvm_params->gamma  = best_gamma;
-    psvm_params->degree = best_degree;
-    psvm_params->coef0  = best_coef;
-
-    CV_CALL(svm = cvTrainSVM( train_data, tflag, responses, model_params, comp_idx, sample_idx ));
-
+    
     __END__;
+    
+    if( inverse_comp_idx )
+        cvFree( &inverse_comp_idx );
+    
+    if( cvGetErrStatus() < 0 && _row_sample )
+    {
+        cvFree( &row_sample );
+        *_row_sample = 0;
+    }
+}
 
-    return svm;
+
+}
 }
 
 #endif

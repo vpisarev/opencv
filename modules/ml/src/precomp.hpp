@@ -38,8 +38,8 @@
 //
 //M*/
 
-#ifndef __OPENCV_PRECOMP_H__
-#define __OPENCV_PRECOMP_H__
+#ifndef __OPENCV_ML_PRECOMP_HPP__
+#define __OPENCV_ML_PRECOMP_HPP__
 
 #include "opencv2/core.hpp"
 #include "opencv2/ml.hpp"
@@ -57,10 +57,80 @@
 #include <string.h>
 #include <time.h>
 
-#define ML_IMPL CV_IMPL
-#define __BEGIN__ __CV_BEGIN__
-#define __END__ __CV_END__
-#define EXIT __CV_EXIT__
+/****************************************************************************************\
+ *                               Main struct definitions                                  *
+ \****************************************************************************************/
+
+/* log(2*PI) */
+#define CV_LOG2PI (1.8378770664093454835606594728112)
+
+/* columns of <trainData> matrix are training samples */
+#define CV_COL_SAMPLE 0
+
+/* rows of <trainData> matrix are training samples */
+#define CV_ROW_SAMPLE 1
+
+#define CV_TRAIN_ERROR  0
+#define CV_TEST_ERROR   1
+
+#define CV_IS_ROW_SAMPLE(flags) ((flags) & CV_ROW_SAMPLE)
+
+#define CV_TYPE_NAME_ML_SVM         "opencv-ml-svm"
+#define CV_TYPE_NAME_ML_KNN         "opencv-ml-knn"
+#define CV_TYPE_NAME_ML_NBAYES      "opencv-ml-bayesian"
+#define CV_TYPE_NAME_ML_EM          "opencv-ml-em"
+#define CV_TYPE_NAME_ML_BOOSTING    "opencv-ml-boost-tree"
+#define CV_TYPE_NAME_ML_TREE        "opencv-ml-tree"
+#define CV_TYPE_NAME_ML_ANN_MLP     "opencv-ml-ann-mlp"
+#define CV_TYPE_NAME_ML_CNN         "opencv-ml-cnn"
+#define CV_TYPE_NAME_ML_RTREES      "opencv-ml-random-trees"
+#define CV_TYPE_NAME_ML_ERTREES     "opencv-ml-extremely-randomized-trees"
+#define CV_TYPE_NAME_ML_GBT         "opencv-ml-gradient-boosting-trees"
+
+struct CvVectors
+{
+    int type;
+    int dims, count;
+    CvVectors* next;
+    union
+    {
+        uchar** ptr;
+        float** fl;
+        double** db;
+    } data;
+};
+
+struct CV_EXPORTS_W_MAP CvParamGrid
+{
+    // SVM params type
+    enum { SVM_C=0, SVM_GAMMA=1, SVM_P=2, SVM_NU=3, SVM_COEF=4, SVM_DEGREE=5 };
+
+    CvParamGrid()
+    {
+        min_val = max_val = step = 0;
+    }
+
+    CvParamGrid( double min_val, double max_val, double log_step );
+    //CvParamGrid( int param_id );
+    bool check() const;
+
+    CV_PROP_RW double min_val;
+    CV_PROP_RW double max_val;
+    CV_PROP_RW double step;
+};
+
+inline CvParamGrid::CvParamGrid( double _min_val, double _max_val, double _log_step )
+{
+    min_val = _min_val;
+    max_val = _max_val;
+    step = _log_step;
+}
+
+struct CvPair16u32s
+{
+    unsigned short* u;
+    int* i;
+};
 
 #define CV_MAT_ELEM_FLAG( mat, type, comp, vect, tflag )    \
     (( tflag == CV_ROW_SAMPLE )                             \
@@ -349,19 +419,77 @@ const float** cvGetTrainSamples( const CvMat* train_data, int tflag,
 
 namespace cv
 {
+namespace ml
+{
+    #define CV_DTREE_CAT_DIR(idx,subset) \
+        (2*((subset[(idx)>>5]&(1 << ((idx) & 31)))==0)-1)
+
+    struct CvDTreeSplit
+    {
+        int var_idx;
+        int condensed_idx;
+        int inversed;
+        float quality;
+        CvDTreeSplit* next;
+        union
+        {
+            int subset[2];
+            struct
+            {
+                float c;
+                int split_point;
+            }
+            ord;
+        };
+    };
+
+    struct CvDTreeNode
+    {
+        int class_idx;
+        int Tn;
+        double value;
+
+        CvDTreeNode* parent;
+        CvDTreeNode* left;
+        CvDTreeNode* right;
+
+        CvDTreeSplit* split;
+
+        int sample_count;
+        int depth;
+        int* num_valid;
+        int offset;
+        int buf_idx;
+        double maxlr;
+
+        // global pruning data
+        int complexity;
+        double alpha;
+        double node_risk, tree_risk, tree_error;
+
+        // cross-validation pruning data
+        int* cv_Tn;
+        double* cv_node_risk;
+        double* cv_node_error;
+        
+        int get_num_valid(int vi) { return num_valid ? num_valid[vi] : sample_count; }
+        void set_num_valid(int vi, int n) { if( num_valid ) num_valid[vi] = n; }
+    };
+
+#if 0
     struct DTreeBestSplitFinder
     {
-        DTreeBestSplitFinder(){ tree = 0; node = 0; }
-        DTreeBestSplitFinder( CvDTree* _tree, CvDTreeNode* _node);
+        DTreeBestSplitFinder(){ node = 0; }
+        DTreeBestSplitFinder( const Ptr<DTree>& _tree, int _node);
         DTreeBestSplitFinder( const DTreeBestSplitFinder& finder, Split );
         virtual ~DTreeBestSplitFinder() {}
-        virtual void operator()(const BlockedRange& range);
+        virtual void operator()(const Range& range);
         void join( DTreeBestSplitFinder& rhs );
-        Ptr<CvDTreeSplit> bestSplit;
-        Ptr<CvDTreeSplit> split;
+        DTree::Split bestSplit;
+        DTree::Split split;
         int splitSize;
-        CvDTree* tree;
-        CvDTreeNode* node;
+        Ptr<DTree> tree;
+        int node;
     };
 
     struct ForestTreeBestSplitFinder : DTreeBestSplitFinder
@@ -371,6 +499,7 @@ namespace cv
         ForestTreeBestSplitFinder( const ForestTreeBestSplitFinder& finder, Split );
         virtual void operator()(const BlockedRange& range);
     };
-}
+#endif
+}}
 
-#endif /* __ML_H__ */
+#endif /* __OPENCV_ML_PRECOMP_HPP__ */

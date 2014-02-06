@@ -87,8 +87,6 @@ bool CvDTreeTrainData::set_params( const CvDTreeParams& _params )
 
     CV_FUNCNAME( "CvDTreeTrainData::set_params" );
 
-    __BEGIN__;
-
     // set parameters
     params = _params;
 
@@ -114,8 +112,6 @@ bool CvDTreeTrainData::set_params( const CvDTreeParams& _params )
         CV_ERROR( CV_StsOutOfRange, "params.regression_accuracy should be >= 0" );
 
     ok = true;
-
-    __END__;
 
     return ok;
 }
@@ -669,8 +665,6 @@ void CvDTreeTrainData::set_data( const CvMat* _train_data, int _tflag,
     CV_CALL( direction = cvCreateMat( 1, sample_count, CV_8UC1 ));
     CV_CALL( split_buf = cvCreateMat( 1, sample_count, CV_32SC1 ));
 
-    __END__;
-
     if( data )
         delete data;
 
@@ -887,8 +881,6 @@ CvDTreeNode* CvDTreeTrainData::subsample_data( const CvMat* _subsample_idx )
         }
     }
 
-    __END__;
-
     cvReleaseMat( &isubsample_idx );
     cvReleaseMat( &subsample_co );
 
@@ -1020,8 +1012,6 @@ void CvDTreeTrainData::get_vectors( const CvMat* _subsample_idx,
             }
         }
     }
-
-    __END__;
 
     cvReleaseMat( &subsample_idx );
     cvReleaseMat( &subsample_co );
@@ -1344,8 +1334,6 @@ void CvDTreeTrainData::write_params( CvFileStorage* fs ) const
         cvWrite( fs, "cat_count", cat_count );
         cvWrite( fs, "cat_map", cat_map );
     }
-
-    __END__;
 }
 
 
@@ -1494,8 +1482,6 @@ void CvDTreeTrainData::read_params( CvFileStorage* fs, CvFileNode* node )
             sizeof(CvDTreeNode), tree_storage ));
     CV_CALL( split_heap = cvCreateSet( 0, sizeof(split_heap[0]),
             max_split_size, tree_storage ));
-
-    __END__;
 }
 
 /////////////////////// Decision Tree /////////////////////////
@@ -1584,8 +1570,6 @@ bool CvDTree::train( const CvMat* _train_data, int _tflag,
                                  _missing_mask, _params, false );
     CV_CALL( result = do_train(0) );
 
-    __END__;
-
     return result;
 }
 
@@ -1610,10 +1594,6 @@ bool CvDTree::train( CvMLData* _data, CvDTreeParams _params )
 {
    bool result = false;
 
-    CV_FUNCNAME( "CvDTree::train" );
-
-    __BEGIN__;
-
     const CvMat* values = _data->get_values();
     const CvMat* response = _data->get_responses();
     const CvMat* missing = _data->get_missing();
@@ -1624,8 +1604,6 @@ bool CvDTree::train( CvMLData* _data, CvDTreeParams _params )
     CV_CALL( result = train( values, CV_ROW_SAMPLE, response, var_idx,
         train_sidx, var_types, missing, _params ) );
 
-    __END__;
-
     return result;
 }
 
@@ -1633,16 +1611,10 @@ bool CvDTree::train( CvDTreeTrainData* _data, const CvMat* _subsample_idx )
 {
     bool result = false;
 
-    CV_FUNCNAME( "CvDTree::train" );
-
-    __BEGIN__;
-
     clear();
     data = _data;
     data->shared = true;
     CV_CALL( result = do_train(_subsample_idx));
-
-    __END__;
 
     return result;
 }
@@ -1651,10 +1623,6 @@ bool CvDTree::train( CvDTreeTrainData* _data, const CvMat* _subsample_idx )
 bool CvDTree::do_train( const CvMat* _subsample_idx )
 {
     bool result = false;
-
-    CV_FUNCNAME( "CvDTree::do_train" );
-
-    __BEGIN__;
 
     root = data->subsample_data( _subsample_idx );
 
@@ -1673,8 +1641,6 @@ bool CvDTree::do_train( const CvMat* _subsample_idx )
 
         result = true;
     }
-
-    __END__;
 
     return result;
 }
@@ -3384,10 +3350,6 @@ void CvDTree::prune_cv()
     // 2. choose the best tree index (if need, apply 1SE rule).
     // 3. store the best index and cut the branches.
 
-    CV_FUNCNAME( "CvDTree::prune_cv" );
-
-    __BEGIN__;
-
     int ti, j, tree_count = 0, cv_n = data->params.cv_folds, n = root->sample_count;
     // currently, 1SE for regression is not implemented
     bool use_1se = data->params.use_1se_rule != 0 && data->is_classifier;
@@ -3465,8 +3427,6 @@ void CvDTree::prune_cv()
 
     pruned_tree_idx = min_idx;
     free_prune_data(data->params.truncate_pruned_tree != 0);
-
-    __END__;
 
     cvReleaseMat( &err_jk );
     cvReleaseMat( &ab );
@@ -3857,10 +3817,6 @@ void CvDTree::write_node( CvFileStorage* fs, CvDTreeNode* node ) const
 
 void CvDTree::write_tree_nodes( CvFileStorage* fs ) const
 {
-    //CV_FUNCNAME( "CvDTree::write_tree_nodes" );
-
-    __BEGIN__;
-
     CvDTreeNode* node = root;
 
     // traverse the tree and save all the nodes in depth-first order
@@ -3884,17 +3840,11 @@ void CvDTree::write_tree_nodes( CvFileStorage* fs ) const
 
         node = parent->right;
     }
-
-    __END__;
 }
 
 
 void CvDTree::write( CvFileStorage* fs, const char* name ) const
 {
-    //CV_FUNCNAME( "CvDTree::write" );
-
-    __BEGIN__;
-
     cvStartWriteStruct( fs, name, CV_NODE_MAP, CV_TYPE_NAME_ML_TREE );
 
     //get_var_importance();
@@ -3904,34 +3854,22 @@ void CvDTree::write( CvFileStorage* fs, const char* name ) const
     write( fs );
 
     cvEndWriteStruct( fs );
-
-    __END__;
 }
 
 
 void CvDTree::write( CvFileStorage* fs ) const
 {
-    //CV_FUNCNAME( "CvDTree::write" );
-
-    __BEGIN__;
-
     cvWriteInt( fs, "best_tree_idx", pruned_tree_idx );
 
     cvStartWriteStruct( fs, "nodes", CV_NODE_SEQ );
     write_tree_nodes( fs );
     cvEndWriteStruct( fs );
-
-    __END__;
 }
 
 
 CvDTreeSplit* CvDTree::read_split( CvFileStorage* fs, CvFileNode* fnode )
 {
     CvDTreeSplit* split = 0;
-
-    CV_FUNCNAME( "CvDTree::read_split" );
-
-    __BEGIN__;
 
     int vi, ci;
 
@@ -4007,8 +3945,6 @@ CvDTreeSplit* CvDTree::read_split( CvFileStorage* fs, CvFileNode* fnode )
 
     split->quality = (float)cvReadRealByName( fs, fnode, "quality" );
 
-    __END__;
-
     return split;
 }
 
@@ -4016,10 +3952,6 @@ CvDTreeSplit* CvDTree::read_split( CvFileStorage* fs, CvFileNode* fnode )
 CvDTreeNode* CvDTree::read_node( CvFileStorage* fs, CvFileNode* fnode, CvDTreeNode* parent )
 {
     CvDTreeNode* node = 0;
-
-    CV_FUNCNAME( "CvDTree::read_node" );
-
-    __BEGIN__;
 
     CvFileNode* splits;
     int i, depth;
@@ -4067,18 +3999,12 @@ CvDTreeNode* CvDTree::read_node( CvFileStorage* fs, CvFileNode* fnode, CvDTreeNo
         }
     }
 
-    __END__;
-
     return node;
 }
 
 
 void CvDTree::read_tree_nodes( CvFileStorage* fs, CvFileNode* fnode )
 {
-    CV_FUNCNAME( "CvDTree::read_tree_nodes" );
-
-    __BEGIN__;
-
     CvSeqReader reader;
     CvDTreeNode _root;
     CvDTreeNode* parent = &_root;
@@ -4108,8 +4034,6 @@ void CvDTree::read_tree_nodes( CvFileStorage* fs, CvFileNode* fnode )
     }
 
     root = _root.left;
-
-    __END__;
 }
 
 
@@ -4126,10 +4050,6 @@ void CvDTree::read( CvFileStorage* fs, CvFileNode* fnode )
 // a special entry point for reading weak decision trees from the tree ensembles
 void CvDTree::read( CvFileStorage* fs, CvFileNode* node, CvDTreeTrainData* _data )
 {
-    CV_FUNCNAME( "CvDTree::read" );
-
-    __BEGIN__;
-
     CvFileNode* tree_nodes;
 
     clear();
@@ -4141,8 +4061,6 @@ void CvDTree::read( CvFileStorage* fs, CvFileNode* node, CvDTreeTrainData* _data
 
     pruned_tree_idx = cvReadIntByName( fs, node, "best_tree_idx", -1 );
     read_tree_nodes( fs, tree_nodes );
-
-    __END__;
 }
 
 Mat CvDTree::getVarImportance()

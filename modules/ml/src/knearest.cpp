@@ -40,6 +40,7 @@
 
 #include "precomp.hpp"
 
+#if 0
 /****************************************************************************************\
 *                          K-Nearest Neighbors Classifier                                *
 \****************************************************************************************/
@@ -478,5 +479,7 @@ float CvKNearest::find_nearest( const cv::Mat& _samples, int k, CV_OUT cv::Mat& 
 {
     return find_nearest(_samples, k, &results, 0, &neighborResponses, &dists);
 }
+
+#endif
 
 /* End of file */

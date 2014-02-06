@@ -40,6 +40,11 @@
 
 #include "precomp.hpp"
 
+// TODO
+#if 0
+
+namespace cv { namespace ml {
+
 static inline double
 log_ratio( double val )
 {
@@ -51,27 +56,27 @@ log_ratio( double val )
 }
 
 
-CvBoostParams::CvBoostParams()
+Boost::Params::Params()
 {
-    boost_type = CvBoost::REAL;
-    weak_count = 100;
-    weight_trim_rate = 0.95;
-    cv_folds = 0;
-    max_depth = 1;
+    boostType = Boost::REAL;
+    weakCount = 100;
+    weightTrimRate = 0.95;
+    CVFolds = 0;
+    maxDepth = 1;
 }
 
 
-CvBoostParams::CvBoostParams( int _boost_type, int _weak_count,
-                                        double _weight_trim_rate, int _max_depth,
-                                        bool _use_surrogates, const float* _priors )
+Boost::Params::Params( int _boostType, int _weak_count,
+                       double _weightTrimRate, int _maxDepth,
+                       bool _use_surrogates, const Mat& _priors )
 {
-    boost_type = _boost_type;
-    weak_count = _weak_count;
-    weight_trim_rate = _weight_trim_rate;
-    split_criteria = CvBoost::DEFAULT;
-    cv_folds = 0;
-    max_depth = _max_depth;
-    use_surrogates = _use_surrogates;
+    boostType = _boostType;
+    weakCount = _weak_count;
+    weightTrimRate = _weightTrimRate;
+    splitCriteria = Boost::DEFAULT;
+    CVFolds = 0;
+    maxDepth = _maxDepth;
+    useSurrogates = _use_surrogates;
     priors = _priors;
 }
 
@@ -273,8 +278,8 @@ CvBoostTree::find_split_ord_class( CvDTreeNode* node, int vi, float init_quality
     double lcw[2] = {0,0}, rcw[2];
     int i, best_i = -1;
     double best_val = init_quality;
-    int boost_type = ensemble->get_params().boost_type;
-    int split_criteria = ensemble->get_params().split_criteria;
+    int boostType = ensemble->get_params().boostType;
+    int splitCriteria = ensemble->get_params().splitCriteria;
 
     rcw[0] = rcw0[0]; rcw[1] = rcw0[1];
     for( i = n1; i < n; i++ )
@@ -284,10 +289,10 @@ CvBoostTree::find_split_ord_class( CvDTreeNode* node, int vi, float init_quality
         rcw[responses[idx]] -= w;
     }
 
-    if( split_criteria != CvBoost::GINI && split_criteria != CvBoost::MISCLASS )
-        split_criteria = boost_type == CvBoost::DISCRETE ? CvBoost::MISCLASS : CvBoost::GINI;
+    if( splitCriteria != BoostImpl::GINI && splitCriteria != BoostImpl::MISCLASS )
+        splitCriteria = boostType == BoostImpl::DISCRETE ? BoostImpl::MISCLASS : BoostImpl::GINI;
 
-    if( split_criteria == CvBoost::GINI )
+    if( splitCriteria == BoostImpl::GINI )
     {
         double L = 0, R = rcw[0] + rcw[1];
         double lsum2 = 0, rsum2 = rcw[0]*rcw[0] + rcw[1]*rcw[1];
@@ -385,8 +390,8 @@ CvBoostTree::find_split_cat_class( CvDTreeNode* node, int vi, float init_quality
     double L = 0, R;
     double best_val = init_quality;
     int best_subset = -1, subset_i;
-    int boost_type = ensemble->get_params().boost_type;
-    int split_criteria = ensemble->get_params().split_criteria;
+    int boostType = ensemble->get_params().boostType;
+    int splitCriteria = ensemble->get_params().splitCriteria;
 
     // init array of counters:
     // c_{jk} - number of samples that have vi-th input variable = j and response = k.
@@ -410,8 +415,8 @@ CvBoostTree::find_split_cat_class( CvDTreeNode* node, int vi, float init_quality
 
     R = rcw[0] + rcw[1];
 
-    if( split_criteria != CvBoost::GINI && split_criteria != CvBoost::MISCLASS )
-        split_criteria = boost_type == CvBoost::DISCRETE ? CvBoost::MISCLASS : CvBoost::GINI;
+    if( splitCriteria != BoostImpl::GINI && splitCriteria != BoostImpl::MISCLASS )
+        splitCriteria = boostType == BoostImpl::DISCRETE ? BoostImpl::MISCLASS : BoostImpl::GINI;
 
     // sort rows of c_jk by increasing c_j,1
     // (i.e. by the weight of samples in j-th category that belong to class 1)
@@ -430,7 +435,7 @@ CvBoostTree::find_split_cat_class( CvDTreeNode* node, int vi, float init_quality
         lcw[0] += w0; rcw[0] -= w0;
         lcw[1] += w1; rcw[1] -= w1;
 
-        if( split_criteria == CvBoost::GINI )
+        if( splitCriteria == BoostImpl::GINI )
         {
             double lsum2 = lcw[0]*lcw[0] + lcw[1]*lcw[1];
             double rsum2 = rcw[0]*rcw[0] + rcw[1]*rcw[1];
@@ -801,7 +806,7 @@ CvBoostTree::calc_node_value( CvDTreeNode* node )
     const int* labels = data->get_cv_labels(node, labels_buf);
     double* subtree_weights = ensemble->get_subtree_weights()->data.db;
     double rcw[2] = {0,0};
-    int boost_type = ensemble->get_params().boost_type;
+    int boostType = ensemble->get_params().boostType;
 
     if( data->is_classifier )
     {
@@ -824,7 +829,7 @@ CvBoostTree::calc_node_value( CvDTreeNode* node )
 
         node->class_idx = rcw[1] > rcw[0];
 
-        if( boost_type == CvBoost::DISCRETE )
+        if( boostType == BoostImpl::DISCRETE )
         {
             // ignore cat_map for responses, and use {-1,1},
             // as the whole ensemble response is computes as sign(sum_i(weak_response_i)
@@ -833,7 +838,7 @@ CvBoostTree::calc_node_value( CvDTreeNode* node )
         else
         {
             double p = rcw[1]/(rcw[0] + rcw[1]);
-            assert( boost_type == CvBoost::REAL );
+            assert( boostType == BoostImpl::REAL );
 
             // store log-ratio of the probability
             node->value = 0.5*log_ratio(p);
@@ -896,7 +901,7 @@ void CvBoostTree::read( CvFileStorage* _fs, CvFileNode* _node,
 
 /////////////////////////////////// CvBoost /////////////////////////////////////
 
-CvBoost::CvBoost()
+BoostImpl::CvBoost()
 {
     data = 0;
     weak = 0;
@@ -910,7 +915,7 @@ CvBoost::CvBoost()
 }
 
 
-void CvBoost::prune( CvSlice slice )
+void BoostImpl::prune( CvSlice slice )
 {
     if( weak && weak->total > 0 )
     {
@@ -932,7 +937,7 @@ void CvBoost::prune( CvSlice slice )
 }
 
 
-void CvBoost::clear()
+void BoostImpl::clear()
 {
     if( weak )
     {
@@ -956,16 +961,16 @@ void CvBoost::clear()
 }
 
 
-CvBoost::~CvBoost()
+BoostImpl::~CvBoost()
 {
     clear();
 }
 
 
-CvBoost::CvBoost( const CvMat* _train_data, int _tflag,
+BoostImpl::CvBoost( const CvMat* _train_data, int _tflag,
                   const CvMat* _responses, const CvMat* _var_idx,
                   const CvMat* _sample_idx, const CvMat* _var_type,
-                  const CvMat* _missing_mask, CvBoostParams _params )
+                  const CvMat* _missing_mask, Boost::Params _params )
 {
     weak = 0;
     data = 0;
@@ -980,56 +985,52 @@ CvBoost::CvBoost( const CvMat* _train_data, int _tflag,
 
 
 bool
-CvBoost::set_params( const CvBoostParams& _params )
+BoostImpl::set_params( const Boost::Params& _params )
 {
     bool ok = false;
 
-    CV_FUNCNAME( "CvBoost::set_params" );
-
-    __BEGIN__;
-
     params = _params;
-    if( params.boost_type != DISCRETE && params.boost_type != REAL &&
-        params.boost_type != LOGIT && params.boost_type != GENTLE )
+    if( params.boostType != DISCRETE && params.boostType != REAL &&
+        params.boostType != LOGIT && params.boostType != GENTLE )
         CV_ERROR( CV_StsBadArg, "Unknown/unsupported boosting type" );
 
     params.weak_count = MAX( params.weak_count, 1 );
-    params.weight_trim_rate = MAX( params.weight_trim_rate, 0. );
-    params.weight_trim_rate = MIN( params.weight_trim_rate, 1. );
-    if( params.weight_trim_rate < FLT_EPSILON )
-        params.weight_trim_rate = 1.f;
+    params.weightTrimRate = MAX( params.weightTrimRate, 0. );
+    params.weightTrimRate = MIN( params.weightTrimRate, 1. );
+    if( params.weightTrimRate < FLT_EPSILON )
+        params.weightTrimRate = 1.f;
 
-    if( params.boost_type == DISCRETE &&
-        params.split_criteria != GINI && params.split_criteria != MISCLASS )
-        params.split_criteria = MISCLASS;
-    if( params.boost_type == REAL &&
-        params.split_criteria != GINI && params.split_criteria != MISCLASS )
-        params.split_criteria = GINI;
-    if( (params.boost_type == LOGIT || params.boost_type == GENTLE) &&
-        params.split_criteria != SQERR )
-        params.split_criteria = SQERR;
+    if( params.boostType == DISCRETE &&
+        params.splitCriteria != GINI && params.splitCriteria != MISCLASS )
+        params.splitCriteria = MISCLASS;
+    if( params.boostType == REAL &&
+        params.splitCriteria != GINI && params.splitCriteria != MISCLASS )
+        params.splitCriteria = GINI;
+    if( (params.boostType == LOGIT || params.boostType == GENTLE) &&
+        params.splitCriteria != SQERR )
+        params.splitCriteria = SQERR;
 
     ok = true;
 
-    __END__;
+    
 
     return ok;
 }
 
 
 bool
-CvBoost::train( const CvMat* _train_data, int _tflag,
+BoostImpl::train( const CvMat* _train_data, int _tflag,
               const CvMat* _responses, const CvMat* _var_idx,
               const CvMat* _sample_idx, const CvMat* _var_type,
               const CvMat* _missing_mask,
-              CvBoostParams _params, bool _update )
+              Boost::Params _params, bool _update )
 {
     bool ok = false;
     CvMemStorage* storage = 0;
 
-    CV_FUNCNAME( "CvBoost::train" );
+    
 
-    __BEGIN__;
+    
 
     int i;
 
@@ -1057,7 +1058,7 @@ CvBoost::train( const CvMat* _train_data, int _tflag,
             _sample_idx, _var_type, _missing_mask, _params, true, true, true );
     }
 
-    if ( (_params.boost_type == LOGIT) || (_params.boost_type == GENTLE) )
+    if ( (_params.boostType == LOGIT) || (_params.boostType == GENTLE) )
         data->do_responses_copy();
 
     update_weights( 0 );
@@ -1088,20 +1089,20 @@ CvBoost::train( const CvMat* _train_data, int _tflag,
     else
         clear();
 
-    __END__;
+    
 
     return ok;
 }
 
-bool CvBoost::train( CvMLData* _data,
-             CvBoostParams _params,
+bool BoostImpl::train( CvMLData* _data,
+             Boost::Params _params,
              bool update )
 {
     bool result = false;
 
-    CV_FUNCNAME( "CvBoost::train" );
+    
 
-    __BEGIN__;
+    
 
     const CvMat* values = _data->get_values();
     const CvMat* response = _data->get_responses();
@@ -1113,23 +1114,23 @@ bool CvBoost::train( CvMLData* _data,
     CV_CALL( result = train( values, CV_ROW_SAMPLE, response, var_idx,
         train_sidx, var_types, missing, _params, update ) );
 
-    __END__;
+    
 
     return result;
 }
 
-void CvBoost::initialize_weights(double (&p)[2])
+void BoostImpl::initialize_weights(double (&p)[2])
 {
     p[0] = 1.;
     p[1] = 1.;
 }
 
 void
-CvBoost::update_weights( CvBoostTree* tree )
+BoostImpl::update_weights( CvBoostTree* tree )
 {
-    CV_FUNCNAME( "CvBoost::update_weights" );
+    
 
-    __BEGIN__;
+    
 
     int i, n = data->sample_count;
     double sumw = 0.;
@@ -1138,7 +1139,7 @@ CvBoost::update_weights( CvBoostTree* tree )
     int *sample_idx_buf;
     const int* sample_idx = 0;
     cv::AutoBuffer<uchar> inn_buf;
-    size_t _buf_size = (params.boost_type == LOGIT) || (params.boost_type == GENTLE) ? (size_t)(data->sample_count)*sizeof(int) : 0;
+    size_t _buf_size = (params.boostType == LOGIT) || (params.boostType == GENTLE) ? (size_t)(data->sample_count)*sizeof(int) : 0;
     if( !tree )
         _buf_size += n*sizeof(int);
     else
@@ -1149,7 +1150,7 @@ CvBoost::update_weights( CvBoostTree* tree )
     inn_buf.allocate(_buf_size);
     uchar* cur_buf_pos = (uchar*)inn_buf;
 
-    if ( (params.boost_type == LOGIT) || (params.boost_type == GENTLE) )
+    if ( (params.boostType == LOGIT) || (params.boostType == GENTLE) )
     {
         step = CV_IS_MAT_CONT(data->responses_copy->type) ?
             1 : data->responses_copy->step / CV_ELEM_SIZE(data->responses_copy->type);
@@ -1235,7 +1236,7 @@ CvBoost::update_weights( CvBoostTree* tree )
             }
         }
 
-        if( params.boost_type == LOGIT )
+        if( params.boostType == LOGIT )
         {
             CV_CALL( sum_response = cvCreateMat( 1, n, CV_64F ));
 
@@ -1249,7 +1250,7 @@ CvBoost::update_weights( CvBoostTree* tree )
             // the target function values are recalculated for each of the trees
             data->is_classifier = false;
         }
-        else if( params.boost_type == GENTLE )
+        else if( params.boostType == GENTLE )
         {
             for( i = 0; i < n; i++ )
                 fdata[sample_idx[i]*step] = (float)orig_response->data.i[i];
@@ -1290,7 +1291,7 @@ CvBoost::update_weights( CvBoostTree* tree )
         }
 
         // now update weights and other parameters for each type of boosting
-        if( params.boost_type == DISCRETE )
+        if( params.boostType == DISCRETE )
         {
             // Discrete AdaBoost:
             //   weak_eval[i] (=f(x_i)) is in {-1,1}
@@ -1324,7 +1325,7 @@ CvBoost::update_weights( CvBoostTree* tree )
 
             tree->scale( C );
         }
-        else if( params.boost_type == REAL )
+        else if( params.boostType == REAL )
         {
             // Real AdaBoost:
             //   weak_eval[i] = f(x_i) = 0.5*log(p(x_i)/(1-p(x_i))), p(x_i)=P(y=1|x_i)
@@ -1342,7 +1343,7 @@ CvBoost::update_weights( CvBoostTree* tree )
                 weights->data.db[i] = w;
             }
         }
-        else if( params.boost_type == LOGIT )
+        else if( params.boostType == LOGIT )
         {
             // LogitBoost:
             //   weak_eval[i] = f(x_i) in [-z_max,z_max]
@@ -1396,7 +1397,7 @@ CvBoost::update_weights( CvBoostTree* tree )
             // Gentle AdaBoost:
             //   weak_eval[i] = f(x_i) in [-1,1]
             //   w_i *= exp(-y_i*f(x_i))
-            assert( params.boost_type == GENTLE );
+            assert( params.boostType == GENTLE );
 
             for( i = 0; i < n; i++ )
                 weak_eval->data.db[i] *= -orig_response->data.i[i];
@@ -1416,25 +1417,26 @@ CvBoost::update_weights( CvBoostTree* tree )
     if( sumw > FLT_EPSILON )
     {
         sumw = 1./sumw;
+        double* wptr = weights.ptr<double>();
         for( i = 0; i < n; ++i )
-            weights->data.db[i] *= sumw;
+            wptr[i] *= sumw;
     }
 
-    __END__;
+    
 }
 
 
 void
-CvBoost::trim_weights()
+BoostImpl::trim_weights()
 {
-    //CV_FUNCNAME( "CvBoost::trim_weights" );
+    //
 
-    __BEGIN__;
+    
 
     int i, count = data->sample_count, nz_count = 0;
     double sum, threshold;
 
-    if( params.weight_trim_rate <= 0. || params.weight_trim_rate >= 1. )
+    if( params.weightTrimRate <= 0. || params.weightTrimRate >= 1. )
         EXIT;
 
     // use weak_eval as temporary buffer for sorted weights
@@ -1444,7 +1446,7 @@ CvBoost::trim_weights()
 
     // as weight trimming occurs immediately after updating the weights,
     // where they are renormalized, we assume that the weight sum = 1.
-    sum = 1. - params.weight_trim_rate;
+    sum = 1. - params.weightTrimRate;
 
     for( i = 0; i < count; i++ )
     {
@@ -1466,20 +1468,20 @@ CvBoost::trim_weights()
 
     have_subsample = nz_count < count;
 
-    __END__;
+    
 }
 
 
 const CvMat*
-CvBoost::get_active_vars( bool absolute_idx )
+BoostImpl::get_active_vars( bool absolute_idx )
 {
     CvMat* mask = 0;
     CvMat* inv_map = 0;
     CvMat* result = 0;
 
-    CV_FUNCNAME( "CvBoost::get_active_vars" );
+    
 
-    __BEGIN__;
+    
 
     if( !weak )
         CV_ERROR( CV_StsError, "The boosted tree ensemble has not been trained yet" );
@@ -1590,7 +1592,7 @@ CvBoost::get_active_vars( bool absolute_idx )
 
     result = absolute_idx ? active_vars_abs : active_vars;
 
-    __END__;
+    
 
     cvReleaseMat( &mask );
     cvReleaseMat( &inv_map );
@@ -1600,7 +1602,7 @@ CvBoost::get_active_vars( bool absolute_idx )
 
 
 float
-CvBoost::predict( const CvMat* _sample, const CvMat* _missing,
+BoostImpl::predict( const CvMat* _sample, const CvMat* _missing,
                   CvMat* weak_responses, CvSlice slice,
                   bool raw_mode, bool return_sum ) const
 {
@@ -1827,7 +1829,7 @@ CvBoost::predict( const CvMat* _sample, const CvMat* _missing,
     return value;
 }
 
-float CvBoost::calc_error( CvMLData* _data, int type, std::vector<float> *resp )
+float BoostImpl::calc_error( CvMLData* _data, int type, std::vector<float> *resp )
 {
     float err = 0;
     const CvMat* values = _data->get_values();
@@ -1884,42 +1886,42 @@ float CvBoost::calc_error( CvMLData* _data, int type, std::vector<float> *resp )
     return err;
 }
 
-void CvBoost::write_params( CvFileStorage* fs ) const
+void BoostImpl::write_params( CvFileStorage* fs ) const
 {
     const char* boost_type_str =
-        params.boost_type == DISCRETE ? "DiscreteAdaboost" :
-        params.boost_type == REAL ? "RealAdaboost" :
-        params.boost_type == LOGIT ? "LogitBoost" :
-        params.boost_type == GENTLE ? "GentleAdaboost" : 0;
+        params.boostType == DISCRETE ? "DiscreteAdaboost" :
+        params.boostType == REAL ? "RealAdaboost" :
+        params.boostType == LOGIT ? "LogitBoost" :
+        params.boostType == GENTLE ? "GentleAdaboost" : 0;
 
     const char* split_crit_str =
-        params.split_criteria == DEFAULT ? "Default" :
-        params.split_criteria == GINI ? "Gini" :
-        params.boost_type == MISCLASS ? "Misclassification" :
-        params.boost_type == SQERR ? "SquaredErr" : 0;
+        params.splitCriteria == DEFAULT ? "Default" :
+        params.splitCriteria == GINI ? "Gini" :
+        params.boostType == MISCLASS ? "Misclassification" :
+        params.boostType == SQERR ? "SquaredErr" : 0;
 
     if( boost_type_str )
         cvWriteString( fs, "boosting_type", boost_type_str );
     else
-        cvWriteInt( fs, "boosting_type", params.boost_type );
+        cvWriteInt( fs, "boosting_type", params.boostType );
 
     if( split_crit_str )
         cvWriteString( fs, "splitting_criteria", split_crit_str );
     else
-        cvWriteInt( fs, "splitting_criteria", params.split_criteria );
+        cvWriteInt( fs, "splitting_criteria", params.splitCriteria );
 
     cvWriteInt( fs, "ntrees", weak->total );
-    cvWriteReal( fs, "weight_trimming_rate", params.weight_trim_rate );
+    cvWriteReal( fs, "weight_trimming_rate", params.weightTrimRate );
 
     data->write_params( fs );
 }
 
 
-void CvBoost::read_params( CvFileStorage* fs, CvFileNode* fnode )
+void BoostImpl::read_params( CvFileStorage* fs, CvFileNode* fnode )
 {
-    CV_FUNCNAME( "CvBoost::read_params" );
+    
 
-    __BEGIN__;
+    
 
     CvFileNode* temp;
 
@@ -1930,7 +1932,7 @@ void CvBoost::read_params( CvFileStorage* fs, CvFileNode* fnode )
     CV_CALL( data->read_params(fs, fnode));
     data->shared = true;
 
-    params.max_depth = data->params.max_depth;
+    params.maxDepth = data->params.maxDepth;
     params.min_sample_count = data->params.min_sample_count;
     params.max_categories = data->params.max_categories;
     params.priors = data->params.priors;
@@ -1944,46 +1946,46 @@ void CvBoost::read_params( CvFileStorage* fs, CvFileNode* fnode )
     if( temp && CV_NODE_IS_STRING(temp->tag) )
     {
         const char* boost_type_str = cvReadString( temp, "" );
-        params.boost_type = strcmp( boost_type_str, "DiscreteAdaboost" ) == 0 ? DISCRETE :
+        params.boostType = strcmp( boost_type_str, "DiscreteAdaboost" ) == 0 ? DISCRETE :
                             strcmp( boost_type_str, "RealAdaboost" ) == 0 ? REAL :
                             strcmp( boost_type_str, "LogitBoost" ) == 0 ? LOGIT :
                             strcmp( boost_type_str, "GentleAdaboost" ) == 0 ? GENTLE : -1;
     }
     else
-        params.boost_type = cvReadInt( temp, -1 );
+        params.boostType = cvReadInt( temp, -1 );
 
-    if( params.boost_type < DISCRETE || params.boost_type > GENTLE )
+    if( params.boostType < DISCRETE || params.boostType > GENTLE )
         CV_ERROR( CV_StsBadArg, "Unknown boosting type" );
 
     temp = cvGetFileNodeByName( fs, fnode, "splitting_criteria" );
     if( temp && CV_NODE_IS_STRING(temp->tag) )
     {
         const char* split_crit_str = cvReadString( temp, "" );
-        params.split_criteria = strcmp( split_crit_str, "Default" ) == 0 ? DEFAULT :
+        params.splitCriteria = strcmp( split_crit_str, "Default" ) == 0 ? DEFAULT :
                                 strcmp( split_crit_str, "Gini" ) == 0 ? GINI :
                                 strcmp( split_crit_str, "Misclassification" ) == 0 ? MISCLASS :
                                 strcmp( split_crit_str, "SquaredErr" ) == 0 ? SQERR : -1;
     }
     else
-        params.split_criteria = cvReadInt( temp, -1 );
+        params.splitCriteria = cvReadInt( temp, -1 );
 
-    if( params.split_criteria < DEFAULT || params.boost_type > SQERR )
+    if( params.splitCriteria < DEFAULT || params.boostType > SQERR )
         CV_ERROR( CV_StsBadArg, "Unknown boosting type" );
 
     params.weak_count = cvReadIntByName( fs, fnode, "ntrees" );
-    params.weight_trim_rate = cvReadRealByName( fs, fnode, "weight_trimming_rate", 0. );
+    params.weightTrimRate = cvReadRealByName( fs, fnode, "weight_trimming_rate", 0. );
 
-    __END__;
+    
 }
 
 
 
 void
-CvBoost::read( CvFileStorage* fs, CvFileNode* node )
+BoostImpl::read( CvFileStorage* fs, CvFileNode* node )
 {
-    CV_FUNCNAME( "CvBoost::read" );
+    
 
-    __BEGIN__;
+    
 
     CvSeqReader reader;
     CvFileNode* trees_fnode;
@@ -2019,16 +2021,16 @@ CvBoost::read( CvFileStorage* fs, CvFileNode* node )
     }
     get_active_vars();
 
-    __END__;
+    
 }
 
 
 void
-CvBoost::write( CvFileStorage* fs, const char* name ) const
+BoostImpl::write( CvFileStorage* fs, const char* name ) const
 {
-    CV_FUNCNAME( "CvBoost::write" );
+    
 
-    __BEGIN__;
+    
 
     CvSeqReader reader;
     int i;
@@ -2055,54 +2057,54 @@ CvBoost::write( CvFileStorage* fs, const char* name ) const
     cvEndWriteStruct( fs );
     cvEndWriteStruct( fs );
 
-    __END__;
+    
 }
 
 
 CvMat*
-CvBoost::get_weights()
+BoostImpl::get_weights()
 {
     return weights;
 }
 
 
 CvMat*
-CvBoost::get_subtree_weights()
+BoostImpl::get_subtree_weights()
 {
     return subtree_weights;
 }
 
 
 CvMat*
-CvBoost::get_weak_response()
+BoostImpl::get_weak_response()
 {
     return weak_eval;
 }
 
 
-const CvBoostParams&
-CvBoost::get_params() const
+const Boost::Params&
+BoostImpl::get_params() const
 {
     return params;
 }
 
-CvSeq* CvBoost::get_weak_predictors()
+CvSeq* BoostImpl::get_weak_predictors()
 {
     return weak;
 }
 
-const CvDTreeTrainData* CvBoost::get_data() const
+const CvDTreeTrainData* BoostImpl::get_data() const
 {
     return data;
 }
 
 using namespace cv;
 
-CvBoost::CvBoost( const Mat& _train_data, int _tflag,
+BoostImpl::CvBoost( const Mat& _train_data, int _tflag,
                const Mat& _responses, const Mat& _var_idx,
                const Mat& _sample_idx, const Mat& _var_type,
                const Mat& _missing_mask,
-               CvBoostParams _params )
+               Boost::Params _params )
 {
     weak = 0;
     data = 0;
@@ -2116,11 +2118,11 @@ CvBoost::CvBoost( const Mat& _train_data, int _tflag,
 
 
 bool
-CvBoost::train( const Mat& _train_data, int _tflag,
+BoostImpl::train( const Mat& _train_data, int _tflag,
                const Mat& _responses, const Mat& _var_idx,
                const Mat& _sample_idx, const Mat& _var_type,
                const Mat& _missing_mask,
-               CvBoostParams _params, bool _update )
+               Boost::Params _params, bool _update )
 {
     train_data_hdr = _train_data;
     train_data_mat = _train_data;
@@ -2135,7 +2137,7 @@ CvBoost::train( const Mat& _train_data, int _tflag,
 }
 
 float
-CvBoost::predict( const Mat& _sample, const Mat& _missing,
+BoostImpl::predict( const Mat& _sample, const Mat& _missing,
                   const Range& slice, bool raw_mode, bool return_sum ) const
 {
     CvMat sample = _sample, mmask = _missing;
@@ -2158,5 +2160,7 @@ CvBoost::predict( const Mat& _sample, const Mat& _missing,
                    slice == Range::all() ? CV_WHOLE_SEQ : cvSlice(slice.start, slice.end),
                    raw_mode, return_sum);
 }
+
+#endif
 
 /* End of file. */
