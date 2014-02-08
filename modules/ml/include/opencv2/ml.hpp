@@ -95,21 +95,19 @@ public:
     {
     public:
         Params();
-        Params(int headerLineCount, int responseIdx, char delimiter, char missch);
+        Params(int headerLineCount, int responseIdx, char delimiter, char missch, const String& varType);
 
         char delimiter;
         char missch;
 
         int headerLines;
         int responseIdx;
-        int defaultResponseType;
-        int defaultVarType;
-        Mat varType;
+        String varTypeSpec;
     };
 
     virtual ~TrainData();
 
-    bool getTFlag() const;
+    virtual bool getTFlag() const;
     virtual Mat getSamples() const;
     virtual Mat getResponses();
     virtual Mat getMissing() const;
@@ -117,6 +115,8 @@ public:
     virtual Mat getVarType() const;
     virtual Mat getTrainSampleIdx() const;
     virtual Mat getTestSampleIdx() const;
+    
+    virtual Params getParams() const;
 
     virtual void setTrainTestSplit(int count, bool shuffle=true);
     virtual void setTrainTestSplitRatio(float ratio, bool shuffle=true);
@@ -156,8 +156,6 @@ public:
    It is used for optimizing statmodel accuracy by varying model parameters,
    the accuracy estimate being computed by cross-validation.
    The grid is logarithmic, so <step> must be greater then 1. */
-
-class MLData;
 
 class CV_EXPORTS_W NormalBayesClassifier : public StatModel
 {
