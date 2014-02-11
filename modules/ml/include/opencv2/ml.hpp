@@ -107,19 +107,23 @@ public:
 
     virtual ~TrainData();
 
-    virtual bool getTFlag() const;
-    virtual Mat getSamples() const;
-    virtual Mat getResponses();
-    virtual Mat getMissing() const;
-    virtual Mat getVarIdx() const;
-    virtual Mat getVarType() const;
-    virtual Mat getTrainSampleIdx() const;
-    virtual Mat getTestSampleIdx() const;
-    
-    virtual Params getParams() const;
+    virtual bool getTFlag() const = 0;
+    virtual Mat getSamples() const = 0;
+    virtual Mat getResponses() = 0;
+    virtual Mat getMissing() const = 0;
+    virtual Mat getVarIdx() const = 0;
+    virtual Mat getVarType() const = 0;
+    virtual Mat getTrainSampleIdx() const = 0;
+    virtual Mat getTestSampleIdx() const = 0;
 
-    virtual void setTrainTestSplit(int count, bool shuffle=true);
-    virtual void setTrainTestSplitRatio(float ratio, bool shuffle=true);
+    virtual Mat getNormCatResponses() const = 0;
+    virtual Mat getClassLabels() const = 0;
+    virtual Mat getClassCounters() const = 0;
+    
+    virtual Params getParams() const = 0;
+
+    virtual void setTrainTestSplit(int count, bool shuffle=true) = 0;
+    virtual void setTrainTestSplitRatio(float ratio, bool shuffle=true) = 0;
 };
 
 CV_EXPORTS Ptr<TrainData> loadDataFromCSV(const String& filename, const TrainData::Params& params);

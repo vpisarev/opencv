@@ -50,24 +50,13 @@ class NormalBayesClassifierImpl : public NormalBayesClassifier
     NormalBayesClassifierImpl()
     {
         var_count = var_all = 0;
-        var_idx = 0;
-        cls_labels = 0;
-        count = 0;
-        sum = 0;
-        productsum = 0;
-        avg = 0;
-        inv_eigen_values = 0;
-        cov_rotate_mats = 0;
-        c = 0;
-        default_model_name = "my_nb";
     }
 
-    bool train( const Mat& trainData, const Mat& responses, const Mat& varIdx,
-                const Mat& sampleIdx, bool update )
+    bool train( const TrainData& trainData, bool update )
     {
         const float min_variation = FLT_EPSILON;
         bool result = false;
-        CvMat* responses   = 0;
+        Mat responses;
         const float** train_data = 0;
         CvMat* __cls_labels = 0;
         CvMat* __var_idx = 0;
@@ -77,11 +66,11 @@ class NormalBayesClassifierImpl : public NormalBayesClassifier
         int s, c1, c2;
         const int* responses_data;
 
-        CV_CALL( cvPrepareTrainData( 0,
+        cvPrepareTrainData( 0,
             _train_data, CV_ROW_SAMPLE, _responses, CV_VAR_CATEGORICAL,
             _var_idx, _sample_idx, false, &train_data,
             &nsamples, &_var_count, &_var_all, &responses,
-            &__cls_labels, &__var_idx ));
+            &__cls_labels, &__var_idx );
 
         if( !update )
         {
@@ -386,17 +375,19 @@ class NormalBayesClassifierImpl : public NormalBayesClassifier
         return value;
     }
 
-    void write( CvFileStorage* fs, const char* name ) const
+    void write( FileStorage& fs ) const
     {
-        CV_FUNCNAME( "CvNormalBayesClassifier::write" );
-
-        __BEGIN__;
-
         int nclasses, i;
 
         nclasses = cls_labels->cols;
 
-        cvStartWriteStruct( fs, name, CV_NODE_MAP, CV_TYPE_NAME_ML_NBAYES );
+        fs << "var_count" << var_count
+            << "var_vall" << var_all;
+        if( !varIdx.empty() )
+            fs << "var_idx" << var_idx;
+        fs << "cls_labels" << cls_labels;
+        
+
 
         CV_CALL( cvWriteInt( fs, "var_count", var_count ));
         CV_CALL( cvWriteInt( fs, "var_all", var_all ));
@@ -556,6 +547,10 @@ class NormalBayesClassifierImpl : public NormalBayesClassifier
         if( !ok )
             clear();
     }
+
+    int     var_count, var_all;
+    Mat  var_idx, cls_labels, c;
+    std::vector<Mat> count, sum, productsum, avg, inv_eigen_values, cov_rotate_mats;
 };
 
 }
