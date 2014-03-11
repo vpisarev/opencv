@@ -46,23 +46,6 @@ namespace cv { namespace ml {
 static const float MISSED_VAL = FLT_MAX;
 static const int VAR_MISSED = VAR_ORDERED;
 
-TrainData::Params::Params()
-{
-    headerLines = 0;
-    responseIdx = -1;
-    delimiter = ',';
-    missch = '?';
-}
-
-TrainData::Params::Params(int _headerLines, int _responseIdx, char _delimiter, char _missch, const String& _varTypeSpec)
-{
-    headerLines = _headerLines;
-    responseIdx = _responseIdx;
-    delimiter = _delimiter;
-    missch = _missch;
-    varTypeSpec = _varTypeSpec;
-}
-
 TrainData::~TrainData() {}
 
 class TrainDataImpl : public TrainData
@@ -73,15 +56,18 @@ public:
         clear();
     }
 
-    TrainDataImpl(const Params& p)
-    {
-        params = p;
-        clear();
-    }
-
     virtual ~TrainDataImpl() { closeFile(); }
 
-    bool getTFlag() const { return tflag; }
+    int getLayout() const { return layout; }
+    int getNTrainSamples() const
+    {
+        return !trainSampleIdx.empty() ? (int)trainSampleIdx.total() :
+               !sampleIdx.empty() ? (int)sampleIdx.total() :
+               layout == }
+    int getNTestSamples() const = 0;
+    int getNVars() const = 0;
+    int getNAllVars() const = 0;
+
     Mat getSamples() const { return samples; }
     Mat getResponses() { return responses; }
     Mat getMissing() const { return missing; }
@@ -92,8 +78,6 @@ public:
     Mat getNormCatResponses() const { return normCatResponses; }
     Mat getClassLabels() const { return classLabels; }
     Mat getClassCounters() const { return classCounters; }
-
-    Params getParams() const { return params; }
 
     void closeFile() { if(file) fclose(file); file=0; }
     void clear()
@@ -111,24 +95,26 @@ public:
         classCounters.release();
         rng = RNG(-1);
         totalClassCount = 0;
-        tflag = false;
+        layout = ROW_SAMPLE;
     }
 
-    void setData(InputArray _samples, bool _tflag, InputArray _responses,
+    void setData(InputArray _samples, int _layout, InputArray _responses,
                  InputArray _varIdx, InputArray _sampleIdx,
                  InputArray _varType, InputArray _missing)
     {
         clear();
+
+        CV_Assert(_layout == ROW_SAMPLE || _layout == COL_SAMPLE );
         samples = _samples.getMat();
-        tflag = _tflag;
+        layout = _layout;
         responses = _responses.getMat();
         varIdx = _varIdx.getMat();
         sampleIdx = _sampleIdx.getMat();
         varType = _varType.getMat();
         missing = _missing.getMat();
 
-        int nsamples = tflag ? samples.cols : samples.rows;
-        int nvars = tflag ? samples.rows : samples.cols;
+        int nsamples = layout == ROW_SAMPLE ? samples.rows : samples.cols;
+        int nvars = layout == ROW_SAMPLE ? samples.cols : samples.rows;
 
         CV_Assert( samples.type() == CV_32F || samples.type() == CV_32S );
 
@@ -254,10 +240,11 @@ public:
         counters.at<int>(clslabel) = i - previdx;
     }
 
-    bool loadCSV(const String& filename)
+    bool loadCSV(const String& filename, int headerLines, int responseIdx,
+                 const String& varTypeSpec, char delimiter, char missch)
     {
         const int M = 1000000;
-        const char delimiters[3] = { ' ', params.delimiter, '\0' };
+        const char delimiters[3] = { ' ', delimiter, '\0' };
         int nvars = 0;
         bool varTypesSet = false;
 
@@ -275,7 +262,7 @@ public:
         bool haveMissed = false;
         char* buf = &_buf[0];
 
-        int i, ridx = params.responseIdx, ninputvars = 0;
+        int i, ridx = responseIdx, ninputvars = 0;
 
         samples.release();
 
@@ -285,7 +272,7 @@ public:
         {
             if( !fgets(buf, M, file) )
                 break;
-            if(lineno < params.headerLines )
+            if(lineno < headerLines )
                 continue;
             // trim trailing spaces
             int idx = (int)strlen(buf)-1;
@@ -308,7 +295,7 @@ public:
             for(;;)
             {
                 float val=0.f; int tp = 0;
-                decodeElem( token, val, tp );
+                decodeElem( token, val, tp, missch );
                 if( tp == VAR_MISSED )
                     haveMissed = true;
                 rowvals.push_back(val);
@@ -323,9 +310,9 @@ public:
                 if( rowvals.empty() )
                     CV_Error(CV_StsBadArg, "invalid CSV format; no data found");
                 nvars = (int)rowvals.size();
-                if( !params.varTypeSpec.empty() && params.varTypeSpec.size() > 0 )
+                if( !varTypeSpec.empty() && varTypeSpec.size() > 0 )
                 {
-                    setVarTypes(params.varTypeSpec, nvars, vtypes);
+                    setVarTypes(varTypeSpec, nvars, vtypes);
                     varTypesSet = true;
                 }
                 else
@@ -389,11 +376,11 @@ public:
         return true;
     }
 
-    void decodeElem( const char* token, float& elem, int& type)
+    void decodeElem( const char* token, float& elem, int& type, char missch)
     {
         char* stopstring = NULL;
         elem = (float)strtod( token, &stopstring );
-        if( *stopstring == params.missch && strlen(stopstring) == 1 ) // missed value
+        if( *stopstring == missch && strlen(stopstring) == 1 ) // missed value
         {
             elem = MISSED_VAL;
             type = VAR_MISSED;
@@ -545,8 +532,7 @@ public:
     }
 
     FILE* file;
-    bool tflag;
-    Params params;
+    int layout;
     Mat samples, missing, varType, varIdx, responses;
     Mat sampleIdx, trainSampleIdx, testSampleIdx;
     Mat normCatResponses, classLabels, classCounters;
@@ -557,20 +543,23 @@ public:
 };
 
 
-Ptr<TrainData> loadDataFromCSV(const String& filename, const TrainData::Params& params)
+Ptr<TrainData> loadDataFromCSV(const String& filename,
+                               int headerLines, int responseIdx,
+                               const String& varTypeSpec,
+                               char delimiter, char missch)
 {
-    Ptr<TrainDataImpl> td = makePtr<TrainDataImpl>(params);
-    if(!td->loadCSV(filename))
+    Ptr<TrainDataImpl> td = makePtr<TrainDataImpl>();
+    if(!td->loadCSV(filename, headerLines, responseIdx, varTypeSpec, delimiter, missch))
         td.release();
     return td;
 }
 
-Ptr<TrainData> createTrainData(InputArray _samples, bool _tflag, InputArray _responses,
-                               InputArray _varIdx, InputArray _sampleIdx,
-                               InputArray _varType, InputArray _missing)
+Ptr<TrainData> createTrainData(InputArray samples, int layout, InputArray responses,
+                               InputArray varIdx, InputArray sampleIdx,
+                               InputArray varType, InputArray missing)
 {
     Ptr<TrainDataImpl> td = makePtr<TrainDataImpl>();
-    td->setData(_samples, _tflag, _responses, _varIdx, _sampleIdx, _varType, _missing);
+    td->setData(samples, layout, responses, varIdx, sampleIdx, varType, missing);
     return td;
 }
 

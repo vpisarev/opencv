@@ -76,6 +76,12 @@ enum
     TRAIN_ERROR = 1
 };
 
+enum
+{
+    ROW_SAMPLE = 0,
+    COL_SAMPLE = 1
+};
+
 class CV_EXPORTS_W_MAP ParamGrid
 {
 public:
@@ -91,24 +97,18 @@ public:
 class CV_EXPORTS TrainData
 {
 public:
-    class CV_EXPORTS Params
-    {
-    public:
-        Params();
-        Params(int headerLineCount, int responseIdx, char delimiter, char missch, const String& varType);
-
-        char delimiter;
-        char missch;
-
-        int headerLines;
-        int responseIdx;
-        String varTypeSpec;
-    };
-
     virtual ~TrainData();
 
-    virtual bool getTFlag() const = 0;
+    virtual int getLayout() const = 0;
+    virtual int getNTrainSamples() const = 0;
+    virtual int getNTestSamples() const = 0;
+    virtual int getNVars() const = 0;
+    virtual int getNAllVars() const = 0;
+
     virtual Mat getSamples() const = 0;
+    virtual Mat getTrainSamples(int layout,
+                                bool compressSamples=true,
+                                bool compressVars=true) const = 0;
     virtual Mat getResponses() = 0;
     virtual Mat getMissing() const = 0;
     virtual Mat getVarIdx() const = 0;
@@ -120,14 +120,17 @@ public:
     virtual Mat getClassLabels() const = 0;
     virtual Mat getClassCounters() const = 0;
     
-    virtual Params getParams() const = 0;
-
     virtual void setTrainTestSplit(int count, bool shuffle=true) = 0;
     virtual void setTrainTestSplitRatio(float ratio, bool shuffle=true) = 0;
 };
 
-CV_EXPORTS Ptr<TrainData> loadDataFromCSV(const String& filename, const TrainData::Params& params);
-CV_EXPORTS Ptr<TrainData> createTrainData(InputArray samples, bool tflag, InputArray responses,
+CV_EXPORTS Ptr<TrainData> loadDataFromCSV(const String& filename,
+                                          int headerLineCount, int responseIdx=-1,
+                                          const String& varTypeSpec=String(),
+                                          char delimiter=',',
+                                          char missch='?');
+
+CV_EXPORTS Ptr<TrainData> createTrainData(InputArray samples, int layout, InputArray responses,
                                           InputArray varIdx, InputArray sampleIdx,
                                           InputArray varType, InputArray missing);
 
@@ -144,9 +147,7 @@ public:
     virtual bool isTrained() const;
     virtual bool isRegression() const;
 
-    virtual bool train( InputArray trainData, bool tflag, InputArray responses,
-                        InputArray varIdx, InputArray sampleIdx, InputArray varType,
-                        InputArray missing, bool update=false );
+    virtual bool train( const Ptr<TrainData>& trainData, bool update=false );
     virtual float calcError( const Ptr<TrainData>& data, bool test, OutputArray resp ) const;
 
     virtual String defaultModelName() const;

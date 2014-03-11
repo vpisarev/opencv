@@ -52,17 +52,16 @@ class NormalBayesClassifierImpl : public NormalBayesClassifier
         var_count = var_all = 0;
     }
 
-    bool train( const TrainData& trainData, bool update )
+    bool train( const Ptr<TrainData>& trainData, bool update )
     {
         const float min_variation = FLT_EPSILON;
         bool result = false;
-        Mat responses;
-        const float** train_data = 0;
-        CvMat* __cls_labels = 0;
-        CvMat* __var_idx = 0;
-        CvMat* cov = 0;
+        Mat responses = trainData->getNormCatResponses();
+        Mat __cls_labels = trainData->getClassLabels();
+        Mat __var_idx = trainData->getVarIdx();
+        Mat cov;
 
-        int cls, nsamples = 0, _var_count = 0, _var_all = 0, nclasses = 0;
+        int nsamples = , _var_count = 0, _var_all = 0, nclasses = 0;
         int s, c1, c2;
         const int* responses_data;
 
@@ -72,10 +71,26 @@ class NormalBayesClassifierImpl : public NormalBayesClassifier
             &nsamples, &_var_count, &_var_all, &responses,
             &__cls_labels, &__var_idx );
 
+
+
         if( !update )
         {
-            const size_t mat_size = sizeof(CvMat*);
-            size_t data_size;
+            count.resize(nclasses);
+            sum.resize(nclasses);
+            productsum.resize(nclasses);
+            avg.resize(nclasses);
+            inv_eigen_values.resize(nclasses);
+            cov_rotate_mats.resize(nclasses);
+
+            for( int cls = 0; cls < nclasses; cls++ )
+            {
+                count[cls]            = Mat::zeros( 1, var_count, CV_32SC1 );
+                sum[cls]              = Mat::zeros( 1, var_count, CV_64FC1 );
+                productsum[cls]       = Mat::zeros( var_count, var_count, CV_64FC1 );
+                avg[cls]              = Mat::zeros( 1, var_count, CV_64FC1 );
+                inv_eigen_values[cls] = Mat::zeros( 1, var_count, CV_64FC1 );
+                cov_rotate_mats[cls]  = Mat::zeros( var_count, var_count, CV_64FC1 );
+            }
 
             clear();
 
@@ -219,7 +234,6 @@ class NormalBayesClassifierImpl : public NormalBayesClassifier
 
         return result;
     }
-
 
     class NBPredictBody : public ParallelLoopBody
     {

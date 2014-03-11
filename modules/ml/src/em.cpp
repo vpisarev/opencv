@@ -128,7 +128,6 @@ public:
         return doTrain(START_M_STEP, logLikelihoods, labels, probs);
     }
 
-
     Vec2d predict(InputArray _sample, OutputArray _probs) const
     {
         Mat sample = _sample.getMat();
