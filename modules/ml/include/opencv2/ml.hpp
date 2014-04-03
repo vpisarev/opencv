@@ -102,14 +102,19 @@ public:
     virtual int getLayout() const = 0;
     virtual int getNTrainSamples() const = 0;
     virtual int getNTestSamples() const = 0;
+    virtual int getNSamples() const = 0;
     virtual int getNVars() const = 0;
     virtual int getNAllVars() const = 0;
 
     virtual Mat getSamples() const = 0;
-    virtual Mat getTrainSamples(int layout,
+    virtual Mat getTrainSamples(int layout=ROW_SAMPLE,
                                 bool compressSamples=true,
                                 bool compressVars=true) const = 0;
-    virtual Mat getResponses() = 0;
+    virtual Mat getTrainResponses() const = 0;
+    virtual Mat getTestResponses() const = 0;
+    virtual Mat getResponses() const = 0;
+    virtual Mat getTrainSampleWeights() const = 0;
+    virtual Mat getTestSampleWeights() const = 0;
     virtual Mat getMissing() const = 0;
     virtual Mat getVarIdx() const = 0;
     virtual Mat getVarType() const = 0;
@@ -122,6 +127,8 @@ public:
     
     virtual void setTrainTestSplit(int count, bool shuffle=true) = 0;
     virtual void setTrainTestSplitRatio(float ratio, bool shuffle=true) = 0;
+
+    static Mat getSubVector(const Mat& vec, const Mat& idx);
 };
 
 CV_EXPORTS Ptr<TrainData> loadDataFromCSV(const String& filename,
@@ -132,12 +139,14 @@ CV_EXPORTS Ptr<TrainData> loadDataFromCSV(const String& filename,
 
 CV_EXPORTS Ptr<TrainData> createTrainData(InputArray samples, int layout, InputArray responses,
                                           InputArray varIdx, InputArray sampleIdx,
-                                          InputArray varType, InputArray missing);
+                                          InputArray sampleWeights, InputArray varType,
+                                          InputArray missing);
 
 
 class CV_EXPORTS_W StatModel : public Algorithm
 {
 public:
+    enum { UPDATE_MODEL = 1 };
     virtual ~StatModel();
     virtual void clear();
 
@@ -147,7 +156,7 @@ public:
     virtual bool isTrained() const;
     virtual bool isRegression() const;
 
-    virtual bool train( const Ptr<TrainData>& trainData, bool update=false );
+    virtual bool train( const Ptr<TrainData>& trainData, int flags=0 );
     virtual float calcError( const Ptr<TrainData>& data, bool test, OutputArray resp ) const;
 
     virtual String defaultModelName() const;
@@ -167,7 +176,8 @@ class CV_EXPORTS_W NormalBayesClassifier : public StatModel
 public:
     virtual ~NormalBayesClassifier();
     virtual float predict( InputArray inputs, OutputArray outputs, bool rawOutput=false ) const;
-    virtual float predictProb( InputArray inputs, OutputArray outputs, OutputArray outputProbs ) const;
+    virtual float predictProb( InputArray inputs, OutputArray outputs,
+                               OutputArray outputProbs, bool rawOutput=false ) const;
 };
 
 CV_EXPORTS_W Ptr<NormalBayesClassifier> createNormalBayesClassifier(InputArray trainData, InputArray responses,
@@ -225,14 +235,14 @@ public:
     public:
         virtual ~Kernel();
         virtual int getType() const;
-        virtual void calc( int vcount, int n, const float** vecs, const float* another, float* results ) = 0;
+        virtual void calc( int vcount, int n, const float* vecs, const float* another, float* results ) = 0;
     };
 
     // SVM type
     enum { C_SVC=100, NU_SVC=101, ONE_CLASS=102, EPS_SVR=103, NU_SVR=104 };
 
     // SVM kernel type
-    enum { LINEAR=0, POLY=1, RBF=2, SIGMOID=3, CHI2=4, INTER=5 };
+    enum { CUSTOM=-1, LINEAR=0, POLY=1, RBF=2, SIGMOID=3, CHI2=4, INTER=5 };
 
     // SVM params type
     enum { C=0, GAMMA=1, P=2, NU=3, COEF=4, DEGREE=5 };
@@ -586,7 +596,7 @@ CV_EXPORTS_W Ptr<ANN_MLP> createANN_MLP(InputArray layerSizes,
 
 /* Generates <sample> from multivariate normal distribution, where <mean> - is an
    average row vector, <cov> - symmetric covariation matrix */
-CV_EXPORTS void randMVNormal( InputArray mean, InputArray cov, int nsamples, OutputArray sample, RNG& rng);
+CV_EXPORTS void randMVNormal( InputArray mean, InputArray cov, int nsamples, OutputArray samples);
 
 /* Generates sample from gaussian mixture distribution */
 CV_EXPORTS void randGaussMixture( InputArray means, InputArray covs, InputArray weights,

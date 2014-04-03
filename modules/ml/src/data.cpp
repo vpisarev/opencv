@@ -48,6 +48,34 @@ static const int VAR_MISSED = VAR_ORDERED;
 
 TrainData::~TrainData() {}
 
+Mat TrainData::getSubVector(const Mat& vec, const Mat& idx)
+{
+    int i, n = idx.checkVector(1, CV_32S);
+    int type = vec.type();
+    CV_Assert( n >= 0 && (vec.cols == 1 || vec.rows == 1) && (type == CV_32F || type == CV_64F) );
+    int m = vec.cols + vec.rows - 1;
+    Mat subvec;
+    if( vec.cols == m )
+        subvec.create(1, n, type);
+    else
+        subvec.create(n, 1, type);
+    if( type == CV_32F )
+        for( i = 0; i < n; i++ )
+        {
+            int k = idx.at<int>(i);
+            CV_Assert( 0 <= k && k < m );
+            subvec.at<float>(i) = vec.at<float>(k);
+        }
+    else
+        for( i = 0; i < n; i++ )
+        {
+            int k = idx.at<int>(i);
+            CV_Assert( 0 <= k && k < m );
+            subvec.at<double>(i) = vec.at<double>(k);
+        }
+    return subvec;
+}
+
 class TrainDataImpl : public TrainData
 {
 public:
@@ -59,22 +87,49 @@ public:
     virtual ~TrainDataImpl() { closeFile(); }
 
     int getLayout() const { return layout; }
+    int getNSamples() const
+    {
+        return !sampleIdx.empty() ? (int)sampleIdx.total() :
+               layout == ROW_SAMPLE ? samples.rows : samples.cols;
+    }
     int getNTrainSamples() const
     {
-        return !trainSampleIdx.empty() ? (int)trainSampleIdx.total() :
-               !sampleIdx.empty() ? (int)sampleIdx.total() :
-               layout == }
-    int getNTestSamples() const = 0;
-    int getNVars() const = 0;
-    int getNAllVars() const = 0;
+        return !trainSampleIdx.empty() ? (int)trainSampleIdx.total() : getNSamples();
+    }
+    int getNTestSamples() const
+    {
+        return !testSampleIdx.empty() ? (int)testSampleIdx.total() : 0;
+    }
+    int getNVars() const
+    {
+        return !varIdx.empty() ? (int)varIdx.total() : getNAllVars();
+    }
+    int getNAllVars() const
+    {
+        return layout == ROW_SAMPLE ? samples.cols : samples.rows;
+    }
 
     Mat getSamples() const { return samples; }
-    Mat getResponses() { return responses; }
+    Mat getResponses() const { return responses; }
     Mat getMissing() const { return missing; }
     Mat getVarIdx() const { return varIdx; }
     Mat getVarType() const { return varType; }
     Mat getTrainSampleIdx() const { return !trainSampleIdx.empty() ? trainSampleIdx : sampleIdx; }
     Mat getTestSampleIdx() const { return testSampleIdx; }
+    Mat getTrainSampleWeights() const
+    {
+        Mat idx = getTrainSampleIdx();
+        if( idx.empty() )
+            return sampleWeights;
+        return getSubVector(sampleWeights, idx);
+    }
+    Mat getTestSampleWeights() const
+    {
+        Mat idx = getTestSampleIdx();
+        if( idx.empty() )
+            return Mat();
+        return getSubVector(sampleWeights, idx);
+    }
     Mat getNormCatResponses() const { return normCatResponses; }
     Mat getClassLabels() const { return classLabels; }
     Mat getClassCounters() const { return classCounters; }
@@ -99,7 +154,7 @@ public:
     }
 
     void setData(InputArray _samples, int _layout, InputArray _responses,
-                 InputArray _varIdx, InputArray _sampleIdx,
+                 InputArray _varIdx, InputArray _sampleIdx, InputArray _sampleWeights,
                  InputArray _varType, InputArray _missing)
     {
         clear();
@@ -110,6 +165,7 @@ public:
         responses = _responses.getMat();
         varIdx = _varIdx.getMat();
         sampleIdx = _sampleIdx.getMat();
+        sampleWeights = _sampleWeights.getMat();
         varType = _varType.getMat();
         missing = _missing.getMat();
 
@@ -127,6 +183,11 @@ public:
                 sampleIdx = convertMaskToIdx(sampleIdx);
         }
 
+        if( !sampleWeights.empty() )
+        {
+            CV_Assert( sampleWeights.checkVector(1, CV_32F, true) == nsamples );
+        }
+
         if( !varIdx.empty() )
         {
             CV_Assert( (varIdx.checkVector(1, CV_32S, true) > 0 &&
@@ -136,22 +197,25 @@ public:
                 varIdx = convertMaskToIdx(varIdx);
         }
 
+        /*if( !responses.empty() )
+        {
+            if( )
+            CV_Assert(
+
+                       (responses.checkVector(1, CV_32S, true) == nsamples ||
+                       responses.checkVector(1, CV_32F, true) == nsamples) );
+        }*/
+
         if( !varType.empty() )
         {
             CV_Assert( varType.checkVector(1, CV_8U, true) == nvars+1 &&
-                       checkRange(varType, true, 0, VAR_ORDERED, VAR_CATEGORICAL) );
+                      checkRange(varType, true, 0, VAR_ORDERED, VAR_CATEGORICAL) );
         }
         else
         {
             varType.create(1, nvars+1, CV_8U);
             varType = Scalar::all(VAR_ORDERED);
             varType.at<uchar>(nvars) = responses.type() < CV_32F ? VAR_CATEGORICAL : VAR_ORDERED;
-        }
-
-        if( !responses.empty() )
-        {
-            CV_Assert( responses.checkVector(1, CV_32S, true) == nsamples ||
-                       responses.checkVector(1, CV_32F, true) == nsamples );
         }
 
         if( varType.at<uchar>(nvars) == VAR_CATEGORICAL )
@@ -471,16 +535,6 @@ public:
             CV_Error( CV_StsBadArg, "type of some variables is not specified" );
     }
 
-    int getNSamples() const
-    {
-        return !sampleIdx.empty() ? (sampleIdx.cols + sampleIdx.rows - 1) : getTotalSamples();
-    }
-
-    int getTotalSamples() const
-    {
-        return tflag ? samples.rows : samples.cols;
-    }
-
     void setTrainTestSplitRatio(float ratio, bool shuffle)
     {
         CV_Assert( 0 <= ratio && ratio <= 1 );
@@ -531,10 +585,53 @@ public:
         }
     }
 
+    Mat getTrainSamples(int _layout,
+                        bool compressSamples,
+                        bool compressVars) const
+    {
+        if( samples.empty() )
+            return samples;
+
+        if( (!compressSamples || (trainSampleIdx.empty() && sampleIdx.empty())) &&
+            (!compressVars || varIdx.empty()) &&
+            layout == _layout )
+            return samples;
+
+        int drows = getNTrainSamples(), dcols = getNVars();
+        Mat sidx = getTrainSampleIdx(), vidx = getVarIdx();
+        const float* src0 = samples.ptr<float>();
+        const int* sptr = !sidx.empty() ? sidx.ptr<int>() : 0;
+        const int* vptr = !vidx.empty() ? vidx.ptr<int>() : 0;
+        size_t sstep0 = samples.step/samples.elemSize();
+        size_t sstep = layout == ROW_SAMPLE ? sstep0 : 1;
+        size_t vstep = layout == ROW_SAMPLE ? 1 : sstep0;
+
+        if( _layout == COL_SAMPLE )
+        {
+            std::swap(drows, dcols);
+            std::swap(sptr, vptr);
+            std::swap(sstep, vstep);
+        }
+
+        Mat dsamples(drows, dcols, CV_32F);
+
+        for( int i = 0; i < drows; i++ )
+        {
+            const float* src = src0 + (sptr ? sptr[i] : i)*sstep;
+            float* dst = dsamples.ptr<float>(i);
+
+            for( int j = 0; j < dcols; j++ )
+                dst[j] = src[(vptr ? vptr[j] : j)*vstep];
+        }
+
+        return dsamples;
+    }
+
     FILE* file;
     int layout;
     Mat samples, missing, varType, varIdx, responses;
     Mat sampleIdx, trainSampleIdx, testSampleIdx;
+    Mat sampleWeights;
     Mat normCatResponses, classLabels, classCounters;
     RNG rng;
     typedef std::map<String, int> MapType;
@@ -555,11 +652,11 @@ Ptr<TrainData> loadDataFromCSV(const String& filename,
 }
 
 Ptr<TrainData> createTrainData(InputArray samples, int layout, InputArray responses,
-                               InputArray varIdx, InputArray sampleIdx,
+                               InputArray varIdx, InputArray sampleIdx, InputArray sampleWeights,
                                InputArray varType, InputArray missing)
 {
     Ptr<TrainDataImpl> td = makePtr<TrainDataImpl>();
-    td->setData(samples, layout, responses, varIdx, sampleIdx, varType, missing);
+    td->setData(samples, layout, responses, varIdx, sampleIdx, sampleWeights, varType, missing);
     return td;
 }
 
