@@ -56,6 +56,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <vector>
 
 /****************************************************************************************\
  *                               Main struct definitions                                  *
@@ -500,6 +501,13 @@ namespace ml
         virtual void operator()(const BlockedRange& range);
     };
 #endif
+
+    static inline void setRangeVector(std::vector<int>& vec, int n)
+    {
+        vec.resize(n);
+        for( int i = 0; i < n; i++ )
+            vec[i] = i;
+    }
 }}
 
 #endif /* __OPENCV_ML_PRECOMP_HPP__ */

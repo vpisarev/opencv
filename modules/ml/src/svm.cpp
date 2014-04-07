@@ -195,7 +195,7 @@ public:
         for( j = 0; j < vcount; j++ )
         {
             Qfloat t = results[j];
-            double e = exp(-fabs(t));
+            Qfloat e = std::exp(-std::abs(t));
             if( t > 0 )
                 results[j] = (Qfloat)((1. - e)/(1. + e));
             else
@@ -324,11 +324,42 @@ public:
 };
 
 
+
+/////////////////////////////////////////////////////////////////////////
+
+template<typename _Tp> struct cmp_lt_idx
+{
+    cmp_lt_idx(const _Tp* _arr) : arr(_arr) {}
+    bool operator ()(int a, int b) const { return arr[a] < arr[b]; }
+    const _Tp* arr;
+};
+
+static void sortSamplesByClasses( const Mat& _samples, const Mat& _responses,
+                           vector<int>& sidx_all, vector<int>& class_ranges )
+{
+    int i, nsamples = _samples.rows;
+    CV_Assert( _responses.isContinuous() && _responses.checkVector(1, CV_32S) == nsamples );
+
+    setRangeVector(sidx_all, nsamples);
+    std::sort(sidx_all.begin(), sidx_all.end(), cmp_lt_idx<int>(_responses.ptr<int>()));
+    class_ranges.clear();
+    class_ranges.push_back(0);
+    for( i = 0; i < nsamples; i++ )
+    {
+        if( i == nsamples-1 || sidx_all[i] != sidx_all[i+1] )
+            class_ranges.push_back(i+1);
+    }
+}
+    
+//////////////////////// SVM implementation //////////////////////////////
+
 class SVMImpl : public SVM
 {
 public:
     struct DecisionFunc
     {
+        DecisionFunc(double _rho, int _ofs) : rho(_rho), ofs(_ofs) {}
+        DecisionFunc() : rho(0.), ofs(0) {}
         double rho;
         int ofs;
     };
@@ -400,20 +431,24 @@ public:
     class Solver
     {
     public:
-        enum { MIN_CACHE_SIZE = (40 << 20) /* 40Mb */ };
+        enum { MIN_CACHE_SIZE = (40 << 20) /* 40Mb */, MAX_CACHE_SIZE = (500 << 20) /* 500Mb */ };
 
         typedef bool (Solver::*SelectWorkingSet)( int& i, int& j );
-        typedef float* (Solver::*GetRow)( int i, float* row, float* dst, bool existed );
+        typedef Qfloat* (Solver::*GetRow)( int i, Qfloat* row, Qfloat* dst, bool existed );
         typedef void (Solver::*CalcRho)( double& rho, double& r );
 
         struct KernelRow
         {
+            KernelRow() { idx = -1; prev = next = 0; }
+            KernelRow(int _idx, int _prev, int _next) : idx(_idx), prev(_prev), next(_next) {}
             int idx;
-            unsigned age;
+            int prev;
+            int next;
         };
 
         struct SolutionInfo
         {
+            SolutionInfo() { obj = rho = upper_bound_p = upper_bound_n = r = 0; }
             double obj;
             double rho;
             double upper_bound_p;
@@ -421,58 +456,43 @@ public:
             double r;   // for Solver_NU
         };
 
-        Solver()
-        {
-            clear();
-        }
-        
-        ~Solver()
-        {
-            clear();
-        }
-
         void clear()
         {
-            alpha = 0;
-            y = 0;
+            alpha_vec = 0;
             select_working_set_func = 0;
             calc_rho_func = 0;
             get_row_func = 0;
             lru_cache.clear();
         }
 
-        void create( const Mat& _samples, const vector<schar>& _y,
-                     vector<double>& _alpha, double _Cp, double _Cn,
-                     const Ptr<SVM::Kernel>& _kernel, GetRow _get_row,
-                     SelectWorkingSet _select_working_set, CalcRho _calc_rho,
-                     TermCriteria termCrit )
+        Solver( const Mat& _samples, const vector<schar>& _y,
+                vector<double>& _alpha, const vector<double>& _b,
+                double _Cp, double _Cn,
+                const Ptr<SVM::Kernel>& _kernel, GetRow _get_row,
+                SelectWorkingSet _select_working_set, CalcRho _calc_rho,
+                TermCriteria _termCrit )
         {
-            bool ok = false;
-            int i, svmType;
-
-            int rows_hdr_size;
-
             clear();
 
             samples = _samples;
             sample_count = samples.rows;
             var_count = samples.cols;
 
-            y = &_y;
-            alpha = &_alpha;
-            alpha_count = (int)alpha->size();
+            y_vec = _y;
+            alpha_vec = &_alpha;
+            alpha_count = (int)alpha_vec->size();
+            b_vec = _b;
             kernel = _kernel;
 
             C[0] = _Cn;
             C[1] = _Cp;
-            eps = termCrit.epsilon;
-            max_iter = termCrit.maxCount;
+            eps = _termCrit.epsilon;
+            max_iter = _termCrit.maxCount;
 
-            b.resize(alpha_count);
-            G.resize(alpha_count);
-            alpha_status.resize(alpha_count);
-            for( i = 0; i < 2; i++ )
-                buf[i].resize(sample_count*2);
+            G_vec.resize(alpha_count);
+            alpha_status_vec.resize(alpha_count);
+            buf[0].resize(sample_count*2);
+            buf[1].resize(sample_count*2);
 
             select_working_set_func = _select_working_set;
             CV_Assert(select_working_set_func != 0);
@@ -483,66 +503,68 @@ public:
             get_row_func = _get_row;
             CV_Assert(get_row_func != 0);
 
-            // cache size = max(num_of_samples^2*sizeof(Qfloat)*0.25, 40Mb)
-            // (assuming that for large training sets ~25% of Q matrix is used)
+            // assume that for large training sets ~25% of Q matrix is used
             int64 csize = (int64)sample_count*sample_count/4;
             csize = std::max(csize, (int64)(MIN_CACHE_SIZE/sizeof(Qfloat)) );
-            csize = std::max(csize, (int64)(MAX_CACHE)
-            cache_size = std::min(
+            csize = std::min(csize, (int64)(MAX_CACHE_SIZE/sizeof(Qfloat)) );
+            max_cache_size = (int)((csize + sample_count-1)/sample_count);
+            max_cache_size = std::min(std::max(max_cache_size, 1), sample_count);
+            cache_size = 0;
 
-            lru_list.prev = lru_list.next = &lru_list;
-            rows = (CvSVMKernelRow*)cvMemStorageAlloc( storage, rows_hdr_size );
-            memset( rows, 0, rows_hdr_size );
+            lru_cache.clear();
+            lru_cache.resize(sample_count+1, KernelRow(-1, 0, 0));
+            lru_first = lru_last = 0;
+            lru_cache_data.create(cache_size, sample_count, QFLOAT_TYPE);
         }
 
-        float* get_row_base( int i, bool* _existed )
+        Qfloat* get_row_base( int i, bool* _existed )
         {
             int i1 = i < sample_count ? i : i - sample_count;
-            CvSVMKernelRow* row = rows + i1;
-            bool existed = row->data != 0;
-            Qfloat* data;
-
-            if( existed || cache_size <= 0 )
+            KernelRow& kr = lru_cache[i1+1];
+            if( _existed )
+                *_existed = kr.idx >= 0;
+            if( kr.idx < 0 )
             {
-                CvSVMKernelRow* del_row = existed ? row : lru_list.prev;
-                data = del_row->data;
-                assert( data != 0 );
-
-                // delete row from the LRU list
-                del_row->data = 0;
-                del_row->prev->next = del_row->next;
-                del_row->next->prev = del_row->prev;
+                if( cache_size < max_cache_size )
+                {
+                    kr.idx = cache_size;
+                    cache_size++;
+                }
+                else
+                {
+                    KernelRow& last = lru_cache[lru_last];
+                    kr.idx = last.idx;
+                    last.idx = -1;
+                    lru_cache[last.prev].next = 0;
+                    lru_last = last.prev;
+                }
+                kernel->calc( sample_count, var_count, samples.ptr<float>(),
+                              samples.ptr<float>(i1), lru_cache_data.ptr<Qfloat>(kr.idx) );
             }
             else
             {
-                data = (Qfloat*)cvMemStorageAlloc( storage, cache_line_size );
-                cache_size -= cache_line_size;
+                if( kr.next )
+                    lru_cache[kr.next].prev = kr.prev;
+                else
+                    lru_last = kr.prev;
+                if( kr.prev )
+                    lru_cache[kr.prev].next = kr.next;
+                else
+                    lru_first = kr.next;
             }
+            kr.next = lru_first;
+            kr.prev = 0;
+            lru_first = i1+1;
 
-            // insert row into the LRU list
-            row->data = data;
-            row->prev = &lru_list;
-            row->next = lru_list.next;
-            row->prev->next = row->next->prev = row;
-
-            if( !existed )
-            {
-                kernel->calc( sample_count, var_count, samples.ptr<float>(), samples[i1], row->data );
-            }
-
-            if( _existed )
-                *_existed = existed;
-
-            return row->data;
+            return lru_cache_data.ptr<Qfloat>(kr.idx);
         }
 
-        float* get_row_svc( int i, float* row, float*, bool existed )
+        Qfloat* get_row_svc( int i, Qfloat* row, Qfloat*, bool existed )
         {
             if( !existed )
             {
-                const schar* _y = y;
+                const schar* _y = &y_vec[0];
                 int j, len = sample_count;
-                assert( _y && i < sample_count );
 
                 if( _y[i] > 0 )
                 {
@@ -558,21 +580,18 @@ public:
             return row;
         }
 
-        float* get_row_one_class( int, float* row, float*, bool )
+        Qfloat* get_row_one_class( int, Qfloat* row, Qfloat*, bool )
         {
             return row;
         }
 
-        float* get_row_svr( int i, float* row, float* dst, bool )
+        Qfloat* get_row_svr( int i, Qfloat* row, Qfloat* dst, bool )
         {
             int j, len = sample_count;
             Qfloat* dst_pos = dst;
             Qfloat* dst_neg = dst + len;
             if( i >= len )
-            {
-                Qfloat* temp;
-                CV_SWAP( dst_pos, dst_neg, temp );
-            }
+                std::swap(dst_pos, dst_neg);
 
             for( j = 0; j < len; j++ )
             {
@@ -583,13 +602,12 @@ public:
             return dst;
         }
 
-        float* get_row( int i, float* dst )
+        Qfloat* get_row( int i, float* dst )
         {
             bool existed = false;
             float* row = get_row_base( i, &existed );
             return (this->*get_row_func)( i, row, dst, existed );
         }
-
 
         #undef is_upper_bound
         #define is_upper_bound(i) (alpha_status[i] > 0)
@@ -612,6 +630,12 @@ public:
 
         bool solve_generic( SolutionInfo& si )
         {
+            const schar* y = &y_vec[0];
+            double* alpha = &alpha_vec->at(0);
+            schar* alpha_status = &alpha_status_vec[0];
+            double* G = &G_vec[0];
+            double* b = &b_vec[0];
+
             int iter = 0;
             int i, j, k;
 
@@ -628,7 +652,7 @@ public:
             {
                 if( !is_lower_bound(i) )
                 {
-                    const Qfloat *Q_i = get_row( i, buf[0] );
+                    const Qfloat *Q_i = get_row( i, &buf[0][0] );
                     double alpha_i = alpha[i];
 
                     for( j = 0; j < alpha_count; j++ )
@@ -658,8 +682,8 @@ public:
                 if( (this->*select_working_set_func)( i, j ) != 0 || iter++ >= max_iter )
                     break;
 
-                Q_i = get_row( i, buf[0] );
-                Q_j = get_row( j, buf[1] );
+                Q_i = get_row( i, &buf[0][0] );
+                Q_j = get_row( j, &buf[1][0] );
 
                 C_i = get_C(i);
                 C_j = get_C(j);
@@ -769,9 +793,11 @@ public:
             double Gmax2 = -DBL_MAX;        // max { -grad(f)_i * d | y_i*d = -1 }
             int Gmax2_idx = -1;
 
-            int i;
+            const schar* y = &y_vec[0];
+            const schar* alpha_status = &alpha_status_vec[0];
+            const double* G = &G_vec[0];
 
-            for( i = 0; i < alpha_count; i++ )
+            for( int i = 0; i < alpha_count; i++ )
             {
                 double t;
 
@@ -811,10 +837,13 @@ public:
 
         void calc_rho( double& rho, double& r )
         {
-            int i, nr_free = 0;
+            int nr_free = 0;
             double ub = DBL_MAX, lb = -DBL_MAX, sum_free = 0;
+            const schar* y = &y_vec[0];
+            const schar* alpha_status = &alpha_status_vec[0];
+            const double* G = &G_vec[0];
 
-            for( i = 0; i < alpha_count; i++ )
+            for( int i = 0; i < alpha_count; i++ )
             {
                 double yG = y[i]*G[i];
 
@@ -860,9 +889,11 @@ public:
             double Gmax4 = -DBL_MAX;    // max { -grad(f)_i * d | y_i = -1, d = -1 }
             int Gmax4_idx = -1;
 
-            int i;
+            const schar* y = &y_vec[0];
+            const schar* alpha_status = &alpha_status_vec[0];
+            const double* G = &G_vec[0];
 
-            for( i = 0; i < alpha_count; i++ )
+            for( int i = 0; i < alpha_count; i++ )
             {
                 double t;
 
@@ -916,11 +947,12 @@ public:
             double ub1 = DBL_MAX, ub2 = DBL_MAX;
             double lb1 = -DBL_MAX, lb2 = -DBL_MAX;
             double sum_free1 = 0, sum_free2 = 0;
-            double r1, r2;
 
-            int i;
+            const schar* y = &y_vec[0];
+            const schar* alpha_status = &alpha_status_vec[0];
+            const double* G = &G_vec[0];
 
-            for( i = 0; i < alpha_count; i++ )
+            for( int i = 0; i < alpha_count; i++ )
             {
                 double G_i = G[i];
                 if( y[i] > 0 )
@@ -949,8 +981,8 @@ public:
                 }
             }
 
-            r1 = nr_free1 > 0 ? sum_free1/nr_free1 : (ub1 + lb1)*0.5;
-            r2 = nr_free2 > 0 ? sum_free2/nr_free2 : (ub2 + lb2)*0.5;
+            double r1 = nr_free1 > 0 ? sum_free1/nr_free1 : (ub1 + lb1)*0.5;
+            double r2 = nr_free2 > 0 ? sum_free2/nr_free2 : (ub2 + lb2)*0.5;
 
             rho = (r1 - r2)*0.5;
             r = (r1 + r2)*0.5;
@@ -959,72 +991,73 @@ public:
         /*
         ///////////////////////// construct and solve various formulations ///////////////////////
         */
-        bool solve_c_svc( int _sample_count, int _var_count,
-                          const float** _samples, schar* _y,
-                          double _Cp, double _Cn,
-                          const Ptr<SVM::Kernel>& _kernel,
-                          double* _alpha, SolutionInfo& _si )
+        static bool solve_c_svc( const Mat& _samples, const vector<schar>& _y,
+                                 double _Cp, double _Cn, const Ptr<SVM::Kernel>& _kernel,
+                                 vector<double>& _alpha, SolutionInfo& _si, TermCriteria termCrit )
         {
-            int i;
+            int sample_count = _samples.rows;
 
-            if( !create( _sample_count, _var_count, _samples, _y, _sample_count,
-                         _alpha, _Cp, _Cn, _kernel, &get_row_svc,
-                         &select_working_set, &calc_rho ))
+            _alpha.assign(sample_count, 0.);
+            vector<double> _b(sample_count, -1.);
+
+            Solver solver( _samples, _y, _alpha, _b, _Cp, _Cn, _kernel,
+                           &Solver::get_row_svc,
+                           &Solver::select_working_set,
+                           &Solver::calc_rho,
+                           termCrit );
+
+            if( !solver.solve_generic( _si ))
                 return false;
 
-            for( i = 0; i < sample_count; i++ )
-            {
-                alpha[i] = 0;
-                b[i] = -1;
-            }
-
-            if( !solve_generic( _si ))
-                return false;
-
-            for( i = 0; i < sample_count; i++ )
-                alpha[i] *= y[i];
+            for( int i = 0; i < sample_count; i++ )
+                _alpha[i] *= _y[i];
 
             return true;
         }
 
 
-        bool solve_nu_svc( int _sample_count, int _var_count, const float** _samples,
-                           schar* _y, const Ptr<SVM::Kernel>& _kernel,
-                           double* _alpha, SolutionInfo& _si )
+        static bool solve_nu_svc( const Mat& _samples, const vector<schar>& _y,
+                                  double nu, const Ptr<SVM::Kernel>& _kernel,
+                                  vector<double>& _alpha, SolutionInfo& _si,
+                                  TermCriteria termCrit )
         {
-            int i;
-            double sum_pos, sum_neg, inv_r;
+            int sample_count = _samples.rows;
 
-            if( !create( _sample_count, _var_count, _samples, _y, _sample_count,
-                         _alpha, 1., 1., _kernel, &get_row_svc,
-                         &select_working_set_nu_svm, &calc_rho_nu_svm ))
-                return false;
+            _alpha.resize(sample_count);
+            vector<double> _b(sample_count, 0.);
 
-            sum_pos = kernel->params->nu * sample_count * 0.5;
-            sum_neg = kernel->params->nu * sample_count * 0.5;
+            double sum_pos = nu * sample_count * 0.5;
+            double sum_neg = nu * sample_count * 0.5;
 
-            for( i = 0; i < sample_count; i++ )
+            for( int i = 0; i < sample_count; i++ )
             {
-                if( y[i] > 0 )
+                double a;
+                if( _y[i] > 0 )
                 {
-                    alpha[i] = MIN(1.0, sum_pos);
-                    sum_pos -= alpha[i];
+                    a = std::min(1.0, sum_pos);
+                    sum_pos -= a;
                 }
                 else
                 {
-                    alpha[i] = MIN(1.0, sum_neg);
-                    sum_neg -= alpha[i];
+                    a = std::min(1.0, sum_neg);
+                    sum_neg -= a;
                 }
-                b[i] = 0;
+                _alpha[i] = a;
             }
 
-            if( !solve_generic( _si ))
+            Solver solver( _samples, _y, _alpha, _b, 1., 1., _kernel,
+                           &Solver::get_row_svc,
+                           &Solver::select_working_set_nu_svm,
+                           &Solver::calc_rho_nu_svm,
+                           termCrit );
+
+            if( !solver.solve_generic( _si ))
                 return false;
 
-            inv_r = 1./_si.r;
+            double inv_r = 1./_si.r;
 
-            for( i = 0; i < sample_count; i++ )
-                alpha[i] *= y[i]*inv_r;
+            for( int i = 0; i < sample_count; i++ )
+                _alpha[i] *= _y[i]*inv_r;
 
             _si.rho *= inv_r;
             _si.obj *= (inv_r*inv_r);
@@ -1034,128 +1067,134 @@ public:
             return true;
         }
 
-
-        bool solve_one_class( int _sample_count, int _var_count, const float** _samples,
-                              const Ptr<SVM::Kernel>& _kernel,
-                              double* _alpha, SolutionInfo& _si )
+        static bool solve_one_class( const Mat& _samples, double nu,
+                                     const Ptr<SVM::Kernel>& _kernel,
+                                     vector<double>& _alpha, SolutionInfo& _si,
+                                     TermCriteria termCrit )
         {
-            int i, n;
-            double nu = _kernel->params->nu;
+            int sample_count = _samples.rows;
+            vector<schar> _y(sample_count, 1);
+            vector<double> _b(sample_count, 0.);
 
-            if( !create( _sample_count, _var_count, _samples, 0, _sample_count,
-                         _alpha, 1., 1., _kernel, &get_row_one_class,
-                         &select_working_set, &calc_rho ))
-                return false;
+            int i, n = cvRound( nu*sample_count );
 
-            y = (schar*)cvMemStorageAlloc( storage, sample_count*sizeof(y[0]) );
-            n = cvRound( nu*sample_count );
-
+            _alpha.resize(sample_count);
             for( i = 0; i < sample_count; i++ )
-            {
-                y[i] = 1;
-                b[i] = 0;
-                alpha[i] = i < n ? 1 : 0;
-            }
+                _alpha[i] = i < n ? 1 : 0;
 
             if( n < sample_count )
-                alpha[n] = nu * sample_count - n;
+                _alpha[n] = nu * sample_count - n;
             else
-                alpha[n-1] = nu * sample_count - (n-1);
+                _alpha[n-1] = nu * sample_count - (n-1);
 
-            return solve_generic(_si);
+            Solver solver( _samples, _y, _alpha, _b, 1., 1., _kernel,
+                           &Solver::get_row_one_class,
+                           &Solver::select_working_set,
+                           &Solver::calc_rho,
+                           termCrit );
+
+            return solver.solve_generic(_si);
         }
 
-
-        bool solve_eps_svr( const Mat& _samples, const
-                            const float* _y, const Ptr<SVM::Kernel>& _kernel,
-                            double* _alpha, SolutionInfo& _si )
+        static bool solve_eps_svr( const Mat& _samples, const vector<float>& _yf,
+                                   double p, double C, const Ptr<SVM::Kernel>& _kernel,
+                                   vector<double>& _alpha, SolutionInfo& _si,
+                                   TermCriteria termCrit )
         {
-            int i;
-            double p = _kernel->params->p, kernel_param_c = _kernel->params->C;
+            int sample_count = _samples.rows;
+            int alpha_count = sample_count*2;
 
-            if( !create( _sample_count, _var_count, _samples, 0,
-                         _sample_count*2, 0, kernel_param_c, kernel_param_c, _kernel, &get_row_svr,
-                         &select_working_set, &calc_rho ))
-                return false;
+            CV_Assert( (int)_yf.size() == sample_count );
 
-            y = (schar*)cvMemStorageAlloc( storage, sample_count*2*sizeof(y[0]) );
-            alpha = (double*)cvMemStorageAlloc( storage, alpha_count*sizeof(alpha[0]) );
+            _alpha.assign(alpha_count, 0.);
+            vector<schar> _y(alpha_count);
+            vector<double> _b(alpha_count);
 
-            for( i = 0; i < sample_count; i++ )
+            for( int i = 0; i < sample_count; i++ )
             {
-                alpha[i] = 0;
-                b[i] = p - _y[i];
-                y[i] = 1;
+                _b[i] = p - _yf[i];
+                _y[i] = 1;
 
-                alpha[i+sample_count] = 0;
-                b[i+sample_count] = p + _y[i];
-                y[i+sample_count] = -1;
+                _b[i+sample_count] = p + _yf[i];
+                _y[i+sample_count] = -1;
             }
 
-            if( !solve_generic( _si ))
+            Solver solver( _samples, _y, _alpha, _b, C, C, _kernel,
+                           &Solver::get_row_svr,
+                           &Solver::select_working_set,
+                           &Solver::calc_rho,
+                           termCrit );
+
+            if( !solver.solve_generic( _si ))
                 return false;
 
-            for( i = 0; i < sample_count; i++ )
-                _alpha[i] = alpha[i] - alpha[i+sample_count];
+            for( int i = 0; i < sample_count; i++ )
+                _alpha[i] -= _alpha[i+sample_count];
 
             return true;
         }
 
 
-        bool solve_nu_svr( int _sample_count, int _var_count, const float** _samples,
-                           const float* _y, const Ptr<SVM::Kernel>& _kernel,
-                           double* _alpha, SolutionInfo& _si )
+        static bool solve_nu_svr( const Mat& _samples, const vector<float>& _yf,
+                                  double nu, double C, const Ptr<SVM::Kernel>& _kernel,
+                                  vector<double>& _alpha, SolutionInfo& _si,
+                                  TermCriteria termCrit )
         {
-            int i;
-            double kernel_param_c = _kernel->params->C, sum;
+            int sample_count = _samples.rows;
+            int alpha_count = sample_count*2;
+            double sum = C * nu * sample_count * 0.5;
 
-            if( !create( _sample_count, _var_count, _samples, 0,
-                         _sample_count*2, 0, 1., 1., _kernel, &get_row_svr,
-                         &select_working_set_nu_svm, &calc_rho_nu_svm ))
-                return false;
+            CV_Assert( (int)_yf.size() == sample_count );
 
-            y = (schar*)cvMemStorageAlloc( storage, sample_count*2*sizeof(y[0]) );
-            alpha = (double*)cvMemStorageAlloc( storage, alpha_count*sizeof(alpha[0]) );
-            sum = kernel_param_c * _kernel->params->nu * sample_count * 0.5;
+            _alpha.assign(alpha_count, std::min(sum, C));
+            vector<schar> _y(alpha_count);
+            vector<double> _b(alpha_count);
 
-            for( i = 0; i < sample_count; i++ )
+            for( int i = 0; i < sample_count; i++ )
             {
-                alpha[i] = alpha[i + sample_count] = MIN(sum, kernel_param_c);
-                sum -= alpha[i];
+                sum -= _alpha[i];
 
-                b[i] = -_y[i];
-                y[i] = 1;
+                _b[i] = -_yf[i];
+                _y[i] = 1;
 
-                b[i + sample_count] = _y[i];
-                y[i + sample_count] = -1;
+                _b[i + sample_count] = _yf[i];
+                _y[i + sample_count] = -1;
             }
 
-            if( !solve_generic( _si ))
+            Solver solver( _samples, _y, _alpha, _b, 1., 1., _kernel,
+                           &Solver::get_row_svr,
+                           &Solver::select_working_set_nu_svm,
+                           &Solver::calc_rho_nu_svm,
+                           termCrit );
+
+            if( !solver.solve_generic( _si ))
                 return false;
 
-            for( i = 0; i < sample_count; i++ )
-                _alpha[i] = alpha[i] - alpha[i+sample_count];
+            for( int i = 0; i < sample_count; i++ )
+                _alpha[i] -= _alpha[i+sample_count];
 
             return true;
         }
 
         int sample_count;
         int var_count;
-        size_t cache_size;
+        int cache_size;
+        int max_cache_size;
         Mat samples;
         SVM::Params params;
         vector<KernelRow> lru_cache;
-        Mat lru_cache_data;
         int lru_first;
+        int lru_last;
+        Mat lru_cache_data;
 
         int alpha_count;
 
-        vector<double> G;
-        vector<double>* alpha;
-        const vector<schar>* y;
+        vector<double> G_vec;
+        vector<double>* alpha_vec;
+        vector<schar> y_vec;
         // -1 - lower bound, 0 - free, 1 - upper bound
-        vector<schar> alpha_status;
-        vector<double> b;
+        vector<schar> alpha_status_vec;
+        vector<double> b_vec;
 
         vector<Qfloat> buf[2];
         double eps;
@@ -1171,15 +1210,6 @@ public:
     //////////////////////////////////////////////////////////////////////////////////////////
     SVMImpl()
     {
-        decision_func = 0;
-        class_labels = 0;
-        class_weights = 0;
-        storage = 0;
-        var_idx = 0;
-        kernel = 0;
-        solver = 0;
-        default_model_name = "my_svm";
-
         clear();
     }
 
@@ -1190,45 +1220,15 @@ public:
 
     void clear()
     {
-        cvFree( &decision_func );
-        cvReleaseMat( &class_labels );
-        cvReleaseMat( &class_weights );
-        cvReleaseMemStorage( &storage );
-        cvReleaseMat( &var_idx );
-        delete kernel;
-        delete solver;
-        kernel = 0;
-        solver = 0;
-        var_all = 0;
-        sv = 0;
-        sv_total = 0;
+        decision_func.clear();
+        df_alpha.clear();
+        df_index.clear();
+        sv.release();
     }
 
-    SVMImpl( const CvMat* _train_data, const CvMat* _responses,
-        const CvMat* _var_idx, const CvMat* _sample_idx, const Params& _params )
+    Mat getSupportVectors() const
     {
-        decision_func = 0;
-        class_labels = 0;
-        class_weights = 0;
-        storage = 0;
-        var_idx = 0;
-        kernel = 0;
-        solver = 0;
-        default_model_name = "my_svm";
-
-        train( _train_data, _responses, _var_idx, _sample_idx, _params );
-    }
-
-
-    int get_support_vector_count() const
-    {
-        return sv_total;
-    }
-
-
-    const float* get_support_vector(int i) const
-    {
-        return sv && (unsigned)i < (unsigned)sv_total ? sv[i] : 0;
+        return sv;
     }
 
     void set_params( const Params& _params )
@@ -1279,141 +1279,102 @@ public:
             CV_Error( CV_StsOutOfRange, "The parameter p must be positive" );
 
         if( svmType != C_SVC )
-            params.class_weights = 0;
+            params.classWeights.release();
 
-        params.termCrit = cvCheckTermCriteria( params.termCrit, DBL_EPSILON, INT_MAX );
-        params.termCrit.epsilon = MAX( params.termCrit.epsilon, DBL_EPSILON );
+        termCrit = params.termCrit;
+        if( !(termCrit.type & TermCriteria::EPS) )
+            termCrit.epsilon = DBL_EPSILON;
+        termCrit.epsilon = std::max(termCrit.epsilon, DBL_EPSILON);
+        if( !(termCrit.type & TermCriteria::COUNT) )
+            termCrit.maxCount = INT_MAX;
+        termCrit.maxCount = std::max(termCrit.maxCount, 1);
     }
 
     void create_kernel()
     {
-        kernel = new CvSVMKernel(&params,0);
+        kernel = createStandardSVMKernel(params);
     }
 
-
-    void create_solver( )
+    bool do_train( const Mat& _samples, const Mat& _responses )
     {
-        solver = new CvSVMSolver;
-    }
-
-    // switching function
-    bool train1( int sample_count, int var_count, const float** samples,
-                 const void* _responses, double Cp, double Cn,
-                 CvMemStorage* _storage, double* alpha, double& rho )
-    {
-        bool ok = false;
-
-        //CV_FUNCNAME( "train1" );
-
-        __BEGIN__;
-
-        SolutionInfo si;
         int svmType = params.svmType;
+        int i, j, k, sample_count = _samples.rows;
+        vector<double> _alpha;
+        Solver::SolutionInfo sinfo;
 
-        si.rho = 0;
-
-        ok = svmType == C_SVC ? solver->solve_c_svc( sample_count, var_count, samples, (schar*)_responses,
-                                                      Cp, Cn, _storage, kernel, alpha, si ) :
-             svmType == NU_SVC ? solver->solve_nu_svc( sample_count, var_count, samples, (schar*)_responses,
-                                                        _storage, kernel, alpha, si ) :
-             svmType == ONE_CLASS ? solver->solve_one_class( sample_count, var_count, samples,
-                                                              _storage, kernel, alpha, si ) :
-             svmType == EPS_SVR ? solver->solve_eps_svr( sample_count, var_count, samples, (float*)_responses,
-                                                          _storage, kernel, alpha, si ) :
-             svmType == NU_SVR ? solver->solve_nu_svr( sample_count, var_count, samples, (float*)_responses,
-                                                        _storage, kernel, alpha, si ) : false;
-
-        rho = si.rho;
-
-        __END__;
-
-        return ok;
-    }
-
-
-    bool do_train( int svmType, int sample_count, int var_count, const float** samples,
-                        const CvMat* responses, CvMemStorage* temp_storage, double* alpha )
-    {
-        bool ok = false;
-
-        CV_FUNCNAME( "do_train" );
-
-        __BEGIN__;
-
-        CvSVMDecisionFunc* df = 0;
-        const int sample_size = var_count*sizeof(samples[0][0]);
-        int i, j, k;
-
-        cvClearMemStorage( storage );
+        CV_Assert( _samples.type() == CV_32F );
+        var_count = _samples.cols;
 
         if( svmType == ONE_CLASS || svmType == EPS_SVR || svmType == NU_SVR )
         {
             int sv_count = 0;
+            decision_func.clear();
 
-            CV_CALL( decision_func = df =
-                (CvSVMDecisionFunc*)cvAlloc( sizeof(df[0]) ));
+            vector<float> _yf;
+            if( !_responses.empty() )
+                _responses.convertTo(_yf, CV_32F);
 
-            df->rho = 0;
-            if( !train1( sample_count, var_count, samples, svmType == ONE_CLASS ? 0 :
-                responses->data.i, 0, 0, temp_storage, alpha, df->rho ))
-                EXIT;
+            bool ok =
+            (svmType == ONE_CLASS ? Solver::solve_one_class( _samples, params.nu, kernel, _alpha, sinfo, termCrit ) :
+            svmType == EPS_SVR ? Solver::solve_eps_svr( _samples, _yf, params.p, params.C, kernel, _alpha, sinfo, termCrit ) :
+            svmType == NU_SVR ? Solver::solve_nu_svr( _samples, _yf, params.nu, params.C, kernel, _alpha, sinfo, termCrit ) : false);
+
+            if( !ok )
+                return false;
 
             for( i = 0; i < sample_count; i++ )
-                sv_count += fabs(alpha[i]) > 0;
+                sv_count += fabs(_alpha[i]) > 0;
 
             CV_Assert(sv_count != 0);
 
-            sv_total = df->sv_count = sv_count;
-            CV_CALL( df->alpha = (double*)cvMemStorageAlloc( storage, sv_count*sizeof(df->alpha[0])) );
-            CV_CALL( sv = (float**)cvMemStorageAlloc( storage, sv_count*sizeof(sv[0])));
+            sv.create(sv_count, _samples.cols, CV_32F);
+            df_alpha.resize(sv_count);
+            df_index.resize(sv_count);
 
             for( i = k = 0; i < sample_count; i++ )
             {
-                if( fabs(alpha[i]) > 0 )
+                if( std::abs(_alpha[i]) > 0 )
                 {
-                    CV_CALL( sv[k] = (float*)cvMemStorageAlloc( storage, sample_size ));
-                    memcpy( sv[k], samples[i], sample_size );
-                    df->alpha[k++] = alpha[i];
+                    _samples.row(i).copyTo(sv.row(k));
+                    df_alpha[k] = _alpha[i];
+                    df_index[k] = k;
+                    k++;
                 }
             }
+
+            decision_func.push_back(DecisionFunc(sinfo.rho, 0));
+            decision_func.push_back(DecisionFunc(0., sv_count));
         }
         else
         {
-            int class_count = class_labels->cols;
-            int* sv_tab = 0;
-            const float** temp_samples = 0;
-            int* class_ranges = 0;
-            schar* temp_y = 0;
-            assert( svmType == C_SVC || svmType == NU_SVC );
+            int class_count = (int)class_labels.total();
+            vector<int> svidx, sidx, sidx_all, sv_tab(sample_count, 0);
+            Mat temp_samples, class_weights;
+            vector<int> class_ranges;
+            vector<schar> temp_y;
+            double nu = params.nu;
+            CV_Assert( svmType == C_SVC || svmType == NU_SVC );
 
-            if( svmType == C_SVC && params.class_weights )
+            if( svmType == C_SVC && !params.classWeights.empty() )
             {
-                const CvMat* cw = params.class_weights;
+                const Mat cw = params.classWeights;
 
-                if( !CV_IS_MAT(cw) || (cw->cols != 1 && cw->rows != 1) ||
-                    cw->rows + cw->cols - 1 != class_count ||
-                    (CV_MAT_TYPE(cw->type) != CV_32FC1 && CV_MAT_TYPE(cw->type) != CV_64FC1) )
+                if( (cw.cols != 1 && cw.rows != 1) ||
+                    (int)cw.total() != class_count ||
+                    (cw.type() != CV_32F && cw.type() != CV_64F) )
                     CV_Error( CV_StsBadArg, "params.class_weights must be 1d floating-point vector "
                         "containing as many elements as the number of classes" );
 
-                CV_CALL( class_weights = cvCreateMat( cw->rows, cw->cols, CV_64F ));
-                CV_CALL( cvConvert( cw, class_weights ));
-                CV_CALL( cvScale( class_weights, class_weights, params.C ));
+                cw.convertTo(class_weights, CV_64F, params.C);
+                //normalize(cw, class_weights, params.C, 0, NORM_L1, CV_64F);
             }
 
-            CV_CALL( decision_func = df = (CvSVMDecisionFunc*)cvAlloc(
-                (class_count*(class_count-1)/2)*sizeof(df[0])));
+            decision_func.clear();
+            df_alpha.clear();
+            df_index.clear();
 
-            CV_CALL( sv_tab = (int*)cvMemStorageAlloc( temp_storage, sample_count*sizeof(sv_tab[0]) ));
-            memset( sv_tab, 0, sample_count*sizeof(sv_tab[0]) );
-            CV_CALL( class_ranges = (int*)cvMemStorageAlloc( temp_storage,
-                                (class_count + 1)*sizeof(class_ranges[0])));
-            CV_CALL( temp_samples = (const float**)cvMemStorageAlloc( temp_storage,
-                                sample_count*sizeof(temp_samples[0])));
-            CV_CALL( temp_y = (schar*)cvMemStorageAlloc( temp_storage, sample_count));
+            sortSamplesByClasses( _samples, _responses, sidx_all, class_ranges );
 
-            class_ranges[class_count] = 0;
-            cvSortSamplesByClasses( samples, responses, class_ranges, 0 );
             //check that while cross-validation there were the samples from all the classes
             if( class_ranges[class_count] <= 0 )
                 CV_Error( CV_StsBadArg, "While cross-validation one or more of the classes have "
@@ -1422,84 +1383,75 @@ public:
             if( svmType == NU_SVC )
             {
                 // check if nu is feasible
-                for(i = 0; i < class_count; i++ )
+                for( i = 0; i < class_count; i++ )
                 {
                     int ci = class_ranges[i+1] - class_ranges[i];
                     for( j = i+1; j< class_count; j++ )
                     {
                         int cj = class_ranges[j+1] - class_ranges[j];
-                        if( params.nu*(ci + cj)*0.5 > MIN( ci, cj ) )
-                        {
-                            // !!!TODO!!! add some diagnostic
-                            EXIT; // exit immediately; will release the model and return NULL pointer
-                        }
+                        if( nu*(ci + cj)*0.5 > std::min( ci, cj ) )
+                            // TODO: add some diagnostic
+                            return false;
                     }
                 }
             }
+
+            size_t samplesize = _samples.cols*_samples.elemSize();
 
             // train n*(n-1)/2 classifiers
             for( i = 0; i < class_count; i++ )
             {
-                for( j = i+1; j < class_count; j++, df++ )
+                for( j = i+1; j < class_count; j++ )
                 {
                     int si = class_ranges[i], ci = class_ranges[i+1] - si;
                     int sj = class_ranges[j], cj = class_ranges[j+1] - sj;
                     double Cp = params.C, Cn = Cp;
-                    int k1 = 0, sv_count = 0;
 
-                    for( k = 0; k < ci; k++ )
+                    temp_samples.create(ci + cj, _samples.cols, _samples.type());
+                    sidx.resize(ci + cj);
+                    temp_y.resize(ci + cj);
+
+                    // form input for the binary classification problem
+                    for( k = 0; k < ci+cj; k++ )
                     {
-                        temp_samples[k] = samples[si + k];
-                        temp_y[k] = 1;
+                        int idx = k < ci ? si+k : sj+k;
+                        memcpy(temp_samples.ptr(k), _samples.ptr(sidx_all[idx]), samplesize);
+                        sidx[k] = sidx_all[idx];
+                        temp_y[k] = k < ci ? 1 : -1;
                     }
 
-                    for( k = 0; k < cj; k++ )
+                    if( !class_weights.empty() )
                     {
-                        temp_samples[ci + k] = samples[sj + k];
-                        temp_y[ci + k] = -1;
+                        Cp = class_weights.at<double>(i);
+                        Cn = class_weights.at<double>(j);
                     }
 
-                    if( class_weights )
-                    {
-                        Cp = class_weights->data.db[i];
-                        Cn = class_weights->data.db[j];
-                    }
-
-                    if( !train1( ci + cj, var_count, temp_samples, temp_y,
-                                 Cp, Cn, temp_storage, alpha, df->rho ))
-                        EXIT;
+                    DecisionFunc df;
+                    bool ok = params.svmType == C_SVC ?
+                                Solver::solve_c_svc( temp_samples, temp_y, Cp, Cn,
+                                                     kernel, _alpha, sinfo, termCrit ) :
+                              params.svmType == NU_SVC ?
+                                Solver::solve_nu_svc( temp_samples, temp_y, params.nu,
+                                                      kernel, _alpha, sinfo, termCrit ) :
+                              false;
+                    if( !ok )
+                        return false;
+                    df.rho = sinfo.rho;
+                    df.ofs = (int)df_index.size();
 
                     for( k = 0; k < ci + cj; k++ )
-                        sv_count += fabs(alpha[k]) > 0;
-
-                    df->sv_count = sv_count;
-
-                    CV_CALL( df->alpha = (double*)cvMemStorageAlloc( temp_storage,
-                                                    sv_count*sizeof(df->alpha[0])));
-                    CV_CALL( df->sv_index = (int*)cvMemStorageAlloc( temp_storage,
-                                                    sv_count*sizeof(df->sv_index[0])));
-
-                    for( k = 0; k < ci; k++ )
                     {
-                        if( fabs(alpha[k]) > 0 )
+                        if( std::abs(_alpha[k]) > 0 )
                         {
-                            sv_tab[si + k] = 1;
-                            df->sv_index[k1] = si + k;
-                            df->alpha[k1++] = alpha[k];
-                        }
-                    }
-
-                    for( k = 0; k < cj; k++ )
-                    {
-                        if( fabs(alpha[ci + k]) > 0 )
-                        {
-                            sv_tab[sj + k] = 1;
-                            df->sv_index[k1] = sj + k;
-                            df->alpha[k1++] = alpha[ci + k];
+                            int idx = k < ci ? si+k : sj+k;
+                            sv_tab[idx] = 1;
+                            df_index.push_back(sidx_all[idx]);
+                            df_alpha.push_back(_alpha[k]);
                         }
                     }
                 }
             }
+            decision_func.push_back(DecisionFunc(0., (int)df_index.size()));
 
             // allocate support vectors and initialize sv_tab
             for( i = 0, k = 0; i < sample_count; i++ )
@@ -1508,43 +1460,25 @@ public:
                     sv_tab[i] = ++k;
             }
 
-            sv_total = k;
-            CV_CALL( sv = (float**)cvMemStorageAlloc( storage, sv_total*sizeof(sv[0])));
+            int sv_total = k;
+            sv.create(sv_total, _samples.cols, _samples.type());
 
-            for( i = 0, k = 0; i < sample_count; i++ )
+            for( i = 0; i < sample_count; i++ )
             {
-                if( sv_tab[i] )
-                {
-                    CV_CALL( sv[k] = (float*)cvMemStorageAlloc( storage, sample_size ));
-                    memcpy( sv[k], samples[i], sample_size );
-                    k++;
-                }
+                if( !sv_tab[i] )
+                    continue;
+                memcpy(sv.ptr(sv_tab[i]-1), _samples.ptr(i), samplesize);
             }
-
-            df = (CvSVMDecisionFunc*)decision_func;
 
             // set sv pointers
-            for( i = 0; i < class_count; i++ )
-            {
-                for( j = i+1; j < class_count; j++, df++ )
-                {
-                    for( k = 0; k < df->sv_count; k++ )
-                    {
-                        df->sv_index[k] = sv_tab[df->sv_index[k]]-1;
-                        assert( (unsigned)df->sv_index[k] < (unsigned)sv_total );
-                    }
-                }
-            }
+            int n = (int)df_index.size();
+            for( i = 0; i < n; i++ )
+                df_index[i] = sv_tab[df_index[i]] - 1;
         }
 
         optimize_linear_svm();
-        ok = true;
-
-        __END__;
-
-        return ok;
+        return true;
     }
-
 
     void optimize_linear_svm()
     {
@@ -1552,15 +1486,12 @@ public:
         if( params.kernelType != LINEAR )
             return;
 
-        int class_count = class_labels ? class_labels->cols :
-                params.svmType == ONE_CLASS ? 1 : 0;
-
-        int i, df_count = class_count > 1 ? class_count*(class_count-1)/2 : 1;
-        CvSVMDecisionFunc* df = decision_func;
+        int i, df_count = (int)decision_func.size();
+        DecisionFunc* dfp = &decision_func[0];
 
         for( i = 0; i < df_count; i++ )
         {
-            int sv_count = df[i].sv_count;
+            int sv_count = dfp[i+1].ofs - dfp[i].ofs;
             if( sv_count != 1 )
                 break;
         }
@@ -1570,202 +1501,98 @@ public:
         if( i == df_count )
             return;
 
-        int var_count = get_var_count();
         AutoBuffer<double> vbuf(var_count);
         double* v = vbuf;
-        float** new_sv = (float**)cvMemStorageAlloc(storage, df_count*sizeof(new_sv[0]));
+        Mat new_sv(df_count, var_count, CV_32F);
+
+        vector<DecisionFunc> new_df;
 
         for( i = 0; i < df_count; i++ )
         {
-            new_sv[i] = (float*)cvMemStorageAlloc(storage, var_count*sizeof(new_sv[i][0]));
-            float* dst = new_sv[i];
+            float* dst = new_sv.ptr<float>(i);
             memset(v, 0, var_count*sizeof(v[0]));
-            int j, k, sv_count = df[i].sv_count;
+            int j, k, sv_count = dfp[i+1].ofs - dfp[i].ofs;
+            const int* sv_index = &df_index[dfp[i].ofs];
+            const double* sv_alpha = &df_alpha[dfp[i].ofs];
             for( j = 0; j < sv_count; j++ )
             {
-                const float* src = class_count > 1 && df[i].sv_index ? sv[df[i].sv_index[j]] : sv[j];
-                double a = df[i].alpha[j];
+                const float* src = sv.ptr<float>(sv_index[j]);
+                double a = sv_alpha[j];
                 for( k = 0; k < var_count; k++ )
                     v[k] += src[k]*a;
             }
             for( k = 0; k < var_count; k++ )
                 dst[k] = (float)v[k];
-            df[i].sv_count = 1;
-            df[i].alpha[0] = 1.;
-            if( class_count > 1 && df[i].sv_index )
-                df[i].sv_index[0] = i;
+            new_df.push_back(DecisionFunc(dfp[i].rho, i));
         }
 
+        new_df.push_back(DecisionFunc(0., df_count));
+        setRangeVector(df_index, df_count);
+        df_alpha.assign(df_count, 1.);
         sv = new_sv;
-        sv_total = df_count;
     }
 
-    bool train( const Ptr<TrainData>& _data, int flags )
+    bool train( const Ptr<TrainData>& data, int )
     {
-        bool ok = false;
-        CvMat* responses = 0;
-        CvMemStorage* temp_storage = 0;
-        const float** samples = 0;
-
-        int sample_count, var_count, sample_size;
-        int block_size = 1 << 16;
-        double* alpha;
-
         clear();
 
-        int svmType = _params.svmType;
+        int svmType = params.svmType;
+        Mat samples = data->getTrainSamples();
+        Mat trainSampleIdx = data->getTrainSampleIdx();
+        Mat responses;
 
-        /* Prepare training data and related parameters */
-        CV_CALL( cvPrepareTrainData( "train", _train_data, CV_ROW_SAMPLE,
-                                     svmType != ONE_CLASS ? _responses : 0,
-                                     svmType == C_SVC ||
-                                     svmType == NU_SVC ? CV_VAR_CATEGORICAL :
-                                     CV_VAR_ORDERED, _var_idx, _sample_idx,
-                                     false, &samples, &sample_count, &var_count, &var_all,
-                                     &responses, &class_labels, &var_idx ));
-
-
-        sample_size = var_count*sizeof(samples[0][0]);
-
-        // make the storage block size large enough to fit all
-        // the temporary vectors and output support vectors.
-        block_size = MAX( block_size, sample_count*(int)sizeof(CvSVMKernelRow));
-        block_size = MAX( block_size, sample_count*2*(int)sizeof(double) + 1024 );
-        block_size = MAX( block_size, sample_size*2 + 1024 );
-
-        CV_CALL( storage = cvCreateMemStorage(block_size + sizeof(CvMemBlock) + sizeof(CvSeqBlock)));
-        CV_CALL( temp_storage = cvCreateChildMemStorage(storage));
-        CV_CALL( alpha = (double*)cvMemStorageAlloc(temp_storage, sample_count*sizeof(double)));
+        if( svmType == C_SVC || svmType == NU_SVC )
+        {
+            responses = data->getTrainNormCatResponses();
+            class_labels = data->getClassLabels();
+        }
+        else
+            responses = data->getTrainResponses();
 
         create_kernel();
-        create_solver();
 
-        if( !do_train( svmType, sample_count, var_count, samples, responses, temp_storage, alpha ))
-            EXIT;
-
-        ok = true; // model has been trained succesfully
-
-        __END__;
-
-        delete solver;
-        solver = 0;
-        cvReleaseMemStorage( &temp_storage );
-        cvReleaseMat( &responses );
-        cvFree( &samples );
-
-        if( cvGetErrStatus() < 0 || !ok )
-            clear();
-
-        return ok;
-    }
-
-    struct indexedratio
-    {
-        double val;
-        int ind;
-        int count_smallest, count_biggest;
-        void eval() { val = (double) count_smallest/(count_smallest+count_biggest); }
-    };
-
-    static int CV_CDECL
-    icvCmpIndexedratio( const void* a, const void* b )
-    {
-        return ((const indexedratio*)a)->val < ((const indexedratio*)b)->val ? -1
-        : ((const indexedratio*)a)->val > ((const indexedratio*)b)->val ? 1
-        : 0;
-    }
-
-    bool train_auto( const CvMat* _train_data, const CvMat* _responses,
-        const CvMat* _var_idx, const CvMat* _sample_idx, Params _params, int k_fold,
-        CvParamGrid C_grid, CvParamGrid gamma_grid, CvParamGrid p_grid,
-        CvParamGrid nu_grid, CvParamGrid coef_grid, CvParamGrid degree_grid,
-        bool balanced)
-    {
-        bool ok = false;
-        CvMat* responses = 0;
-        CvMat* responses_local = 0;
-        CvMemStorage* temp_storage = 0;
-        const float** samples = 0;
-        const float** samples_local = 0;
-
-        CV_FUNCNAME( "train_auto" );
-        __BEGIN__;
-
-        int svmType, sample_count, var_count, sample_size;
-        int block_size = 1 << 16;
-        double* alpha;
-        RNG* rng = &theRNG();
-
-        // all steps are logarithmic and must be > 1
-        double degree_step = 10, g_step = 10, coef_step = 10, C_step = 10, nu_step = 10, p_step = 10;
-        double gamma = 0, curr_c = 0, degree = 0, coef = 0, p = 0, nu = 0;
-        double best_degree = 0, best_gamma = 0, best_coef = 0, best_C = 0, best_nu = 0, best_p = 0;
-        float min_error = FLT_MAX, error;
-
-        if( _params.svmType == ONE_CLASS )
+        if( !do_train( samples, responses ))
         {
-            if(!train( _train_data, _responses, _var_idx, _sample_idx, _params ))
-                EXIT;
-            return true;
+            clear();
+            return false;
         }
+
+        return true;
+    }
+
+    bool train_auto( const Ptr<TrainData>& data, int k_fold,
+                     ParamGrid C_grid, ParamGrid gamma_grid, ParamGrid p_grid,
+                     ParamGrid nu_grid, ParamGrid coef_grid, ParamGrid degree_grid,
+                     bool balanced )
+    {
+        int svmType = params.svmType;
+        RNG rng(-1);
+
+        if( svmType == ONE_CLASS )
+            // current implementation of "auto" svm does not support the 1-class case.
+            return train( data, 0 );
 
         clear();
 
-        if( k_fold < 2 )
-            CV_Error( CV_StsBadArg, "Parameter <k_fold> must be > 1" );
-
-        CV_CALL(set_params( _params ));
-        svmType = _params.svmType;
+        CV_Assert( k_fold >= 2 );
 
         // All the parameters except, possibly, <coef0> are positive.
         // <coef0> is nonnegative
-        if( C_grid.logStep <= 1 )
-        {
-            C_grid.minVal = C_grid.maxVal = params.C;
-            C_grid.logStep = 10;
-        }
-        else
-            CV_CALL(C_grid.check());
+        #define CHECK_GRID(grid, param) \
+        if( grid.logStep <= 1 ) \
+        { \
+            grid.minVal = grid.maxVal = params.param; \
+            grid.logStep = 10; \
+        } \
+        else \
+            checkParamGrid(grid)
 
-        if( gamma_grid.logStep <= 1 )
-        {
-            gamma_grid.minVal = gamma_grid.maxVal = params.gamma;
-            gamma_grid.logStep = 10;
-        }
-        else
-            CV_CALL(gamma_grid.check());
-
-        if( p_grid.logStep <= 1 )
-        {
-            p_grid.minVal = p_grid.maxVal = params.p;
-            p_grid.logStep = 10;
-        }
-        else
-            CV_CALL(p_grid.check());
-
-        if( nu_grid.logStep <= 1 )
-        {
-            nu_grid.minVal = nu_grid.maxVal = params.nu;
-            nu_grid.logStep = 10;
-        }
-        else
-            CV_CALL(nu_grid.check());
-
-        if( coef_grid.logStep <= 1 )
-        {
-            coef_grid.minVal = coef_grid.maxVal = params.coef0;
-            coef_grid.logStep = 10;
-        }
-        else
-            CV_CALL(coef_grid.check());
-
-        if( degree_grid.logStep <= 1 )
-        {
-            degree_grid.minVal = degree_grid.maxVal = params.degree;
-            degree_grid.logStep = 10;
-        }
-        else
-            CV_CALL(degree_grid.check());
+        CHECK_GRID(C_grid, C);
+        CHECK_GRID(gamma_grid, gamma);
+        CHECK_GRID(p_grid, p);
+        CHECK_GRID(nu_grid, nu);
+        CHECK_GRID(coef_grid, coef0);
+        CHECK_GRID(degree_grid, degree);
 
         // these parameters are not used:
         if( params.kernelType != POLY )
@@ -1781,311 +1608,153 @@ public:
         if( svmType != EPS_SVR )
             p_grid.minVal = p_grid.maxVal = params.p;
 
-        CV_ASSERT( g_step > 1 && degree_step > 1 && coef_step > 1);
-        CV_ASSERT( p_step > 1 && C_step > 1 && nu_step > 1 );
+        Mat samples = data->getTrainSamples();
+        Mat responses;
+        bool is_classification = false;
+        Mat class_labels0 = class_labels;
+        int class_count = (int)class_labels.total();
 
-        /* Prepare training data and related parameters */
-        CV_CALL(cvPrepareTrainData( "train_auto", _train_data, CV_ROW_SAMPLE,
-                                     svmType != ONE_CLASS ? _responses : 0,
-                                     svmType == C_SVC ||
-                                     svmType == NU_SVC ? CV_VAR_CATEGORICAL :
-                                     CV_VAR_ORDERED, _var_idx, _sample_idx,
-                                     false, &samples, &sample_count, &var_count, &var_all,
-                                     &responses, &class_labels, &var_idx ));
-
-        sample_size = var_count*sizeof(samples[0][0]);
-
-        // make the storage block size large enough to fit all
-        // the temporary vectors and output support vectors.
-        block_size = MAX( block_size, sample_count*(int)sizeof(CvSVMKernelRow));
-        block_size = MAX( block_size, sample_count*2*(int)sizeof(double) + 1024 );
-        block_size = MAX( block_size, sample_size*2 + 1024 );
-
-        CV_CALL( storage = cvCreateMemStorage(block_size + sizeof(CvMemBlock) + sizeof(CvSeqBlock)));
-        CV_CALL(temp_storage = cvCreateChildMemStorage(storage));
-        CV_CALL(alpha = (double*)cvMemStorageAlloc(temp_storage, sample_count*sizeof(double)));
-
-        create_kernel();
-        create_solver();
-
+        if( svmType == C_SVC || svmType == NU_SVC )
         {
-        const int testset_size = sample_count/k_fold;
-        const int trainset_size = sample_count - testset_size;
-        const int last_testset_size = sample_count - testset_size*(k_fold-1);
-        const int last_trainset_size = sample_count - last_testset_size;
-        const bool is_regression = (svmType == EPS_SVR) || (svmType == NU_SVR);
+            responses = data->getTrainNormCatResponses();
+            class_labels = data->getClassLabels();
+            is_classification = true;
 
-        size_t resp_elem_size = CV_ELEM_SIZE(responses->type);
-        size_t size = 2*last_trainset_size*sizeof(samples[0]);
+            vector<int> temp_class_labels;
+            setRangeVector(temp_class_labels, class_count);
 
-        samples_local = (const float**) cvAlloc( size );
-        memset( samples_local, 0, size );
+            // temporarily replace class labels with 0, 1, ..., NCLASSES-1
+            Mat(temp_class_labels).copyTo(class_labels);
+        }
+        else
+            responses = data->getTrainResponses();
 
-        responses_local = cvCreateMat( 1, trainset_size, CV_MAT_TYPE(responses->type) );
-        cvZero( responses_local );
+        CV_Assert(samples.type() == CV_32F);
 
-        // randomly permute samples and responses
-        for(int i = 0; i < sample_count; i++ )
+        int sample_count = samples.rows;
+        var_count = samples.cols;
+        size_t sample_size = var_count*samples.elemSize();
+
+        vector<int> sidx;
+        setRangeVector(sidx, sample_count);
+
+        int i, j, k;
+
+        // randomly permute training samples
+        for( i = 0; i < sample_count; i++ )
         {
-            int i1 = (*rng)(sample_count);
-            int i2 = (*rng)(sample_count);
-            const float* temp;
-            float t;
-            int y;
-
-            CV_SWAP( samples[i1], samples[i2], temp );
-            if( is_regression )
-                CV_SWAP( responses->data.fl[i1], responses->data.fl[i2], t );
-            else
-                CV_SWAP( responses->data.i[i1], responses->data.i[i2], y );
+            int i1 = rng.uniform(0, sample_count);
+            int i2 = rng.uniform(0, sample_count);
+            std::swap(sidx[i1], sidx[i2]);
         }
 
-        if (!is_regression && class_labels->cols==2 && balanced)
+        if( is_classification && class_count == 2 && balanced )
         {
-            // count class samples
-            int num_0=0,num_1=0;
-            for (int i=0; i<sample_count; ++i)
+            // reshuffle the training set in such a way that
+            // instances of each class are divided more or less evenly
+            // between the k_fold parts.
+            vector<int> sidx0, sidx1;
+
+            for( i = 0; i < sample_count; i++ )
             {
-                if (responses->data.i[i]==class_labels->data.i[0])
-                    ++num_0;
+                if( responses.at<int>(sidx[i]) == 0 )
+                    sidx0.push_back(sidx[i]);
                 else
-                    ++num_1;
+                    sidx1.push_back(sidx[i]);
             }
 
-            int label_smallest_class;
-            int label_biggest_class;
-            if (num_0 < num_1)
+            int n0 = (int)sidx0.size(), n1 = (int)sidx1.size();
+            int a0 = 0, a1 = 0;
+            sidx.clear();
+            for( k = 0; k < k_fold; k++ )
             {
-                label_biggest_class = class_labels->data.i[1];
-                label_smallest_class = class_labels->data.i[0];
-            }
-            else
-            {
-                label_biggest_class = class_labels->data.i[0];
-                label_smallest_class = class_labels->data.i[1];
-                int y;
-                CV_SWAP(num_0,num_1,y);
-            }
-            const double class_ratio = (double) num_0/sample_count;
-            // calculate class ratio of each fold
-            indexedratio *ratios=0;
-            ratios = (indexedratio*) cvAlloc(k_fold*sizeof(*ratios));
-            for (int k=0, i_begin=0; k<k_fold; ++k, i_begin+=testset_size)
-            {
-                int count0=0;
-                int count1=0;
-                int i_end = i_begin + (k<k_fold-1 ? testset_size : last_testset_size);
-                for (int i=i_begin; i<i_end; ++i)
+                int b0 = ((k+1)*n0 + k_fold/2)/k_fold, b1 = ((k+1)*n1 + k_fold/2)/k_fold;
+                int a = (int)sidx.size(), b = a + (b0 - a0) + (b1 - a1);
+                for( i = a0; i < b0; i++ )
+                    sidx.push_back(sidx0[i]);
+                for( i = a1; i < b1; i++ )
+                    sidx.push_back(sidx1[i]);
+                for( i = 0; i < (b - a); i++ )
                 {
-                    if (responses->data.i[i]==label_smallest_class)
-                        ++count0;
+                    int i1 = rng.uniform(a, b);
+                    int i2 = rng.uniform(a, b);
+                    std::swap(sidx[i1], sidx[i2]);
+                }
+                a0 = b0; a1 = b1;
+            }
+        }
+
+        int test_sample_count = (sample_count + k_fold/2)/k_fold;
+        int train_sample_count = sample_count - test_sample_count;
+
+        Params best_params = params;
+        double min_error = FLT_MAX;
+
+        int rtype = responses.type();
+
+        Mat temp_train_samples(train_sample_count, var_count, CV_32F);
+        Mat temp_test_samples(test_sample_count, var_count, CV_32F);
+        Mat temp_train_responses(train_sample_count, 1, rtype);
+        Mat temp_test_responses;
+
+        #define FOR_IN_GRID(var, grid) \
+            for( params.var = grid.minVal; params.var == grid.minVal || params.var < grid.maxVal; params.var *= grid.logStep )
+
+        FOR_IN_GRID(C, C_grid)
+        FOR_IN_GRID(gamma, gamma_grid)
+        FOR_IN_GRID(p, p_grid)
+        FOR_IN_GRID(nu, nu_grid)
+        FOR_IN_GRID(coef0, coef_grid)
+        FOR_IN_GRID(degree, degree_grid)
+        {
+            double error = 0;
+            for( k = 0; k < k_fold; k++ )
+            {
+                int start = (k*sample_count + k_fold/2)/k_fold;
+                for( i = 0; i < train_sample_count; i++ )
+                {
+                    j = sidx[(i+start)%sample_count];
+                    memcpy(temp_train_samples.ptr(i), samples.ptr(j), sample_size);
+                    if( is_classification )
+                        temp_train_responses.at<int>(i) = responses.at<int>(j);
+                    else if( !responses.empty() )
+                        temp_train_responses.at<float>(i) = responses.at<float>(j);
+                }
+
+                // Train SVM on <train_size> samples
+                if( !do_train( temp_train_samples, temp_train_responses ))
+                    continue;
+
+                for( i = 0; i < test_sample_count; i++ )
+                {
+                    j = sidx[(i+start+train_sample_count) % sample_count];
+                    memcpy(temp_train_samples.ptr(i), samples.ptr(j), sample_size);
+                }
+
+                predict(temp_test_samples, temp_test_responses, false);
+                for( i = 0; i < test_sample_count; i++ )
+                {
+                    float val = temp_test_responses.at<float>(i);
+                    j = sidx[(i+start+train_sample_count) % sample_count];
+                    if( is_classification )
+                        error += (float)(val != responses.at<int>(j));
                     else
-                        ++count1;
+                    {
+                        val -= responses.at<float>(j);
+                        error += val*val;
+                    }
                 }
-                ratios[k].ind = k;
-                ratios[k].count_smallest = count0;
-                ratios[k].count_biggest = count1;
-                ratios[k].eval();
             }
-            // initial distance
-            qsort(ratios, k_fold, sizeof(ratios[0]), icvCmpIndexedratio);
-            double old_dist = 0.0;
-            for (int k=0; k<k_fold; ++k)
-                old_dist += abs(ratios[k].val-class_ratio);
-            double new_dist = 1.0;
-            // iterate to make the folds more balanced
-            while (new_dist > 0.0)
+            if( min_error > error )
             {
-                if (ratios[0].count_biggest==0 || ratios[k_fold-1].count_smallest==0)
-                    break; // we are not able to swap samples anymore
-                // what if we swap the samples, calculate the new distance
-                ratios[0].count_smallest++;
-                ratios[0].count_biggest--;
-                ratios[0].eval();
-                ratios[k_fold-1].count_smallest--;
-                ratios[k_fold-1].count_biggest++;
-                ratios[k_fold-1].eval();
-                qsort(ratios, k_fold, sizeof(ratios[0]), icvCmpIndexedratio);
-                new_dist = 0.0;
-                for (int k=0; k<k_fold; ++k)
-                    new_dist += abs(ratios[k].val-class_ratio);
-                if (new_dist < old_dist)
-                {
-                    // swapping really improves, so swap the samples
-                    // index of the biggest_class sample from the minimum ratio fold
-                    int i1 = ratios[0].ind * testset_size;
-                    for ( ; i1<sample_count; ++i1)
-                    {
-                        if (responses->data.i[i1]==label_biggest_class)
-                            break;
-                    }
-                    // index of the smallest_class sample from the maximum ratio fold
-                    int i2 = ratios[k_fold-1].ind * testset_size;
-                    for ( ; i2<sample_count; ++i2)
-                    {
-                        if (responses->data.i[i2]==label_smallest_class)
-                            break;
-                    }
-                    // swap
-                    const float* temp;
-                    int y;
-                    CV_SWAP( samples[i1], samples[i2], temp );
-                    CV_SWAP( responses->data.i[i1], responses->data.i[i2], y );
-                    old_dist = new_dist;
-                }
-                else
-                    break; // does not improve, so break the loop
+                min_error   = error;
+                best_params = params;
             }
-            cvFree(&ratios);
         }
 
-        int* cls_lbls = class_labels ? class_labels->data.i : 0;
-        curr_c = C_grid.minVal;
-        do
-        {
-          params.C = curr_c;
-          gamma = gamma_grid.minVal;
-          do
-          {
-            params.gamma = gamma;
-            p = p_grid.minVal;
-            do
-            {
-              params.p = p;
-              nu = nu_grid.minVal;
-              do
-              {
-                params.nu = nu;
-                coef = coef_grid.minVal;
-                do
-                {
-                  params.coef0 = coef;
-                  degree = degree_grid.minVal;
-                  do
-                  {
-                    params.degree = degree;
-
-                    float** test_samples_ptr = (float**)samples;
-                    uchar* true_resp = responses->data.ptr;
-                    int test_size = testset_size;
-                    int train_size = trainset_size;
-
-                    error = 0;
-                    for(int k = 0; k < k_fold; k++ )
-                    {
-                        memcpy( samples_local, samples, sizeof(samples[0])*test_size*k );
-                        memcpy( samples_local + test_size*k, test_samples_ptr + test_size,
-                            sizeof(samples[0])*(sample_count - testset_size*(k+1)) );
-
-                        memcpy( responses_local->data.ptr, responses->data.ptr, resp_elem_size*test_size*k );
-                        memcpy( responses_local->data.ptr + resp_elem_size*test_size*k,
-                            true_resp + resp_elem_size*test_size,
-                            resp_elem_size*(sample_count - testset_size*(k+1)) );
-
-                        if( k == k_fold - 1 )
-                        {
-                            test_size = last_testset_size;
-                            train_size = last_trainset_size;
-                            responses_local->cols = last_trainset_size;
-                        }
-
-                        // Train SVM on <train_size> samples
-                        if( !do_train( svmType, train_size, var_count,
-                            (const float**)samples_local, responses_local, temp_storage, alpha ) )
-                            EXIT;
-
-                        // Compute test set error on <test_size> samples
-                        for(int i = 0; i < test_size; i++, true_resp += resp_elem_size, test_samples_ptr++ )
-                        {
-                            float resp = predict( *test_samples_ptr, var_count );
-                            error += is_regression ? powf( resp - *(float*)true_resp, 2 )
-                                : ((int)resp != cls_lbls[*(int*)true_resp]);
-                        }
-                    }
-                    if( min_error > error )
-                    {
-                        min_error   = error;
-                        best_degree = degree;
-                        best_gamma  = gamma;
-                        best_coef   = coef;
-                        best_C      = curr_c;
-                        best_nu     = nu;
-                        best_p      = p;
-                    }
-                    degree *= degree_grid.logStep;
-                  }
-                  while( degree < degree_grid.maxVal );
-                  coef *= coef_grid.logStep;
-                }
-                while( coef < coef_grid.maxVal );
-                nu *= nu_grid.logStep;
-              }
-              while( nu < nu_grid.maxVal );
-              p *= p_grid.logStep;
-            }
-            while( p < p_grid.maxVal );
-            gamma *= gamma_grid.logStep;
-          }
-          while( gamma < gamma_grid.maxVal );
-          curr_c *= C_grid.logStep;
-        }
-        while( curr_c < C_grid.maxVal );
-        }
-
-        min_error /= (float) sample_count;
-
-        params.C      = best_C;
-        params.nu     = best_nu;
-        params.p      = best_p;
-        params.gamma  = best_gamma;
-        params.degree = best_degree;
-        params.coef0  = best_coef;
-
-        CV_CALL(ok = do_train( svmType, sample_count, var_count, samples, responses, temp_storage, alpha ));
-
-        __END__;
-
-        delete solver;
-        solver = 0;
-        cvReleaseMemStorage( &temp_storage );
-        cvReleaseMat( &responses );
-        cvReleaseMat( &responses_local );
-        cvFree( &samples );
-        cvFree( &samples_local );
-
-        if( cvGetErrStatus() < 0 || !ok )
-            clear();
-
-        return ok;
-    }
-
-    float predict( const CvMat* sample, bool returnDFVal ) const
-    {
-        float result = 0;
-        float* row_sample = 0;
-
-        CV_FUNCNAME( "predict" );
-
-        __BEGIN__;
-
-        int class_count;
-
-        if( !kernel )
-            CV_Error( CV_StsBadArg, "The SVM should be trained first" );
-
-        class_count = class_labels ? class_labels->cols :
-                      params.svmType == ONE_CLASS ? 1 : 0;
-
-        CV_CALL( cvPreparePredictData( sample, var_all, var_idx,
-                                       class_count, 0, &row_sample ));
-        result = predict( row_sample, get_var_count(), returnDFVal );
-
-        __END__;
-
-        if( sample && (!CV_IS_MAT(sample) || sample->data.fl != row_sample) )
-            cvFree( &row_sample );
-
-        return result;
+        params = best_params;
+        class_labels = class_labels0;
+        return do_train( samples, responses );
     }
 
     struct PredictBody : ParallelLoopBody
@@ -2102,28 +1771,26 @@ public:
         {
             int svmType = svm->params.svmType;
             int sv_total = svm->sv.rows;
-            int class_count = class_labels ? class_labels->cols : svmType == ONE_CLASS ? 1 : 0;
+            int class_count = !svm->class_labels.empty() ? svm->class_labels.cols : svmType == ONE_CLASS ? 1 : 0;
 
             AutoBuffer<float> _buffer(sv_total + (class_count+1)*2);
             float* buffer = _buffer;
 
             int i, j, k, si;
-            int var_count = _samples.cols;
 
             if( svmType == EPS_SVR || svmType == NU_SVR || svmType == ONE_CLASS )
             {
-                const double* alpha = &svm->df_alpha[0];
                 for( si = range.start; si < range.end; si++ )
                 {
-                    const float* row_sample = samples.ptr<float>(si);
-                    svm->kernel->calc( sv_count, var_count, svm->sv.ptr<float>(), row_sample, buffer );
+                    const float* row_sample = samples->ptr<float>(si);
+                    svm->kernel->calc( sv_total, svm->var_count, svm->sv.ptr<float>(), row_sample, buffer );
 
-                    const SVM::DecisionFunc* df = &decision_func[0];
+                    const SVMImpl::DecisionFunc* df = &svm->decision_func[0];
                     double sum = -df->rho;
                     for( i = 0; i < sv_total; i++ )
-                        sum += buffer[i]*df->alpha[i];
-                    float result = params.svmType == ONE_CLASS && !returnDFVal ? (float)(sum > 0) : (float)sum;
-                    results.at<float>(si) = result;
+                        sum += buffer[i]*svm->df_alpha[i];
+                    float result = svm->params.svmType == ONE_CLASS && !returnDFVal ? (float)(sum > 0) : (float)sum;
+                    results->at<float>(si) = result;
                 }
             }
             else if( svmType == C_SVC || svmType == NU_SVC )
@@ -2132,13 +1799,12 @@ public:
 
                 for( si = range.start; si < range.end; si++ )
                 {
-                    const float* row_sample = samples.ptr<float>(si);
-
-                    kernel->calc( sv_total, var_count, svm->sv.ptr<float>(), row_sample, buffer );
+                    svm->kernel->calc( sv_total, svm->var_count, svm->sv.ptr<float>(),
+                                       samples->ptr<float>(si), buffer );
                     double sum = 0.;
 
                     memset( vote, 0, class_count*sizeof(vote[0]));
-                    const SVM::DecisionFunc* df = &decision_func[0];
+                    const SVMImpl::DecisionFunc* df = &svm->decision_func[0];
 
                     for( i = 0; i < class_count; i++ )
                     {
@@ -2162,7 +1828,7 @@ public:
                     }
                     float result = returnDFVal && class_count == 2 ?
                         (float)sum : (float)(svm->class_labels.at<int>(k));
-                    results.at<float>(si) = result;
+                    results->at<float>(si) = result;
                 }
             }
             else
@@ -2225,33 +1891,31 @@ public:
         // save kernel
         fs << "kernel" << "{" << "type" << kernel_type_str;
 
-        if( kernelType == POLY || !kernel_type_str )
+        if( kernelType == POLY )
             fs << "degree" << params.degree;
 
-        if( kernelType != LINEAR || !kernel_type_str )
+        if( kernelType != LINEAR )
             fs << "gamma" << params.gamma;
 
-        if( kernelType == POLY || kernelType == SIGMOID || !kernel_type_str )
+        if( kernelType == POLY || kernelType == SIGMOID )
             fs << "coef0" << params.coef0;
 
         fs << "}";
 
-        if( svmType == C_SVC || svmType == EPS_SVR ||
-            svmType == NU_SVR || !svm_type_str )
+        if( svmType == C_SVC || svmType == EPS_SVR || svmType == NU_SVR )
             fs << "C" << params.C;
 
-        if( svmType == NU_SVC || svmType == ONE_CLASS ||
-            svmType == NU_SVR || !svm_type_str )
+        if( svmType == NU_SVC || svmType == ONE_CLASS || svmType == NU_SVR )
             fs << "nu" << params.nu;
 
-        if( svmType == EPS_SVR || !svm_type_str )
+        if( svmType == EPS_SVR )
             fs << "p" << params.p;
 
         fs << "term_criteria" << "{:";
         if( params.termCrit.type & TermCriteria::EPS )
             fs << "epsilon" << params.termCrit.epsilon;
         if( params.termCrit.type & TermCriteria::COUNT )
-            fs << "iterations" << params.termCrit.maxcount;
+            fs << "iterations" << params.termCrit.maxCount;
         fs << "}";
     }
 
@@ -2262,7 +1926,6 @@ public:
 
     void write( FileStorage& fs ) const
     {
-        int i, var_count = get_var_count();
         int class_count = !class_labels.empty() ? (int)class_labels.total() :
                           params.svmType == ONE_CLASS ? 1 : 0;
         if( !isTrained() )
@@ -2279,35 +1942,40 @@ public:
             if( !class_labels.empty() )
                 fs << "class_labels" << class_labels;
 
-            if( !class_weights.empty() )
-                fs << "class_weights" << class_weights;
+            if( !params.classWeights.empty() )
+                fs << "class_weights" << params.classWeights;
         }
 
         // write the joint collection of support vectors
+        int i, sv_total = sv.rows;
         fs << "sv_total" << sv_total;
         fs << "support_vectors" << "[";
         for( i = 0; i < sv_total; i++ )
-            fs << sv[i];
+        {
+            fs << "[:";
+            fs.writeRaw("f", sv.ptr(i), sv.cols);
+            fs << "]";
+        }
         fs << "]";
 
         // write decision functions
         int df_count = class_count > 1 ? class_count*(class_count-1)/2 : 1;
-        CV_Assert((int)decision_func.size() == df);
+        CV_Assert((int)decision_func.size() == df_count);
 
         fs << "decision_functions" << "[";
         for( i = 0; i < df_count; i++ )
         {
             const DecisionFunc& dfi = decision_func[i];
             int sv_count = decision_func[i+1].ofs - dfi.ofs;
-            fs << "{" << "sv_count" << dfi.sv_count
+            fs << "{" << "sv_count" << sv_count
                << "rho" << dfi.rho
                << "alpha" << "[:";
-            fs.writeRaw("f", &df_alpha[dfi.ofs], sv_count);
+            fs.writeRaw("d", (const uchar*)&df_alpha[dfi.ofs], sv_count);
             fs << "]";
             if( class_count > 1 )
             {
                 fs << "index" << "[:";
-                fs.writeRaw("i", &df_index[dfi.ofs], sv_count);
+                fs.writeRaw("i", (const uchar*)&df_index[dfi.ofs], sv_count);
                 fs << "]";
             }
             else
@@ -2332,438 +2000,122 @@ public:
         if( svmType < 0 )
             CV_Error( CV_StsParseError, "Missing of invalid SVM type" );
 
-        kernel_node = cvGetFileNodeByName( fs, svm_node, "kernel" );
-        if( !kernel_node )
+        FileNode kernel_node = fn["kernel"];
+        if( kernel_node.empty() )
             CV_Error( CV_StsParseError, "SVM kernel tag is not found" );
 
-        tmp_node = cvGetFileNodeByName( fs, kernel_node, "type" );
-        if( !tmp_node )
-            CV_Error( CV_StsParseError, "SVM kernel type tag is not found" );
+        String kernel_type_str = (String)kernel_node["type"];
+        int kernelType =
+            kernel_type_str == "LINEAR" ? LINEAR :
+            kernel_type_str == "POLY" ? POLY :
+            kernel_type_str == "RBF" ? RBF :
+            kernel_type_str == "SIGMOID" ? SIGMOID : -1;
 
-        if( CV_NODE_TYPE(tmp_node->tag) == CV_NODE_INT )
-            kernelType = cvReadInt( tmp_node, -1 );
-        else
-        {
-            const char* kernel_type_str = cvReadString( tmp_node, "" );
-            kernelType =
-                strcmp( kernel_type_str, "LINEAR" ) == 0 ? LINEAR :
-                strcmp( kernel_type_str, "POLY" ) == 0 ? POLY :
-                strcmp( kernel_type_str, "RBF" ) == 0 ? RBF :
-                strcmp( kernel_type_str, "SIGMOID" ) == 0 ? SIGMOID : -1;
-
-            if( kernelType < 0 )
-                CV_Error( CV_StsParseError, "Missing of invalid SVM kernel type" );
-        }
+        if( kernelType < 0 )
+            CV_Error( CV_StsParseError, "Missing of invalid SVM kernel type" );
 
         _params.svmType = svmType;
         _params.kernelType = kernelType;
-        _params.degree = cvReadRealByName( fs, kernel_node, "degree", 0 );
-        _params.gamma = cvReadRealByName( fs, kernel_node, "gamma", 0 );
-        _params.coef0 = cvReadRealByName( fs, kernel_node, "coef0", 0 );
+        _params.degree = (double)kernel_node["degree"];
+        _params.gamma = (double)kernel_node["gamma"];
+        _params.coef0 = (double)kernel_node["coef0"];
 
-        _params.C = cvReadRealByName( fs, svm_node, "C", 0 );
-        _params.nu = cvReadRealByName( fs, svm_node, "nu", 0 );
-        _params.p = cvReadRealByName( fs, svm_node, "p", 0 );
-        _params.class_weights = 0;
+        _params.C = (double)fn["C"];
+        _params.nu = (double)fn["nu"];
+        _params.p = (double)fn["p"];
+        _params.classWeights = Mat();
 
-        tmp_node = cvGetFileNodeByName( fs, svm_node, "term_criteria" );
-        if( tmp_node )
+        FileNode tcnode = fn["term_criteria"];
+        if( !tcnode.empty() )
         {
-            _params.termCrit.epsilon = cvReadRealByName( fs, tmp_node, "epsilon", -1. );
-            _params.termCrit.max_iter = cvReadIntByName( fs, tmp_node, "iterations", -1 );
-            _params.termCrit.type = (_params.termCrit.epsilon >= 0 ? CV_TERMCRIT_EPS : 0) +
-                                   (_params.termCrit.max_iter >= 0 ? CV_TERMCRIT_ITER : 0);
+            _params.termCrit.epsilon = (double)tcnode["epsilon"];
+            _params.termCrit.maxCount = (int)tcnode["iterations"];
+            _params.termCrit.type = (_params.termCrit.epsilon > 0 ? TermCriteria::EPS : 0) +
+                                   (_params.termCrit.maxCount > 0 ? TermCriteria::COUNT : 0);
         }
         else
-            _params.termCrit = cvTermCriteria( CV_TERMCRIT_EPS + CV_TERMCRIT_ITER, 1000, FLT_EPSILON );
+            _params.termCrit = TermCriteria( TermCriteria::EPS + TermCriteria::COUNT, 1000, FLT_EPSILON );
 
         set_params( _params );
     }
 
     void read( const FileNode& fn )
     {
-        const double not_found_dbl = DBL_MAX;
-
-        int i, var_count, df_count, class_count;
-        int block_size = 1 << 16, sv_size;
-        CvFileNode *sv_node, *df_node;
-        CvSVMDecisionFunc* df;
-        CvSeqReader reader;
-
-        if( !svm_node )
-            CV_Error( CV_StsParseError, "The requested element is not found" );
-
         clear();
 
         // read SVM parameters
-        read_params( fs, svm_node );
+        read_params( fn );
 
         // and top-level data
-        sv_total = cvReadIntByName( fs, svm_node, "sv_total", -1 );
-        var_all = cvReadIntByName( fs, svm_node, "var_all", -1 );
-        var_count = cvReadIntByName( fs, svm_node, "var_count", var_all );
-        class_count = cvReadIntByName( fs, svm_node, "class_count", 0 );
+        int i, sv_total = (int)fn["sv_total"];
+        var_count = (int)fn["var_count"];
+        int class_count = (int)fn["class_count"];
 
-        if( !isSvmModelApplicable(sv_total, var_all, var_count, class_count) )
+        if( sv_total <= 0 || var_count <= 0 )
             CV_Error( CV_StsParseError, "SVM model data is invalid, check sv_count, var_* and class_count tags" );
 
-        class_labels = (CvMat*)cvReadByName( fs, svm_node, "class_labels" );
-        class_weights = (CvMat*)cvReadByName( fs, svm_node, "class_weights" );
-        var_idx = (CvMat*)cvReadByName( fs, svm_node, "var_idx" );
+        FileNode m = fn["class_labels"];
+        if( !m.empty() )
+            m >> class_labels;
+        m = fn["class_weights"];
+        if( !m.empty() )
+            m >> params.classWeights;
 
-        if( class_count > 1 && (!class_labels ||
-            !CV_IS_MAT(class_labels) || class_labels->cols != class_count))
+        if( class_count > 1 && (class_labels.empty() || (int)class_labels.total() != class_count))
             CV_Error( CV_StsParseError, "Array of class labels is missing or invalid" );
 
-        if( var_count < var_all && (!var_idx || !CV_IS_MAT(var_idx) || var_idx->cols != var_count) )
-            CV_Error( CV_StsParseError, "var_idx array is missing or invalid" );
-
         // read support vectors
-        sv_node = cvGetFileNodeByName( fs, svm_node, "support_vectors" );
-        if( !sv_node || !CV_NODE_IS_SEQ(sv_node->tag))
-            CV_Error( CV_StsParseError, "Missing or invalid sequence of support vectors" );
+        FileNode sv_node = fn["support_vectors"];
 
-        block_size = MAX( block_size, sv_total*(int)sizeof(CvSVMKernelRow));
-        block_size = MAX( block_size, sv_total*2*(int)sizeof(double));
-        block_size = MAX( block_size, var_all*(int)sizeof(double));
+        CV_Assert((int)sv_node.size() == sv_total);
+        sv.create(sv_total, var_count, CV_32F);
 
-        storage = cvCreateMemStorage(block_size + sizeof(CvMemBlock) + sizeof(CvSeqBlock));
-        sv = (float**)cvMemStorageAlloc( storage, sv_total*sizeof(sv[0]) );
-
-        cvStartReadSeq( sv_node->data.seq, &reader, 0 );
-        sv_size = var_count*sizeof(sv[0][0]);
-
-        for( i = 0; i < sv_total; i++ )
+        FileNodeIterator sv_it = sv_node.begin();
+        for( i = 0; i < sv_total; i++, ++sv_it )
         {
-            CvFileNode* sv_elem = (CvFileNode*)reader.ptr;
-            CV_ASSERT( var_count == 1 || (CV_NODE_IS_SEQ(sv_elem->tag) &&
-                       sv_elem->data.seq->total == var_count) );
-
-            CV_CALL( sv[i] = (float*)cvMemStorageAlloc( storage, sv_size ));
-            CV_CALL( cvReadRawData( fs, sv_elem, sv[i], "f" ));
-            CV_NEXT_SEQ_ELEM( sv_node->data.seq->elem_size, reader );
+            (*sv_it).readRaw("f", sv.ptr(i), var_count);
         }
 
         // read decision functions
-        df_count = class_count > 1 ? class_count*(class_count-1)/2 : 1;
-        df_node = cvGetFileNodeByName( fs, svm_node, "decision_functions" );
-        if( !df_node || !CV_NODE_IS_SEQ(df_node->tag) ||
-            df_node->data.seq->total != df_count )
-            CV_Error( CV_StsParseError, "decision_functions is missing or is not a collection "
-                      "or has a wrong number of elements" );
+        int df_count = class_count > 1 ? class_count*(class_count-1)/2 : 1;
+        FileNode df_node = fn["decision_functions"];
 
-        CV_CALL( df = decision_func = (CvSVMDecisionFunc*)cvAlloc( df_count*sizeof(df[0]) ));
-        cvStartReadSeq( df_node->data.seq, &reader, 0 );
+        CV_Assert((int)df_node.size() == df_count);
 
-        for( i = 0; i < df_count; i++ )
+        FileNodeIterator df_it = df_node.begin();
+        for( i = 0; i < df_count; i++, ++df_it )
         {
-            CvFileNode* df_elem = (CvFileNode*)reader.ptr;
-            CvFileNode* alpha_node = cvGetFileNodeByName( fs, df_elem, "alpha" );
-
-            int sv_count = cvReadIntByName( fs, df_elem, "sv_count", -1 );
-            if( sv_count <= 0 )
-                CV_Error( CV_StsParseError, "sv_count is missing or non-positive" );
-            df[i].sv_count = sv_count;
-
-            df[i].rho = cvReadRealByName( fs, df_elem, "rho", not_found_dbl );
-            if( fabs(df[i].rho - not_found_dbl) < DBL_EPSILON )
-                CV_Error( CV_StsParseError, "rho is missing" );
-
-            if( !alpha_node )
-                CV_Error( CV_StsParseError, "alpha is missing in the decision function" );
-
-            CV_CALL( df[i].alpha = (double*)cvMemStorageAlloc( storage,
-                                            sv_count*sizeof(df[i].alpha[0])));
-            CV_ASSERT( sv_count == 1 || (CV_NODE_IS_SEQ(alpha_node->tag) &&
-                       alpha_node->data.seq->total == sv_count) );
-            CV_CALL( cvReadRawData( fs, alpha_node, df[i].alpha, "d" ));
-
+            FileNode dfi = *df_it;
+            DecisionFunc df;
+            int sv_count = (int)dfi["sv_count"];
+            int ofs = (int)df_index.size();
+            df.rho = (double)dfi["rho"];
+            df_index.resize(ofs + sv_count);
+            df_alpha.resize(ofs + sv_count);
+            dfi["alpha"].readRaw("d", (uchar*)&df_alpha[ofs], sv_count);
             if( class_count > 1 )
-            {
-                CvFileNode* index_node = cvGetFileNodeByName( fs, df_elem, "index" );
-                if( !index_node )
-                    CV_Error( CV_StsParseError, "index is missing in the decision function" );
-                CV_CALL( df[i].sv_index = (int*)cvMemStorageAlloc( storage,
-                                                sv_count*sizeof(df[i].sv_index[0])));
-                CV_ASSERT( sv_count == 1 || (CV_NODE_IS_SEQ(index_node->tag) &&
-                       index_node->data.seq->total == sv_count) );
-                CV_CALL( cvReadRawData( fs, index_node, df[i].sv_index, "i" ));
-            }
-            else
-                df[i].sv_index = 0;
-
-            CV_NEXT_SEQ_ELEM( df_node->data.seq->elem_size, reader );
+                dfi["index"].readRaw("i", (uchar*)&df_index[ofs], sv_count);
         }
-
-        if( cvReadIntByName(fs, svm_node, "optimize_linear", 1) != 0 )
+        if( class_count < 2 )
+            setRangeVector(df_index, sv_total);
+        if( (int)fn["optimize_linear"] != 0 )
             optimize_linear_svm();
         create_kernel();
     }
 
     Params params;
-    Mat class_labels, class_weights;
+    TermCriteria termCrit;
+    Mat class_labels;
     int var_count;
     Mat sv;
     vector<DecisionFunc> decision_func;
     vector<double> df_alpha;
     vector<int> df_index;
 
-    Ptr<Solver> solver;
     Ptr<Kernel> kernel;
-}
+};
 
 }
 }
-
-/*
-typedef struct CvSampleResponsePair
-{
-    const float* sample;
-    const uchar* mask;
-    int response;
-    int index;
-}
-CvSampleResponsePair;
-
-
-static int
-CV_CDECL icvCmpSampleResponsePairs( const void* a, const void* b )
-{
-    int ra = ((const CvSampleResponsePair*)a)->response;
-    int rb = ((const CvSampleResponsePair*)b)->response;
-    int ia = ((const CvSampleResponsePair*)a)->index;
-    int ib = ((const CvSampleResponsePair*)b)->index;
-
-    return ra < rb ? -1 : ra > rb ? 1 : ia - ib;
-    //return (ra > rb ? -1 : 0)|(ra < rb);
-}
-
-void
-cvSortSamplesByClasses( const float** samples, const CvMat* classes,
-                       int* class_ranges, const uchar** mask )
-{
-    CvSampleResponsePair* pairs = 0;
-    CV_FUNCNAME( "cvSortSamplesByClasses" );
-
-    __BEGIN__;
-
-    int i, k = 0, sample_count;
-
-    if( !samples || !classes || !class_ranges )
-        CV_Error( CV_StsNullPtr, "INTERNAL ERROR: some of the args are NULL pointers" );
-
-    if( classes->rows != 1 || CV_MAT_TYPE(classes->type) != CV_32SC1 )
-        CV_Error( CV_StsBadArg, "classes array must be a single row of integers" );
-
-    sample_count = classes->cols;
-    CV_CALL( pairs = (CvSampleResponsePair*)cvAlloc( (sample_count+1)*sizeof(pairs[0])));
-
-    for( i = 0; i < sample_count; i++ )
-    {
-        pairs[i].sample = samples[i];
-        pairs[i].mask = (mask) ? (mask[i]) : 0;
-        pairs[i].response = classes->data.i[i];
-        pairs[i].index = i;
-        assert( classes->data.i[i] >= 0 );
-    }
-
-    qsort( pairs, sample_count, sizeof(pairs[0]), icvCmpSampleResponsePairs );
-    pairs[sample_count].response = -1;
-    class_ranges[0] = 0;
-
-    for( i = 0; i < sample_count; i++ )
-    {
-        samples[i] = pairs[i].sample;
-        if (mask)
-            mask[i] = pairs[i].mask;
-        classes->data.i[i] = pairs[i].response;
-
-        if( pairs[i].response != pairs[i+1].response )
-            class_ranges[++k] = i+1;
-    }
-
-    __END__;
-
-    cvFree( &pairs );
-}
-
-
-void
-cvPreparePredictData( const CvArr* _sample, int dims_all,
-                     const CvMat* comp_idx, int class_count,
-                     const CvMat* prob, float** _row_sample,
-                     int as_sparse )
-{
-    float* row_sample = 0;
-    int* inverse_comp_idx = 0;
-
-    CV_FUNCNAME( "cvPreparePredictData" );
-
-    __BEGIN__;
-
-    const CvMat* sample = (const CvMat*)_sample;
-    float* sample_data;
-    int sample_step;
-    int is_sparse = CV_IS_SPARSE_MAT(sample);
-    int d, sizes[CV_MAX_DIM];
-    int i, dims_selected;
-    int vec_size;
-
-    if( !is_sparse && !CV_IS_MAT(sample) )
-        CV_Error( !sample ? CV_StsNullPtr : CV_StsBadArg, "The sample is not a valid vector" );
-
-    if( cvGetElemType( sample ) != CV_32FC1 )
-        CV_Error( CV_StsUnsupportedFormat, "Input sample must have 32fC1 type" );
-
-    CV_CALL( d = cvGetDims( sample, sizes ));
-
-    if( !((is_sparse && d == 1) || (!is_sparse && d == 2 && (sample->rows == 1 || sample->cols == 1))) )
-        CV_Error( CV_StsBadSize, "Input sample must be 1-dimensional vector" );
-
-    if( d == 1 )
-        sizes[1] = 1;
-
-    if( sizes[0] + sizes[1] - 1 != dims_all )
-        CV_Error( CV_StsUnmatchedSizes,
-                 "The sample size is different from what has been used for training" );
-
-    if( !_row_sample )
-        CV_Error( CV_StsNullPtr, "INTERNAL ERROR: The row_sample pointer is NULL" );
-
-    if( comp_idx && (!CV_IS_MAT(comp_idx) || comp_idx->rows != 1 ||
-                     CV_MAT_TYPE(comp_idx->type) != CV_32SC1) )
-        CV_Error( CV_StsBadArg, "INTERNAL ERROR: invalid comp_idx" );
-
-    dims_selected = comp_idx ? comp_idx->cols : dims_all;
-
-    if( prob )
-    {
-        if( !CV_IS_MAT(prob) )
-            CV_Error( CV_StsBadArg, "The output matrix of probabilities is invalid" );
-
-        if( (prob->rows != 1 && prob->cols != 1) ||
-           (CV_MAT_TYPE(prob->type) != CV_32FC1 &&
-            CV_MAT_TYPE(prob->type) != CV_64FC1) )
-            CV_Error( CV_StsBadSize,
-                     "The matrix of probabilities must be 1-dimensional vector of 32fC1 type" );
-
-        if( prob->rows + prob->cols - 1 != class_count )
-            CV_Error( CV_StsUnmatchedSizes,
-                     "The vector of probabilities must contain as many elements as "
-                     "the number of classes in the training set" );
-    }
-
-    vec_size = !as_sparse ? dims_selected*sizeof(row_sample[0]) :
-    (dims_selected + 1)*sizeof(CvSparseVecElem32f);
-
-    if( CV_IS_MAT(sample) )
-    {
-        sample_data = sample->data.fl;
-        sample_step = CV_IS_MAT_CONT(sample->type) ? 1 : sample->step/sizeof(row_sample[0]);
-
-        if( !comp_idx && CV_IS_MAT_CONT(sample->type) && !as_sparse )
-            *_row_sample = sample_data;
-        else
-        {
-            CV_CALL( row_sample = (float*)cvAlloc( vec_size ));
-
-            if( !comp_idx )
-                for( i = 0; i < dims_selected; i++ )
-                    row_sample[i] = sample_data[sample_step*i];
-            else
-            {
-                int* comp = comp_idx->data.i;
-                for( i = 0; i < dims_selected; i++ )
-                    row_sample[i] = sample_data[sample_step*comp[i]];
-            }
-
-            *_row_sample = row_sample;
-        }
-
-        if( as_sparse )
-        {
-            const float* src = (const float*)row_sample;
-            CvSparseVecElem32f* dst = (CvSparseVecElem32f*)row_sample;
-
-            dst[dims_selected].idx = -1;
-            for( i = dims_selected - 1; i >= 0; i-- )
-            {
-                dst[i].idx = i;
-                dst[i].val = src[i];
-            }
-        }
-    }
-    else
-    {
-        CvSparseNode* node;
-        CvSparseMatIterator mat_iterator;
-        const CvSparseMat* sparse = (const CvSparseMat*)sample;
-        assert( is_sparse );
-
-        node = cvInitSparseMatIterator( sparse, &mat_iterator );
-        CV_CALL( row_sample = (float*)cvAlloc( vec_size ));
-
-        if( comp_idx )
-        {
-            CV_CALL( inverse_comp_idx = (int*)cvAlloc( dims_all*sizeof(int) ));
-            memset( inverse_comp_idx, -1, dims_all*sizeof(int) );
-            for( i = 0; i < dims_selected; i++ )
-                inverse_comp_idx[comp_idx->data.i[i]] = i;
-        }
-
-        if( !as_sparse )
-        {
-            memset( row_sample, 0, vec_size );
-
-            for( ; node != 0; node = cvGetNextSparseNode(&mat_iterator) )
-            {
-                int idx = *CV_NODE_IDX( sparse, node );
-                if( inverse_comp_idx )
-                {
-                    idx = inverse_comp_idx[idx];
-                    if( idx < 0 )
-                        continue;
-                }
-                row_sample[idx] = *(float*)CV_NODE_VAL( sparse, node );
-            }
-        }
-        else
-        {
-            CvSparseVecElem32f* ptr = (CvSparseVecElem32f*)row_sample;
-
-            for( ; node != 0; node = cvGetNextSparseNode(&mat_iterator) )
-            {
-                int idx = *CV_NODE_IDX( sparse, node );
-                if( inverse_comp_idx )
-                {
-                    idx = inverse_comp_idx[idx];
-                    if( idx < 0 )
-                        continue;
-                }
-                ptr->idx = idx;
-                ptr->val = *(float*)CV_NODE_VAL( sparse, node );
-                ptr++;
-            }
-
-            qsort( row_sample, ptr - (CvSparseVecElem32f*)row_sample,
-                  sizeof(ptr[0]), icvCmpSparseVecElems );
-            ptr->idx = -1;
-        }
-
-        *_row_sample = row_sample;
-    }
-
-    __END__;
-
-    if( inverse_comp_idx )
-        cvFree( &inverse_comp_idx );
-
-    if( cvGetErrStatus() < 0 && _row_sample )
-    {
-        cvFree( &row_sample );
-        *_row_sample = 0;
-    }
-}
-*/
 
 /* End of file. */

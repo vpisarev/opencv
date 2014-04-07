@@ -50,6 +50,8 @@ TrainData::~TrainData() {}
 
 Mat TrainData::getSubVector(const Mat& vec, const Mat& idx)
 {
+    if( idx.empty() )
+        return vec;
     int i, n = idx.checkVector(1, CV_32S);
     int type = vec.type();
     CV_Assert( n >= 0 && (vec.cols == 1 || vec.rows == 1) && (type == CV_32F || type == CV_64F) );

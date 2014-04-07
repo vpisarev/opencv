@@ -111,8 +111,11 @@ public:
                                 bool compressSamples=true,
                                 bool compressVars=true) const = 0;
     virtual Mat getTrainResponses() const = 0;
+    virtual Mat getTrainNormCatResponses() const = 0;
     virtual Mat getTestResponses() const = 0;
+    virtual Mat getTestNormCatResponses() const = 0;
     virtual Mat getResponses() const = 0;
+    virtual Mat getNormCatResponses() const = 0;
     virtual Mat getTrainSampleWeights() const = 0;
     virtual Mat getTestSampleWeights() const = 0;
     virtual Mat getMissing() const = 0;
@@ -121,9 +124,7 @@ public:
     virtual Mat getTrainSampleIdx() const = 0;
     virtual Mat getTestSampleIdx() const = 0;
 
-    virtual Mat getNormCatResponses() const = 0;
     virtual Mat getClassLabels() const = 0;
-    virtual Mat getClassCounters() const = 0;
     
     virtual void setTrainTestSplit(int count, bool shuffle=true) = 0;
     virtual void setTrainTestSplitRatio(float ratio, bool shuffle=true) = 0;
