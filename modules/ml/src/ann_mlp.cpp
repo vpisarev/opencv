@@ -42,8 +42,6 @@
 
 namespace cv { namespace ml {
 
-using std::vector;
-
 ANN_MLP::Params::Params()
 {
     termCrit = TermCriteria( TermCriteria::COUNT + TermCriteria::EPS, 1000, 0.01 );
@@ -215,7 +213,7 @@ public:
         weights[l_count+1].resize(layer_sizes.back()*2);
     }
 
-    float predict( InputArray _inputs, OutputArray _outputs ) const
+    float predict( InputArray _inputs, OutputArray _outputs, int ) const
     {
         if( !trained )
             CV_Error( CV_StsError, "The network has not been trained or loaded" );
@@ -1252,7 +1250,7 @@ Ptr<ANN_MLP> createANN_MLP(InputArray layerSizes,
     CV_Assert( isize.height == osize.height );
     Mat varType(1, isize.width + osize.width, CV_8U);
     varType.setTo(Scalar::all(VAR_ORDERED));
-    Ptr<TrainData> data = createTrainData(inputs, ROW_SAMPLE, outputs, noArray(),
+    Ptr<TrainData> data = createTrainData(inputs, ROW_SAMPLE, outputs,
                                           sampleIdx, sampleWeights, varType, noArray());
     Ptr<ANN_MLPImpl> ann = makePtr<ANN_MLPImpl>(layerSizes, activateFunc, fparam1, fparam2);
     ann->setTrainParams(params);

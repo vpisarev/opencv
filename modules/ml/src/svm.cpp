@@ -86,8 +86,6 @@
 
 namespace cv { namespace ml {
 
-using std::vector;
-
 typedef float Qfloat;
 const int QFLOAT_TYPE = DataDepth<Qfloat>::value;
 
@@ -326,13 +324,6 @@ public:
 
 
 /////////////////////////////////////////////////////////////////////////
-
-template<typename _Tp> struct cmp_lt_idx
-{
-    cmp_lt_idx(const _Tp* _arr) : arr(_arr) {}
-    bool operator ()(int a, int b) const { return arr[a] < arr[b]; }
-    const _Tp* arr;
-};
 
 static void sortSamplesByClasses( const Mat& _samples, const Mat& _responses,
                            vector<int>& sidx_all, vector<int>& class_ranges )
@@ -1731,7 +1722,7 @@ public:
                     memcpy(temp_train_samples.ptr(i), samples.ptr(j), sample_size);
                 }
 
-                predict(temp_test_samples, temp_test_responses, false);
+                predict(temp_test_samples, temp_test_responses, 0);
                 for( i = 0; i < test_sample_count; i++ )
                 {
                     float val = temp_test_responses.at<float>(i);
@@ -1842,11 +1833,12 @@ public:
         bool returnDFVal;
     };
 
-    float predict( InputArray _samples, OutputArray _results, bool returnDFVal ) const
+    float predict( InputArray _samples, OutputArray _results, int flags ) const
     {
         float result = 0;
         Mat samples = _samples.getMat(), results;
         int nsamples = samples.rows;
+        bool returnDFVal = (flags & RAW_OUTPUT) != 0;
 
         CV_Assert( samples.cols == var_count && samples.type() == CV_32F );
 

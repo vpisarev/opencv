@@ -118,7 +118,6 @@ public:
     virtual Mat getNormCatResponses() const = 0;
     virtual Mat getTrainSampleWeights() const = 0;
     virtual Mat getTestSampleWeights() const = 0;
-    virtual Mat getMissing() const = 0;
     virtual Mat getVarIdx() const = 0;
     virtual Mat getVarType() const = 0;
     virtual Mat getTrainSampleIdx() const = 0;
@@ -140,14 +139,13 @@ CV_EXPORTS Ptr<TrainData> loadDataFromCSV(const String& filename,
 
 CV_EXPORTS Ptr<TrainData> createTrainData(InputArray samples, int layout, InputArray responses,
                                           InputArray varIdx, InputArray sampleIdx,
-                                          InputArray sampleWeights, InputArray varType,
-                                          InputArray missing);
+                                          InputArray sampleWeights, InputArray varType);
 
 
 class CV_EXPORTS_W StatModel : public Algorithm
 {
 public:
-    enum { UPDATE_MODEL = 1 };
+    enum { UPDATE_MODEL = 1, RAW_OUTPUT=1, COMPRESSED_INPUT=2, PREPROCESSED_INPUT=4 };
     virtual ~StatModel();
     virtual void clear();
 
@@ -159,6 +157,7 @@ public:
 
     virtual bool train( const Ptr<TrainData>& trainData, int flags=0 );
     virtual float calcError( const Ptr<TrainData>& data, bool test, OutputArray resp ) const;
+    virtual float predict( InputArray samples, OutputArray results, int flags ) const;
 
     virtual String defaultModelName() const;
 };
@@ -176,9 +175,8 @@ class CV_EXPORTS_W NormalBayesClassifier : public StatModel
 {
 public:
     virtual ~NormalBayesClassifier();
-    virtual float predict( InputArray inputs, OutputArray outputs, bool rawOutput=false ) const;
     virtual float predictProb( InputArray inputs, OutputArray outputs,
-                               OutputArray outputProbs, bool rawOutput=false ) const;
+                               OutputArray outputProbs, int flags=0 ) const;
 };
 
 CV_EXPORTS_W Ptr<NormalBayesClassifier> createNormalBayesClassifier(InputArray trainData, InputArray responses,
@@ -250,8 +248,6 @@ public:
 
     virtual ~SVM();
 
-    CV_WRAP virtual float predict( InputArray samples, OutputArray results, bool returnDFVal=false ) const;
-
     CV_WRAP virtual Mat getSupportVectors() const;
     virtual Params getParams() const;
     virtual void getDecisionFunction(int i, OutputArray alpha, OutputArray svidx) const;
@@ -307,7 +303,7 @@ public:
     virtual Mat getMeans() const;
     virtual void getCovs(std::vector<Mat>& covs) const;
 
-    CV_WRAP virtual Vec2d predict(InputArray sample, OutputArray probs=noArray()) const;
+    CV_WRAP virtual Vec2d predict2(InputArray sample, OutputArray probs) const;
 };
 
 CV_EXPORTS_W Ptr<EM> createEM(InputArray samples,
@@ -334,15 +330,17 @@ CV_EXPORTS_W Ptr<EM> createEM_startWithM(InputArray samples, InputArray probs0,
 *                                      Decision Tree                                     *
 \****************************************************************************************/
 
-class CV_EXPORTS_W DTree : public StatModel
+class CV_EXPORTS_W DTrees : public StatModel
 {
 public:
+    enum { PREDICT_AUTO=0, PREDICT_SUM=(1<<8), PREDICT_MAX_VOTE=(2<<8), PREDICT_MASK=(3<<8) };
+
     class CV_EXPORTS_W_MAP Params
     {
     public:
         Params();
         Params( int maxDepth, int minSampleCount,
-               float regressionAccuracy, bool useSurrogates,
+               double regressionAccuracy, bool useSurrogates,
                int maxCategories, int CVFolds,
                bool use1SERule, bool truncatePrunedTree,
                const Mat& priors );
@@ -358,21 +356,10 @@ public:
         CV_PROP_RW Mat priors;
     };
 
-    class CV_EXPORTS_W Data
-    {
-    public:
-        virtual ~Data();
-        virtual void getVectors( const Mat& subsampleIdx,
-                                 float* values, uchar* missing,
-                                 float* responses, bool getClassIdx=false );
-        virtual int getNumClasses() const;
-        virtual int getVarType(int vi) const;
-        virtual int getWorkVarCount() const;
-    };
-
     class CV_EXPORTS Node
     {
     public:
+        Node();
         int classIdx;
         double value;
 
@@ -386,97 +373,71 @@ public:
     class CV_EXPORTS Split
     {
     public:
+        Split();
         int varIdx;
         int condensedIdx;
-        int inversed;
+        bool inversed;
         float quality;
         int next;
         float c;
+        int subsetOfs;
     };
 
-    virtual ~DTree();
-
-    virtual float predict( InputArray samples, InputArray missingDataMask,
-                           OutputArray results, bool preprocessedInput=false,
-                           bool rawOutput=false ) const;
+    virtual ~DTrees();
 
     CV_WRAP virtual Mat getVarImportance();
 
-    virtual int getRoot() const;
-    virtual int getPrunedTreeIdx() const;
-    virtual Ptr<Data> getTrainData() const;
-    virtual const std::vector<Node>& getNodes();
-    virtual const std::vector<Split>& getSplits();
-    virtual const std::vector<int>& getSubsets();
-    virtual int subsetSize() const;
+    virtual const std::vector<int>& getRoots() const = 0;
+    virtual const std::vector<Node>& getNodes() const = 0;
+    virtual const std::vector<Split>& getSplits() const = 0;
+    virtual const std::vector<int>& getSubsets() const = 0;
 };
 
-CV_EXPORTS_W Ptr<DTree::Data> createDTreeTrainData(InputArray trainData, bool tflag,
-                                                   InputArray responses, InputArray varIdx,
-                                                   InputArray sampleIdx, InputArray varType,
-                                                   InputArray missingDataMask,
-                                                   const DTree::Params& params,
-                                                   bool shared=false, bool addLabels=false);
-
-CV_EXPORTS_W Ptr<DTree> createDTree(InputArray samples, bool tflag, InputArray responses,
-                                    InputArray varIdx, InputArray sampleIdx,
-                                    InputArray missingDataMask,
-                                    const DTree::Params& params);
-
-CV_EXPORTS_W Ptr<DTree> createDTree(const Ptr<DTree::Data>& trainData,
-                                    InputArray subsampleIdx);
+CV_EXPORTS_W Ptr<DTrees> createDTree(const Ptr<TrainData>& trainData,
+                                     const DTrees::Params& params);
 
 /****************************************************************************************\
 *                                   Random Trees Classifier                              *
 \****************************************************************************************/
 
-class CV_EXPORTS_W RTrees : public StatModel
+class CV_EXPORTS_W RTrees : public DTrees
 {
 public:
-    class CV_EXPORTS_W_MAP Params : public DTree::Params
+    class CV_EXPORTS_W_MAP Params : public DTrees::Params
     {
     public:
         Params();
         Params( int maxDepth, int minSampleCount,
-                float regressionAccuracy, bool useSurrogates,
-                int maxCategories, const float* priors,
-                bool calcVarImportance, int nactiveVars, int maxNTrees,
-                float forestAccuracy, int termcritType );
+                double regressionAccuracy, bool useSurrogates,
+                int maxCategories, const Mat& priors,
+                bool calcVarImportance, int nactiveVars,
+                TermCriteria termCrit );
 
         CV_PROP_RW bool calcVarImportance; // true <=> RF processes variable importance
         CV_PROP_RW int nactiveVars;
         CV_PROP_RW TermCriteria termCrit;
     };
 
-    virtual ~RTrees();
-    CV_WRAP virtual Mat getVarImportance();
-    CV_WRAP virtual float getTrainError();
-    CV_WRAP Mat getActiveVarMask() const;
-
-    RNG& getRNG();
-
-    const std::vector<Ptr<DTree> >& getTrees() const;
+    void setParams(const Params& p);
+    Params getParams() const;
 };
 
 
-CV_EXPORTS_W Ptr<RTrees> createRTrees(InputArray samples, bool tflag, InputArray responses,
-                                      InputArray varIdx, InputArray sampleIdx,
-                                      InputArray missingDataMask,
+CV_EXPORTS_W Ptr<RTrees> createRTrees(const Ptr<TrainData>& trainData,
                                       const RTrees::Params& params);
 
 /****************************************************************************************\
 *                                   Boosted tree classifier                              *
 \****************************************************************************************/
 
-class CV_EXPORTS_W Boost : public StatModel
+class CV_EXPORTS_W Boost : public DTrees
 {
 public:
-    class CV_EXPORTS_W_MAP Params : public DTree::Params
+    class CV_EXPORTS_W_MAP Params : public DTrees::Params
     {
     public:
         CV_PROP_RW int boostType;
         CV_PROP_RW int weakCount;
-        CV_PROP_RW int splitCriteria;
         CV_PROP_RW double weightTrimRate;
 
         Params();
@@ -487,37 +448,21 @@ public:
     // Boosting type
     enum { DISCRETE=0, REAL=1, LOGIT=2, GENTLE=3 };
 
-    // Splitting criteria
-    enum { DEFAULT=0, GINI=1, MISCLASS=3, SQERR=4 };
-
     virtual ~Boost();
-    virtual float predict( InputArray samples, InputArray missing,
-                           OutputArray weakResponse, Range range,
-                           bool rawMode=false, bool returnSum=false ) const;
-
-    CV_WRAP virtual void prune( Range range );
-
-    virtual const Mat getActiveVars(bool absoluteIdx=true);
-
-    const std::vector<Ptr<DTree> >& getTrees() const;
     const Params& getParams() const;
-    const Ptr<DTree::Data>& getData() const;
 };
 
-CV_EXPORTS Ptr<Boost> createBoost(InputArray trainData, bool tflag,
-                                  InputArray response, InputArray varIdx,
-                                  InputArray sampleIdx, InputArray varType,
-                                  InputArray missing,
+CV_EXPORTS Ptr<Boost> createBoost(const Ptr<TrainData>& trainData,
                                   const Boost::Params& params = Boost::Params());
 
 /****************************************************************************************\
 *                                   Gradient Boosted Trees                               *
 \****************************************************************************************/
 
-class CV_EXPORTS_W GBTrees : public StatModel
+class CV_EXPORTS_W GBTrees : public DTrees
 {
 public:
-    struct CV_EXPORTS_W_MAP Params : public DTree::Params
+    struct CV_EXPORTS_W_MAP Params : public DTrees::Params
     {
         CV_PROP_RW int weakCount;
         CV_PROP_RW int lossFunctionType;
@@ -532,17 +477,13 @@ public:
     enum {SQUARED_LOSS=0, ABSOLUTE_LOSS, HUBER_LOSS=3, DEVIANCE_LOSS};
     virtual ~GBTrees();
 
-    virtual float predictSerial( InputArray samples, InputArray missing,
-                                 OutputArray weakResponses, int k=-1) const;
+    virtual void setK(int k) = 0;
 
-    virtual float predict( InputArray samples, InputArray missing,
-                           OutputArray weakResponses, int k=-1) const;
+    virtual float predictSerial( InputArray samples,
+                                 OutputArray weakResponses, int flags) const;
 };
 
-CV_EXPORTS_W Ptr<GBTrees> createGBTrees(InputArray trainData, int tflag,
-                                        InputArray responses, InputArray varIdx,
-                                        InputArray sampleIdx, InputArray varType,
-                                        InputArray missing,
+CV_EXPORTS_W Ptr<GBTrees> createGBTrees(const Ptr<TrainData>& trainData,
                                         const GBTrees::Params& params=GBTrees::Params());
 
 /****************************************************************************************\
@@ -572,7 +513,6 @@ public:
     };
 
     virtual ~ANN_MLP();
-    virtual float predict( InputArray inputs, OutputArray outputs ) const;
 
     // possible activation functions
     enum { IDENTITY = 0, SIGMOID_SYM = 1, GAUSSIAN = 2 };

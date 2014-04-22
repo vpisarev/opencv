@@ -41,10 +41,7 @@
 #include "precomp.hpp"
 
 namespace cv {
-
 namespace ml {
-
-using std::vector;
 
 class NormalBayesClassifierImpl : public NormalBayesClassifier
 {
@@ -295,16 +292,17 @@ class NormalBayesClassifierImpl : public NormalBayesClassifier
         }
     };
 
-    float predict( InputArray _samples, OutputArray _results, bool rawOutput ) const
+    float predict( InputArray _samples, OutputArray _results, int flags ) const
     {
-        return predictProb(_samples, _results, noArray(), rawOutput);
+        return predictProb(_samples, _results, noArray(), flags);
     }
 
-    float predictProb( InputArray _samples, OutputArray _results, OutputArray _resultsProb, bool rawOutput ) const
+    float predictProb( InputArray _samples, OutputArray _results, OutputArray _resultsProb, int flags ) const
     {
         int value=0;
         Mat samples = _samples.getMat(), results, resultsProb;
         int nsamples = samples.rows, nclasses = (int)cls_labels.total();
+        bool rawOutput = (flags & RAW_OUTPUT) != 0;
 
         if( samples.type() != CV_32F || samples.cols != nallvars )
             CV_Error( CV_StsBadArg,
