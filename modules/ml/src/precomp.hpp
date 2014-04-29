@@ -201,6 +201,7 @@ namespace ml
         virtual double updateTreeRNC( int root, double T, int fold );
         virtual bool cutTree( int root, double T, int fold, double min_alpha );
         virtual float predictTrees( const Range& range, const Mat& sample, int flags ) const;
+        virtual float predict( InputArray inputs, OutputArray outputs, int flags ) const;
 
         virtual void writeTrainingParams( FileStorage& fs ) const;
         virtual void writeParams( FileStorage& fs ) const;
@@ -215,8 +216,6 @@ namespace ml
         virtual int readTree( const FileNode& fn );
         virtual void read( const FileNode& fn );
 
-        virtual Mat getVarImportance();
-        
         virtual const std::vector<int>& getRoots() const { return roots; }
         virtual const std::vector<Node>& getNodes() const { return nodes; }
         virtual const std::vector<Split>& getSplits() const { return splits; }
@@ -230,7 +229,6 @@ namespace ml
         vector<int> catOfs;
         vector<int> catMap;
         vector<int> roots;
-        vector<double> treeWeights;
         vector<Node> nodes;
         vector<Split> splits;
         vector<int> subsets;

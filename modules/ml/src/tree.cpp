@@ -48,26 +48,7 @@ namespace ml {
 
 using std::vector;
 
-class CV_EXPORTS_W_MAP Params
-{
-public:
-    Params();
-    Params( int maxDepth, int minSampleCount,
-           float regressionAccuracy, bool useSurrogates,
-           int maxCategories, int CVFolds,
-           bool use1SERule, bool truncatePrunedTree,
-           const Mat& priors );
-
-    CV_PROP_RW int   maxCategories;
-    CV_PROP_RW int   maxDepth;
-    CV_PROP_RW int   minSampleCount;
-    CV_PROP_RW int   CVFolds;
-    CV_PROP_RW bool  useSurrogates;
-    CV_PROP_RW bool  use1SERule;
-    CV_PROP_RW bool  truncatePrunedTree;
-    CV_PROP_RW float regressionAccuracy;
-    CV_PROP_RW Mat priors;
-};
+DTrees::~DTrees() {}
 
 DTrees::Params::Params()
 {
@@ -1278,15 +1259,14 @@ float DTreesImpl::predictTrees( const Range& range, const Mat& sample, int flags
 
     int predictType = flags & PREDICT_MASK;
     int i, ncats = (int)catOfs.size(), nclasses = (int)classLabels.size();
-    AutoBuffer<double> buf(nclasses + ncats + 1);
-    double* votes = buf;
-    int* catbuf = (int*)(votes + nclasses);
+    AutoBuffer<int> buf(nclasses + ncats + 1);
+    int* votes = buf;
+    int* catbuf = votes + nclasses;
     const int* vidx = (flags & (COMPRESSED_INPUT|PREPROCESSED_INPUT)) == 0 && !varIdx.empty() ? &varIdx[0] : 0;
     const int* vtype = &varType[0];
     const int* cofs = !catOfs.empty() ? &catOfs[0] : 0;
     const int* cmap = !catMap.empty() ? &catMap[0] : 0;
     const float* psample = sample.ptr<float>();
-    const double* tw = !treeWeights.empty() ? &treeWeights[0] : 0;
     size_t sstep = sample.isContinuous() ? 1 : sample.step/sizeof(float);
     double sum = 0.;
     int lastClassIdx = -1;
@@ -1361,13 +1341,12 @@ float DTreesImpl::predictTrees( const Range& range, const Mat& sample, int flags
             }
         }
 
-        double wval = tw ? tw[ridx] : 1.;
         if( predictType == PREDICT_SUM )
-            sum += wval*nodes[prev].value;
+            sum += nodes[prev].value;
         else
         {
             lastClassIdx = nodes[prev].classIdx;
-            votes[lastClassIdx] += wval;
+            votes[lastClassIdx]++;
         }
     }
 
@@ -1385,6 +1364,42 @@ float DTreesImpl::predictTrees( const Range& range, const Mat& sample, int flags
     }
 
     return (float)sum;
+}
+
+
+float DTreesImpl::predict( InputArray _samples, OutputArray _results, int flags ) const
+{
+    Mat samples = _samples.getMat(), results;
+    int i, nsamples = samples.rows;
+    int rtype = CV_32F;
+    bool needresults = _results.needed();
+    float retval = 0.f;
+
+    if( isClassifier && (flags & PREDICT_MASK) == PREDICT_MAX_VOTE )
+        rtype = CV_32S;
+
+    if( needresults )
+    {
+        _results.create(nsamples, 1, rtype);
+        results = _results.getMat();
+    }
+    else
+        nsamples = std::min(nsamples, 1);
+
+    for( i = 0; i < nsamples; i++ )
+    {
+        float val = predictTrees( Range(0, (int)roots.size()), samples.row(i), flags );
+        if( needresults )
+        {
+            if( rtype == CV_32F )
+                results.at<float>(i) = val;
+            else
+                results.at<int>(i) = (float)val;
+        }
+        if( i == 0 )
+            retval = val;
+    }
+    return retval;
 }
 
 void DTreesImpl::writeTrainingParams(FileStorage& fs) const
@@ -1414,7 +1429,7 @@ void DTreesImpl::writeTrainingParams(FileStorage& fs) const
 void DTreesImpl::writeParams(FileStorage& fs) const
 {
     fs << "is_classifier" << isClassifier;
-    fs << "var_all" << varType.size();
+    fs << "var_all" << (int)varType.size();
     fs << "var_count" << getVarCount();
 
     int ord_var_count = 0, cat_var_count = 0;
@@ -1730,8 +1745,6 @@ void DTreesImpl::read( const FileNode& fn )
     int root = readTree(fnodes);
     roots.push_back(root);
 }
-
-Mat DTreesImpl::getVarImportance() { return Mat(); }
 
 Ptr<DTrees> createDTree(const Ptr<TrainData>& trainData, const DTrees::Params& params)
 {

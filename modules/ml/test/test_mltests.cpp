@@ -101,7 +101,7 @@ int CV_AMLTest::validate_test_results( int testCaseIdx )
     {
         resultNode["mean"] >> mean;
         resultNode["sigma"] >> sigma;
-        float curErr = get_error( testCaseIdx, CV_TEST_ERROR );
+        float curErr = get_test_error( testCaseIdx );
         const int coeff = 4;
         ts->printf( cvtest::TS::LOG, "Test case = %d; test error = %f; mean error = %f (diff=%f), %d*sigma = %f",
                                 testCaseIdx, curErr, mean, abs( curErr - mean), coeff, coeff*sigma );

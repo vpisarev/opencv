@@ -62,7 +62,15 @@ float StatModel::calcError( const Ptr<TrainData>&, bool, OutputArray ) const
     return FLT_MAX;
 }
 
-String StatModel::defaultModelName() const { return ""; }
+String StatModel::defaultModelName() const { return "statmodel"; }
+
+void StatModel::save(const String& filename) const
+{
+    FileStorage fs(filename, FileStorage::WRITE);
+    fs << defaultModelName() << "{";
+    write(fs);
+    fs << "}";
+}
 
 /* Calculates upper triangular matrix S, where A is a symmetrical matrix A=S'*S */
 static void Cholesky( const Mat& A, Mat& S )

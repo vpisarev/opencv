@@ -79,7 +79,7 @@ void createConcentricSpheresTestSet( int num_samples, int num_features, int num_
     Mat cov = Mat::eye(num_features, num_features, CV_32F);
 
     // fill the feature values matrix with random numbers drawn from standard normal distribution
-    randMVNormal( mean, cov, num_samples, _samples, theRNG() );
+    randMVNormal( mean, cov, num_samples, _samples );
     Mat samples = _samples.getMat();
 
     // calculate distances from the origin to the samples and put them

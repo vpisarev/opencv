@@ -116,21 +116,38 @@ public:
     Mat getMissing() const { return missing; }
     Mat getVarIdx() const { return varIdx; }
     Mat getVarType() const { return varType; }
+    int getResponseType() const
+    {
+        return classLabels.empty() ? VAR_ORDERED : VAR_CATEGORICAL;
+    }
     Mat getTrainSampleIdx() const { return !trainSampleIdx.empty() ? trainSampleIdx : sampleIdx; }
     Mat getTestSampleIdx() const { return testSampleIdx; }
     Mat getTrainSampleWeights() const
     {
-        Mat idx = getTrainSampleIdx();
-        if( idx.empty() )
-            return sampleWeights;
-        return getSubVector(sampleWeights, idx);
+        return getSubVector(sampleWeights, getTrainSampleIdx());
     }
     Mat getTestSampleWeights() const
     {
         Mat idx = getTestSampleIdx();
-        if( idx.empty() )
-            return Mat();
-        return getSubVector(sampleWeights, idx);
+        return idx.empty() ? Mat() : getSubVector(sampleWeights, idx);
+    }
+    Mat getTrainResponses() const
+    {
+        return getSubVector(responses, getTrainSampleIdx());
+    }
+    Mat getTrainNormCatResponses() const
+    {
+        return getSubVector(normCatResponses, getTrainSampleIdx());
+    }
+    Mat getTestResponses() const
+    {
+        Mat idx = getTestSampleIdx();
+        return idx.empty() ? Mat() : getSubVector(responses, idx);
+    }
+    Mat getTestNormCatResponses() const
+    {
+        Mat idx = getTestSampleIdx();
+        return idx.empty() ? Mat() : getSubVector(normCatResponses, idx);
     }
     Mat getNormCatResponses() const { return normCatResponses; }
     Mat getClassLabels() const { return classLabels; }
@@ -655,10 +672,10 @@ Ptr<TrainData> loadDataFromCSV(const String& filename,
 
 Ptr<TrainData> createTrainData(InputArray samples, int layout, InputArray responses,
                                InputArray varIdx, InputArray sampleIdx, InputArray sampleWeights,
-                               InputArray varType, InputArray missing)
+                               InputArray varType)
 {
     Ptr<TrainDataImpl> td = makePtr<TrainDataImpl>();
-    td->setData(samples, layout, responses, varIdx, sampleIdx, sampleWeights, varType, missing);
+    td->setData(samples, layout, responses, varIdx, sampleIdx, sampleWeights, varType, noArray());
     return td;
 }
 

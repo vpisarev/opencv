@@ -42,6 +42,8 @@
 
 namespace cv { namespace ml {
 
+ANN_MLP::~ANN_MLP() {}
+
 ANN_MLP::Params::Params()
 {
     termCrit = TermCriteria( TermCriteria::COUNT + TermCriteria::EPS, 1000, 0.01 );
@@ -1226,6 +1228,17 @@ public:
             (*w_it).readRaw("d", weights[i].data, weights[i].total());
     }
 
+    Mat getLayerSizes() const
+    {
+        return Mat_<int>(layer_sizes, true);
+    }
+
+    Mat getWeights(int layerIdx) const
+    {
+        CV_Assert( 0 <= layerIdx && layerIdx < (int)weights.size() );
+        return weights[layerIdx];
+    }
+
     vector<int> layer_sizes;
     vector<Mat> weights;
     double f_param1, f_param2;
@@ -1239,7 +1252,7 @@ public:
 };
 
 
-Ptr<ANN_MLP> createANN_MLP(InputArray layerSizes,
+Ptr<ANN_MLP> createANN_MLP(InputArray _layerSizes,
                            InputArray inputs, InputArray outputs,
                            InputArray sampleWeights, InputArray sampleIdx,
                            ANN_MLP::Params params, int flags,
@@ -1252,6 +1265,7 @@ Ptr<ANN_MLP> createANN_MLP(InputArray layerSizes,
     varType.setTo(Scalar::all(VAR_ORDERED));
     Ptr<TrainData> data = createTrainData(inputs, ROW_SAMPLE, outputs,
                                           sampleIdx, sampleWeights, varType, noArray());
+    Mat layerSizes = _layerSizes.getMat();
     Ptr<ANN_MLPImpl> ann = makePtr<ANN_MLPImpl>(layerSizes, activateFunc, fparam1, fparam2);
     ann->setTrainParams(params);
     ann->train(data, flags);

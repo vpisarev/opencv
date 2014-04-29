@@ -128,8 +128,37 @@ public:
         return doTrain(START_M_STEP, logLikelihoods, labels, probs);
     }
 
-    Vec2d predict(InputArray _sample, OutputArray _probs) const
+    float predict(InputArray _inputs, OutputArray _outputs, int) const
     {
+        bool needprobs = _outputs.needed();
+        Mat samples = _inputs.getMat(), probs, probsrow;
+        int ptype = CV_32F;
+        float firstres = 0.f;
+        int i, nsamples = samples.rows;
+
+        if( needprobs )
+        {
+            if( _outputs.fixedType() )
+                ptype = _outputs.type();
+            _outputs.create(samples.rows, nclusters, ptype);
+        }
+        else
+            nsamples = std::min(nsamples, 1);
+
+        for( i = 0; i < nsamples; i++ )
+        {
+            if( needprobs )
+                probsrow = probs.row(i);
+            Vec2d res = computeProbabilities(samples.row(i), needprobs ? &probsrow : 0, ptype);
+            if( i == 0 )
+                firstres = (float)res[1];
+        }
+        return firstres;
+    }
+
+    Vec2d predict2(InputArray _sample, OutputArray _probs) const
+    {
+        int ptype = CV_32F;
         Mat sample = _sample.getMat();
         CV_Assert(isTrained());
 
@@ -145,11 +174,13 @@ public:
         Mat probs;
         if( _probs.needed() )
         {
-            _probs.create(1, nclusters, CV_64FC1);
+            if( _probs.fixedType() )
+                ptype = _probs.type();
+            _probs.create(1, nclusters, ptype);
             probs = _probs.getMat();
         }
 
-        return computeProbabilities(sample, !probs.empty() ? &probs : 0);
+        return computeProbabilities(sample, !probs.empty() ? &probs : 0, ptype);
     }
 
     bool isTrained() const
@@ -473,7 +504,7 @@ public:
         return true;
     }
 
-    Vec2d computeProbabilities(const Mat& sample, Mat* probs) const
+    Vec2d computeProbabilities(const Mat& sample, Mat* probs, int ptype) const
     {
         // L_ik = log(weight_k) - 0.5 * log(|det(cov_k)|) - 0.5 *(x_i - mean_k)' cov_k^(-1) (x_i - mean_k)]
         // q = arg(max_k(L_ik))
@@ -481,18 +512,31 @@ public:
         // see Alex Smola's blog http://blog.smola.org/page/2 for
         // details on the log-sum-exp trick
 
+        int stype = sample.type();
         CV_Assert(!means.empty());
-        CV_Assert(sample.type() == CV_64FC1);
-        CV_Assert(sample.rows == 1);
-        CV_Assert(sample.cols == means.cols);
+        CV_Assert((stype == CV_32F || stype == CV_64F) && (ptype == CV_32F || ptype == CV_64F));
+        CV_Assert(sample.size() == Size(means.cols, 1));
 
         int dim = sample.cols;
 
-        Mat L(1, nclusters, CV_64FC1);
-        int label = 0;
+        Mat L(1, nclusters, CV_64FC1), centeredSample(1, dim, CV_64F);
+        int i, label = 0;
         for(int clusterIndex = 0; clusterIndex < nclusters; clusterIndex++)
         {
-            const Mat centeredSample = sample - means.row(clusterIndex);
+            const double* mptr = means.ptr<double>(clusterIndex);
+            double* dptr = centeredSample.ptr<double>();
+            if( stype == CV_32F )
+            {
+                const float* sptr = sample.ptr<float>();
+                for( i = 0; i < dim; i++ )
+                    dptr[i] = sptr[i] - mptr[i];
+            }
+            else
+            {
+                const double* sptr = sample.ptr<double>();
+                for( i = 0; i < dim; i++ )
+                    dptr[i] = sptr[i] - mptr[i];
+            }
 
             Mat rotatedCenteredSample = covMatType != COV_MAT_GENERIC ?
                     centeredSample : centeredSample * covsRotateMats[clusterIndex];
@@ -512,18 +556,16 @@ public:
         }
 
         double maxLVal = L.at<double>(label);
-        Mat expL_Lmax = L; // exp(L_ij - L_iq)
-        for(int i = 0; i < L.cols; i++)
-            expL_Lmax.at<double>(i) = std::exp(L.at<double>(i) - maxLVal);
-        double expDiffSum = sum(expL_Lmax)[0]; // sum_j(exp(L_ij - L_iq))
+        double expDiffSum = 0;
+        for( i = 0; i < L.cols; i++ )
+        {
+            double v = std::exp(L.at<double>(i) - maxLVal);
+            L.at<double>(i) = v;
+            expDiffSum += v; // sum_j(exp(L_ij - L_iq))
+        }
 
         if(probs)
-        {
-            probs->create(1, nclusters, CV_64FC1);
-            double factor = 1./expDiffSum;
-            expL_Lmax *= factor;
-            expL_Lmax.copyTo(*probs);
-        }
+            L.convertTo(*probs, ptype, 1./expDiffSum);
 
         Vec2d res;
         res[0] = std::log(expDiffSum)  + maxLVal - 0.5 * dim * CV_LOG2PI;
@@ -547,7 +589,7 @@ public:
         for(int sampleIndex = 0; sampleIndex < trainSamples.rows; sampleIndex++)
         {
             Mat sampleProbs = trainProbs.row(sampleIndex);
-            Vec2d res = computeProbabilities(trainSamples.row(sampleIndex), &sampleProbs);
+            Vec2d res = computeProbabilities(trainSamples.row(sampleIndex), &sampleProbs, CV_64F);
             trainLogLikelihoods.at<double>(sampleIndex) = res[0];
             trainLabels.at<int>(sampleIndex) = static_cast<int>(res[1]);
         }
@@ -663,6 +705,14 @@ public:
 
         // Normalize weights
         weights /= trainSamples.rows;
+    }
+
+    Mat getWeights() const { return weights; }
+    Mat getMeans() const { return means; }
+    void getCovs(std::vector<Mat>& _covs) const
+    {
+        _covs.resize(covs.size());
+        std::copy(covs.begin(), covs.end(), _covs.begin());
     }
 
     Params params;

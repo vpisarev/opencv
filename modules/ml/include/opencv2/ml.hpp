@@ -107,6 +107,7 @@ public:
     virtual int getNAllVars() const = 0;
 
     virtual Mat getSamples() const = 0;
+    virtual Mat getMissing() const = 0;
     virtual Mat getTrainSamples(int layout=ROW_SAMPLE,
                                 bool compressSamples=true,
                                 bool compressVars=true) const = 0;
@@ -120,6 +121,7 @@ public:
     virtual Mat getTestSampleWeights() const = 0;
     virtual Mat getVarIdx() const = 0;
     virtual Mat getVarType() const = 0;
+    virtual int getResponseType() const = 0;
     virtual Mat getTrainSampleIdx() const = 0;
     virtual Mat getTestSampleIdx() const = 0;
 
@@ -157,8 +159,9 @@ public:
 
     virtual bool train( const Ptr<TrainData>& trainData, int flags=0 );
     virtual float calcError( const Ptr<TrainData>& data, bool test, OutputArray resp ) const;
-    virtual float predict( InputArray samples, OutputArray results, int flags ) const;
+    virtual float predict( InputArray samples, OutputArray results, int flags=0 ) const = 0;
 
+    virtual void save(const String& filename) const;
     virtual String defaultModelName() const;
 };
 
@@ -190,9 +193,11 @@ CV_EXPORTS_W Ptr<NormalBayesClassifier> createNormalBayesClassifier(InputArray t
 class CV_EXPORTS_W KNearest : public StatModel
 {
 public:
-    virtual float findNearest( InputArray samples, int k, OutputArray results,
-                               OutputArray neighbors, OutputArray neighborResponses,
-                               OutputArray dist ) const;
+    virtual float findNearest( InputArray samples, int k,
+                               OutputArray results,
+                               OutputArray neighbors=noArray(),
+                               OutputArray neighborResponses=noArray(),
+                               OutputArray dist=noArray() ) const;
     int getMaxK() const;
     virtual bool isRegression() const;
 };
@@ -272,6 +277,7 @@ CV_EXPORTS_W Ptr<SVM> createSVMAuto( InputArray trainData, InputArray responses,
                                      ParamGrid coeffGrid  = SVM::getDefaultGrid(SVM::COEF),
                                      ParamGrid degreeGrid = SVM::getDefaultGrid(SVM::DEGREE),
                                      bool balanced=false);
+CV_EXPORTS Ptr<SVM> loadSVM( const String& filename );
 
 /****************************************************************************************\
 *                              Expectation - Maximization                                *
@@ -299,11 +305,11 @@ public:
         TermCriteria termCrit;
     };
 
-    virtual Mat getWeights() const;
-    virtual Mat getMeans() const;
-    virtual void getCovs(std::vector<Mat>& covs) const;
+    virtual Mat getWeights() const = 0;
+    virtual Mat getMeans() const = 0;
+    virtual void getCovs(std::vector<Mat>& covs) const = 0;
 
-    CV_WRAP virtual Vec2d predict2(InputArray sample, OutputArray probs) const;
+    CV_WRAP virtual Vec2d predict2(InputArray sample, OutputArray probs) const = 0;
 };
 
 CV_EXPORTS_W Ptr<EM> createEM(InputArray samples,
@@ -325,6 +331,8 @@ CV_EXPORTS_W Ptr<EM> createEM_startWithM(InputArray samples, InputArray probs0,
                                          OutputArray labels=noArray(),
                                          OutputArray probs=noArray(),
                                          const EM::Params& params=EM::Params());
+
+CV_EXPORTS Ptr<EM> loadEM(const String& filename);
 
 /****************************************************************************************\
 *                                      Decision Tree                                     *
@@ -385,16 +393,15 @@ public:
 
     virtual ~DTrees();
 
-    CV_WRAP virtual Mat getVarImportance();
-
     virtual const std::vector<int>& getRoots() const = 0;
     virtual const std::vector<Node>& getNodes() const = 0;
     virtual const std::vector<Split>& getSplits() const = 0;
     virtual const std::vector<int>& getSubsets() const = 0;
 };
 
-CV_EXPORTS_W Ptr<DTrees> createDTree(const Ptr<TrainData>& trainData,
-                                     const DTrees::Params& params);
+CV_EXPORTS Ptr<DTrees> createDTree( const Ptr<TrainData>& trainData,
+                                    const DTrees::Params& params );
+CV_EXPORTS Ptr<DTrees> loadDTree( const String& filename );
 
 /****************************************************************************************\
 *                                   Random Trees Classifier                              *
@@ -420,11 +427,14 @@ public:
 
     void setParams(const Params& p);
     Params getParams() const;
+
+    virtual Mat getVarImportance() const = 0;
 };
 
 
-CV_EXPORTS_W Ptr<RTrees> createRTrees(const Ptr<TrainData>& trainData,
+CV_EXPORTS Ptr<RTrees> createRTrees(const Ptr<TrainData>& trainData,
                                       const RTrees::Params& params);
+CV_EXPORTS Ptr<DTrees> loadRTrees( const String& filename );
 
 /****************************************************************************************\
 *                                   Boosted tree classifier                              *
@@ -454,6 +464,7 @@ public:
 
 CV_EXPORTS Ptr<Boost> createBoost(const Ptr<TrainData>& trainData,
                                   const Boost::Params& params = Boost::Params());
+CV_EXPORTS Ptr<Boost> loadBoost( const String& filename );
 
 /****************************************************************************************\
 *                                   Gradient Boosted Trees                               *
@@ -520,8 +531,8 @@ public:
     // available training flags
     enum { UPDATE_WEIGHTS = 1, NO_INPUT_SCALE = 2, NO_OUTPUT_SCALE = 4 };
 
-    virtual Mat getLayerSizes() const;
-    virtual Mat getWeights(int layerIdx);
+    virtual Mat getLayerSizes() const = 0;
+    virtual Mat getWeights(int layerIdx) const = 0;
 };
 
 CV_EXPORTS_W Ptr<ANN_MLP> createANN_MLP(InputArray layerSizes,

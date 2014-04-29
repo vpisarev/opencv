@@ -110,7 +110,8 @@ public:
     {
         DTreesImpl::startTraining(trainData, flags);
         int nvars = w->data->getNVars();
-        int i, m = std::max(cvRound(std::sqrt((double)nvars)), 1);
+        int i, m = rparams.nactiveVars > 0 ? rparams.nactiveVars : cvRound(std::sqrt((double)nvars));
+        m = std::min(std::max(m, 1), nvars);
         allVars.resize(nvars);
         activeVars.resize(m);
         for( i = 0; i < nvars; i++ )
@@ -134,7 +135,7 @@ public:
         startTraining(trainData, flags);
         int treeidx, ntrees = (rparams.termCrit.type & TermCriteria::COUNT) != 0 ?
             rparams.termCrit.maxCount : 10000;
-        int i, j, k, vi, n = (int)w->sidx.size();
+        int i, j, k, vi, vi_, n = (int)w->sidx.size();
         int nclasses = (int)classLabels.size();
         double eps = (rparams.termCrit.type & TermCriteria::EPS) != 0 &&
             rparams.termCrit.epsilon > 0 ? rparams.termCrit.epsilon : 0.;
@@ -146,10 +147,12 @@ public:
         vector<int> oobcount(n, 0);
         vector<int> oobvotes(n*nclasses, 0);
         int nvars = w->data->getNVars();
-        vector<float> samplebuf(nvars);
+        int nallvars = w->data->getNAllVars();
+        const int* vidx = !varIdx.empty() ? &varIdx[0] : 0;
+        vector<float> samplebuf(nallvars);
         float* psamples = (float*)w->samples.ptr<float>();
         size_t sstep0 = w->samples.step/sizeof(psamples[0]), sstep1 = 1;
-        Mat sample0, sample(nvars, 1, CV_32F, &samplebuf[0]);
+        Mat sample0, sample(nallvars, 1, CV_32F, &samplebuf[0]);
         int predictFlags = isClassifier ? (PREDICT_MAX_VOTE + RAW_OUTPUT) : PREDICT_SUM;
 
         bool calcOOBError = eps > 0 || rparams.calcVarImportance;
@@ -166,6 +169,9 @@ public:
                 max_response = std::max(max_response, val);
             }
         }
+
+        if( rparams.calcVarImportance )
+            varImportance.resize(nallvars, 0.f);
 
         for( treeidx = 0; treeidx < ntrees; treeidx++ )
         {
@@ -200,7 +206,7 @@ public:
                 for( i = 0; i < n_oob; i++ )
                 {
                     j = oobidx[i];
-                    sample = Mat( nvars, 1, CV_32F, psamples + sstep0*w->sidx[j], sstep1*sizeof(psamples[0]) );
+                    sample = Mat( nallvars, 1, CV_32F, psamples + sstep0*w->sidx[j], sstep1*sizeof(psamples[0]) );
 
                     double val = predictTrees(Range(treeidx, treeidx+1), sample, predictFlags);
                     if( !isClassifier )
@@ -235,8 +241,9 @@ public:
                     for( i = 0; i < n_oob; i++ )
                         oobperm[i] = oobidx[i];
 
-                    for( vi = 0; vi < nvars; vi++ )
+                    for( vi_ = 0; vi_ < nvars; vi_++ )
                     {
+                        vi = vidx ? vidx[vi_] : vi_;
                         double ncorrect_responses_permuted = 0;
                         for( i = 0; i < n_oob; i++ )
                         {
@@ -249,8 +256,8 @@ public:
                         {
                             j = oobidx[i];
                             int vj = oobperm[i];
-                            sample0 = Mat( nvars, 1, CV_32F, psamples + sstep0*w->sidx[j], sstep1*sizeof(psamples[0]) );
-                            for( k = 0; k < nvars; k++ )
+                            sample0 = Mat( nallvars, 1, CV_32F, psamples + sstep0*w->sidx[j], sstep1*sizeof(psamples[0]) );
+                            for( k = 0; k < nallvars; k++ )
                                 sample.at<float>(k) = sample0.at<float>(k);
                             sample.at<float>(vi) = psamples[sstep0*w->sidx[vj] + sstep1*vi];
 
@@ -273,10 +280,11 @@ public:
         
         if( rparams.calcVarImportance )
         {
-            for( vi = 0; vi < nvars; vi++ )
-                varImportance[vi] = std::max(varImportance[vi], 0.f);
+            for( vi_ = 0; vi_ < nallvars; vi_++ )
+                varImportance[vi_] = std::max(varImportance[vi_], 0.f);
             normalize(varImportance, varImportance, 1., 0, NORM_L1);
         }
+        endTraining();
         return true;
     }
 
@@ -361,7 +369,7 @@ public:
 class RTreesImpl : public RTrees
 {
 public:
-    RTreesImpl();
+    RTreesImpl() {}
 
     bool train( const Ptr<TrainData>& trainData, int flags )
     {
@@ -385,6 +393,8 @@ public:
 
     void setParams(const Params& p) { impl.setRParams(p); }
     Params getParams() const { return impl.getRParams(); }
+
+    Mat getVarImportance() const { return Mat_<float>(impl.varImportance, true); }
 
     const vector<int>& getRoots() const { return impl.getRoots(); }
     const vector<Node>& getNodes() const { return impl.getNodes(); }
