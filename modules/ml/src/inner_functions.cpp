@@ -42,14 +42,18 @@
 
 namespace cv { namespace ml {
 
+ParamGrid::ParamGrid() { minVal = maxVal = 0.; logStep = 1; }
+ParamGrid::ParamGrid(double _minVal, double _maxVal, double _logStep)
+{
+    minVal = std::min(_minVal, _maxVal);
+    maxVal = std::max(_minVal, _maxVal);
+    logStep = std::max(_logStep, 1.);
+}
+
 StatModel::~StatModel() {}
 void StatModel::clear() {}
 
 int StatModel::getVarCount() const { return 0; }
-int StatModel::getSampleCount() const { return 0; }
-
-bool StatModel::isTrained() const { return false; }
-bool StatModel::isRegression() const { return false; }
 
 bool StatModel::train( const Ptr<TrainData>&, int )
 {
@@ -62,12 +66,10 @@ float StatModel::calcError( const Ptr<TrainData>&, bool, OutputArray ) const
     return FLT_MAX;
 }
 
-String StatModel::defaultModelName() const { return "statmodel"; }
-
 void StatModel::save(const String& filename) const
 {
     FileStorage fs(filename, FileStorage::WRITE);
-    fs << defaultModelName() << "{";
+    fs << getDefaultModelName() << "{";
     write(fs);
     fs << "}";
 }

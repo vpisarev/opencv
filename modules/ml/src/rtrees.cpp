@@ -74,6 +74,7 @@ class DTreesImplForRTrees : public DTreesImpl
 {
 public:
     DTreesImplForRTrees() {}
+    virtual ~DTreesImplForRTrees() {}
 
     void setRParams(const RTrees::Params& p)
     {
@@ -153,7 +154,7 @@ public:
         float* psamples = (float*)w->samples.ptr<float>();
         size_t sstep0 = w->samples.step/sizeof(psamples[0]), sstep1 = 1;
         Mat sample0, sample(nallvars, 1, CV_32F, &samplebuf[0]);
-        int predictFlags = isClassifier ? (PREDICT_MAX_VOTE + RAW_OUTPUT) : PREDICT_SUM;
+        int predictFlags = _isClassifier ? (PREDICT_MAX_VOTE + RAW_OUTPUT) : PREDICT_SUM;
 
         bool calcOOBError = eps > 0 || rparams.calcVarImportance;
         double max_response = 0.;
@@ -161,7 +162,7 @@ public:
         if( w->data->getLayout() == ROW_SAMPLE )
             std::swap(sstep0, sstep1);
 
-        if( !isClassifier )
+        if( !_isClassifier )
         {
             for( i = 0; i < n; i++ )
             {
@@ -209,7 +210,7 @@ public:
                     sample = Mat( nallvars, 1, CV_32F, psamples + sstep0*w->sidx[j], sstep1*sizeof(psamples[0]) );
 
                     double val = predictTrees(Range(treeidx, treeidx+1), sample, predictFlags);
-                    if( !isClassifier )
+                    if( !_isClassifier )
                     {
                         oobres[j] += val;
                         oobcount[j]++;
@@ -262,7 +263,7 @@ public:
                             sample.at<float>(vi) = psamples[sstep0*w->sidx[vj] + sstep1*vi];
 
                             double val = predictTrees(Range(treeidx, treeidx+1), sample, predictFlags);
-                            if( !isClassifier )
+                            if( !_isClassifier )
                             {
                                 val = (val - w->ord_responses[w->sidx[j]])/max_response;
                                 ncorrect_responses_permuted += exp( -val*val );
@@ -370,6 +371,9 @@ class RTreesImpl : public RTrees
 {
 public:
     RTreesImpl() {}
+    virtual ~RTreesImpl() {}
+
+    String getDefaultModelName() const { return "opencv_ml_rtrees"; }
 
     bool train( const Ptr<TrainData>& trainData, int flags )
     {
@@ -391,10 +395,14 @@ public:
         impl.read(fn);
     }
 
-    void setParams(const Params& p) { impl.setRParams(p); }
-    Params getParams() const { return impl.getRParams(); }
+    void setRParams(const Params& p) { impl.setRParams(p); }
+    Params getRParams() const { return impl.getRParams(); }
 
     Mat getVarImportance() const { return Mat_<float>(impl.varImportance, true); }
+    int getVarCount() const { return impl.getVarCount(); }
+
+    bool isTrained() const { return impl.isTrained(); }
+    bool isClassifier() const { return impl.isClassifier(); }
 
     const vector<int>& getRoots() const { return impl.getRoots(); }
     const vector<Node>& getNodes() const { return impl.getNodes(); }
@@ -405,12 +413,10 @@ public:
 };
 
 
-Ptr<RTrees> createRTrees(const Ptr<TrainData>& trainData, const RTrees::Params& params)
+Ptr<RTrees> RTrees::create(const Params& params)
 {
     Ptr<RTreesImpl> p = makePtr<RTreesImpl>();
-    p->setParams(params);
-    if( !p->train(trainData, 0) )
-        p.release();
+    p->setRParams(params);
     return p;
 }
 

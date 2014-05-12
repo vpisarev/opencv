@@ -622,14 +622,14 @@ public:
         if( (inputs.type() != CV_32F && inputs.type() != CV_64F) ||
             inputs.cols != layer_sizes[0] )
             CV_Error( CV_StsBadArg,
-                     "input training data should be a floating-point matrix with"
+                     "input training data should be a floating-point matrix with "
                      "the number of rows equal to the number of training samples and "
                      "the number of columns equal to the size of 0-th (input) layer" );
 
         if( (outputs.type() != CV_32F && outputs.type() != CV_64F) ||
             outputs.cols != layer_sizes.back() )
             CV_Error( CV_StsBadArg,
-                     "output training data should be a floating-point matrix with"
+                     "output training data should be a floating-point matrix with "
                      "the number of rows equal to the number of training samples and "
                      "the number of columns equal to the size of last (output) layer" );
 
@@ -645,9 +645,14 @@ public:
         calc_output_scale( outputs, flags );
     }
 
-    void setTrainParams( const Params& _params )
+    void setParams( const Params& _params )
     {
         params = _params;
+    }
+
+    Params getParams() const
+    {
+        return params;
     }
 
     bool train( const Ptr<TrainData>& trainData, int flags )
@@ -1202,7 +1207,6 @@ public:
         }
     }
     
-    
     void read( const FileNode& fn )
     {
         clear();
@@ -1239,6 +1243,26 @@ public:
         return weights[layerIdx];
     }
 
+    bool isTrained() const
+    {
+        return trained;
+    }
+
+    bool isClassifier() const
+    {
+        return false;
+    }
+
+    int getVarCount() const
+    {
+        return layer_sizes.empty() ? 0 : layer_sizes[0];
+    }
+
+    String getDefaultModelName() const
+    {
+        return "opencv_ml_ann_mlp";
+    }
+
     vector<int> layer_sizes;
     vector<Mat> weights;
     double f_param1, f_param2;
@@ -1252,23 +1276,14 @@ public:
 };
 
 
-Ptr<ANN_MLP> createANN_MLP(InputArray _layerSizes,
-                           InputArray inputs, InputArray outputs,
-                           InputArray sampleWeights, InputArray sampleIdx,
-                           ANN_MLP::Params params, int flags,
-                           int activateFunc,
-                           double fparam1, double fparam2)
+Ptr<ANN_MLP> ANN_MLP::create(InputArray _layerSizes,
+                             const ANN_MLP::Params& params,
+                             int activateFunc,
+                             double fparam1, double fparam2)
 {
-    Size isize = inputs.size(), osize = outputs.size();
-    CV_Assert( isize.height == osize.height );
-    Mat varType(1, isize.width + osize.width, CV_8U);
-    varType.setTo(Scalar::all(VAR_ORDERED));
-    Ptr<TrainData> data = createTrainData(inputs, ROW_SAMPLE, outputs,
-                                          sampleIdx, sampleWeights, varType, noArray());
     Mat layerSizes = _layerSizes.getMat();
     Ptr<ANN_MLPImpl> ann = makePtr<ANN_MLPImpl>(layerSizes, activateFunc, fparam1, fparam2);
-    ann->setTrainParams(params);
-    ann->train(data, flags);
+    ann->setParams(params);
 
     return ann;
 }

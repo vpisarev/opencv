@@ -132,6 +132,7 @@ SVM::Params::Params( int _svmType, int _kernelType,
     termCrit = _termCrit;
 }
 
+SVM::Kernel::~Kernel() {}
 
 /////////////////////////////////////// SVM kernel ///////////////////////////////////////
 class SVMKernelImpl : public SVM::Kernel
@@ -148,6 +149,11 @@ public:
 
     virtual ~SVMKernelImpl()
     {
+    }
+
+    int getType() const
+    {
+        return params.kernelType;
     }
 
     void calc_non_rbf_base( int vcount, int var_count, const float* vecs,
@@ -343,6 +349,8 @@ static void sortSamplesByClasses( const Mat& _samples, const Mat& _responses,
 }
     
 //////////////////////// SVM implementation //////////////////////////////
+
+SVM::~SVM() {}
 
 class SVMImpl : public SVM
 {
@@ -1222,7 +1230,7 @@ public:
         return sv;
     }
 
-    void set_params( const Params& _params )
+    void setParams( const Params& _params, const Ptr<Kernel>& _kernel )
     {
         params = _params;
 
@@ -1279,11 +1287,21 @@ public:
         if( !(termCrit.type & TermCriteria::COUNT) )
             termCrit.maxCount = INT_MAX;
         termCrit.maxCount = std::max(termCrit.maxCount, 1);
+
+        if( _kernel )
+            kernel = _kernel;
+        else
+            kernel = makePtr<SVMKernelImpl>(params);
     }
 
-    void create_kernel()
+    Params getParams() const
     {
-        kernel = createStandardSVMKernel(params);
+        return params;
+    }
+
+    Ptr<Kernel> getKernel() const
+    {
+        return kernel;
     }
 
     bool do_train( const Mat& _samples, const Mat& _responses )
@@ -1540,8 +1558,6 @@ public:
         else
             responses = data->getTrainResponses();
 
-        create_kernel();
-
         if( !do_train( samples, responses ))
         {
             clear();
@@ -1551,10 +1567,10 @@ public:
         return true;
     }
 
-    bool train_auto( const Ptr<TrainData>& data, int k_fold,
-                     ParamGrid C_grid, ParamGrid gamma_grid, ParamGrid p_grid,
-                     ParamGrid nu_grid, ParamGrid coef_grid, ParamGrid degree_grid,
-                     bool balanced )
+    bool trainAuto( const Ptr<TrainData>& data, int k_fold,
+                    ParamGrid C_grid, ParamGrid gamma_grid, ParamGrid p_grid,
+                    ParamGrid nu_grid, ParamGrid coef_grid, ParamGrid degree_grid,
+                    bool balanced )
     {
         int svmType = params.svmType;
         RNG rng(-1);
@@ -1861,6 +1877,16 @@ public:
         return result;
     }
 
+    double getDecisionFunction(int i, OutputArray _alpha, OutputArray _svidx ) const
+    {
+        CV_Assert( 0 <= i && i < (int)decision_func.size());
+        const DecisionFunc& df = decision_func[i];
+        int count = decision_func[i+1].ofs - df.ofs;
+        Mat(1, count, CV_64F, (double*)&df_alpha[df.ofs]).copyTo(_alpha);
+        Mat(1, count, CV_32S, (int*)&df_index[df.ofs]).copyTo(_svidx);
+        return df.rho;
+    }
+
     void write_params( FileStorage& fs ) const
     {
         int svmType = params.svmType;
@@ -1914,6 +1940,21 @@ public:
     bool isTrained() const
     {
         return !sv.empty();
+    }
+
+    bool isClassifier() const
+    {
+        return params.svmType == C_SVC || params.svmType == NU_SVC || params.svmType == ONE_CLASS;
+    }
+
+    int getVarCount() const
+    {
+        return var_count;
+    }
+
+    String getDefaultModelName() const
+    {
+        return "opencv_ml_svm";
     }
 
     void write( FileStorage& fs ) const
@@ -2028,7 +2069,7 @@ public:
         else
             _params.termCrit = TermCriteria( TermCriteria::EPS + TermCriteria::COUNT, 1000, FLT_EPSILON );
 
-        set_params( _params );
+        setParams( _params, Ptr<Kernel>() );
     }
 
     void read( const FileNode& fn )
@@ -2092,7 +2133,6 @@ public:
             setRangeVector(df_index, sv_total);
         if( (int)fn["optimize_linear"] != 0 )
             optimize_linear_svm();
-        create_kernel();
     }
 
     Params params;
@@ -2106,6 +2146,14 @@ public:
 
     Ptr<Kernel> kernel;
 };
+
+
+Ptr<SVM> SVM::create(const Params& params, const Ptr<SVM::Kernel>& kernel)
+{
+    Ptr<SVMImpl> p = makePtr<SVMImpl>();
+    p->setParams(params, kernel);
+    return p;
+}
 
 }
 }

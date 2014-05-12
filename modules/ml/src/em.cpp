@@ -60,12 +60,24 @@ class CV_EXPORTS EMImpl : public EM
 public:
     EMImpl(const Params& _params)
     {
-        params = _params;
-        maxIters = (params.termCrit.type & TermCriteria::MAX_ITER) ? params.termCrit.maxCount : DEFAULT_MAX_ITERS;
-        epsilon = (params.termCrit.type & TermCriteria::EPS) ? params.termCrit.epsilon : 0;
+        setParams(_params);
     }
 
     virtual ~EMImpl() {}
+
+    void setParams(const Params& _params)
+    {
+        params = _params;
+        CV_Assert(params.nclusters > 1);
+        CV_Assert(params.covMatType == COV_MAT_SPHERICAL ||
+                  params.covMatType == COV_MAT_DIAGONAL ||
+                  params.covMatType == COV_MAT_GENERIC);
+    }
+
+    Params getParams() const
+    {
+        return params;
+    }
 
     void clear()
     {
@@ -85,8 +97,13 @@ public:
         logWeightDivDet.release();
     }
 
+    bool train(const Ptr<TrainData>& data, int)
+    {
+        Mat samples = data->getTrainSamples(), labels;
+        return train_(samples, labels, noArray(), noArray());
+    }
 
-    bool train(InputArray samples,
+    bool train_(InputArray samples,
                OutputArray logLikelihoods,
                OutputArray labels,
                OutputArray probs)
@@ -140,7 +157,7 @@ public:
         {
             if( _outputs.fixedType() )
                 ptype = _outputs.type();
-            _outputs.create(samples.rows, nclusters, ptype);
+            _outputs.create(samples.rows, params.nclusters, ptype);
         }
         else
             nsamples = std::min(nsamples, 1);
@@ -176,7 +193,7 @@ public:
         {
             if( _probs.fixedType() )
                 ptype = _probs.type();
-            _probs.create(1, nclusters, ptype);
+            _probs.create(1, params.nclusters, ptype);
             probs = _probs.getMat();
         }
 
@@ -186,6 +203,21 @@ public:
     bool isTrained() const
     {
         return !means.empty();
+    }
+
+    bool isClassifier() const
+    {
+        return true;
+    }
+
+    int getVarCount() const
+    {
+        return means.cols;
+    }
+
+    String getDefaultModelName() const
+    {
+        return "opencv_ml_em";
     }
 
     static void checkTrainData(int startStep, const Mat& samples,
@@ -279,6 +311,7 @@ public:
                       const std::vector<Mat>* covs0,
                       const Mat* weights0)
     {
+        int nclusters = params.nclusters, covMatType = params.covMatType;
         clear();
 
         checkTrainData(startStep, samples, nclusters, covMatType, probs0, means0, covs0, weights0);
@@ -317,6 +350,7 @@ public:
 
     void decomposeCovs()
     {
+        int nclusters = params.nclusters, covMatType = params.covMatType;
         CV_Assert(!covs.empty());
         covsEigenValues.resize(nclusters);
         if(covMatType == COV_MAT_GENERIC)
@@ -349,6 +383,7 @@ public:
 
     void clusterTrainSamples()
     {
+        int nclusters = params.nclusters;
         int nsamples = trainSamples.rows;
 
         // Cluster samples, compute/update means
@@ -368,7 +403,9 @@ public:
         }
 
         Mat labels;
-        kmeans(trainSamplesFlt, nclusters, labels,  TermCriteria(TermCriteria::COUNT, means.empty() ? 10 : 1, 0.5), 10, KMEANS_PP_CENTERS, meansFlt);
+        kmeans(trainSamplesFlt, nclusters, labels,
+               TermCriteria(TermCriteria::COUNT, means.empty() ? 10 : 1, 0.5),
+               10, KMEANS_PP_CENTERS, meansFlt);
 
         // Convert samples and means back to 64F.
         CV_Assert(meansFlt.type() == CV_32FC1);
@@ -406,6 +443,7 @@ public:
 
     void computeLogWeightDivDet()
     {
+        int nclusters = params.nclusters;
         CV_Assert(!covsEigenValues.empty());
 
         Mat logWeights;
@@ -420,7 +458,7 @@ public:
             double logDetCov = 0.;
             const int evalCount = static_cast<int>(covsEigenValues[clusterIndex].total());
             for(int di = 0; di < evalCount; di++)
-                logDetCov += std::log(covsEigenValues[clusterIndex].at<double>(covMatType != COV_MAT_SPHERICAL ? di : 0));
+                logDetCov += std::log(covsEigenValues[clusterIndex].at<double>(params.covMatType != COV_MAT_SPHERICAL ? di : 0));
 
             logWeightDivDet.at<double>(clusterIndex) = logWeights.at<double>(clusterIndex) - 0.5 * logDetCov;
         }
@@ -428,6 +466,7 @@ public:
 
     bool doTrain(int startStep, OutputArray logLikelihoods, OutputArray labels, OutputArray probs)
     {
+        int nclusters = params.nclusters;
         int dim = trainSamples.cols;
         // Precompute the empty initial train data in the cases of START_E_STEP and START_AUTO_STEP
         if(startStep != START_M_STEP)
@@ -449,6 +488,10 @@ public:
             mStep();
 
         double trainLogLikelihood, prevTrainLogLikelihood = 0.;
+        int maxIters = (params.termCrit.type & TermCriteria::MAX_ITER) ?
+            params.termCrit.maxCount : DEFAULT_MAX_ITERS;
+        double epsilon = (params.termCrit.type & TermCriteria::EPS) ? params.termCrit.epsilon : 0.;
+
         for(int iter = 0; ; iter++)
         {
             eStep();
@@ -478,12 +521,12 @@ public:
         covs.resize(nclusters);
         for(int clusterIndex = 0; clusterIndex < nclusters; clusterIndex++)
         {
-            if(covMatType == COV_MAT_SPHERICAL)
+            if(params.covMatType == COV_MAT_SPHERICAL)
             {
                 covs[clusterIndex].create(dim, dim, CV_64FC1);
                 setIdentity(covs[clusterIndex], Scalar(covsEigenValues[clusterIndex].at<double>(0)));
             }
-            else if(covMatType == COV_MAT_DIAGONAL)
+            else if(params.covMatType == COV_MAT_DIAGONAL)
             {
                 covs[clusterIndex] = Mat::diag(covsEigenValues[clusterIndex]);
             }
@@ -512,6 +555,7 @@ public:
         // see Alex Smola's blog http://blog.smola.org/page/2 for
         // details on the log-sum-exp trick
 
+        int nclusters = params.nclusters, covMatType = params.covMatType;
         int stype = sample.type();
         CV_Assert(!means.empty());
         CV_Assert((stype == CV_32F || stype == CV_64F) && (ptype == CV_32F || ptype == CV_64F));
@@ -577,7 +621,7 @@ public:
     void eStep()
     {
         // Compute probs_ik from means_k, covs_k and weights_k.
-        trainProbs.create(trainSamples.rows, nclusters, CV_64FC1);
+        trainProbs.create(trainSamples.rows, params.nclusters, CV_64FC1);
         trainLabels.create(trainSamples.rows, 1, CV_32SC1);
         trainLogLikelihoods.create(trainSamples.rows, 1, CV_64FC1);
 
@@ -598,6 +642,8 @@ public:
     void mStep()
     {
         // Update means_k, covs_k and weights_k from probs_ik
+        int nclusters = params.nclusters;
+        int covMatType = params.covMatType;
         int dim = trainSamples.cols;
 
         // Update weights
@@ -707,6 +753,65 @@ public:
         weights /= trainSamples.rows;
     }
 
+    void write_params(FileStorage& fs) const
+    {
+        fs << "nclusters" << params.nclusters;
+        fs << "cov_mat_type" << (params.covMatType == COV_MAT_SPHERICAL ? String("spherical") :
+                                 params.covMatType == COV_MAT_DIAGONAL ? String("diagonal") :
+                                 params.covMatType == COV_MAT_GENERIC ? String("generic") :
+                                 format("unknown_%d", params.covMatType));
+        writeTermCrit(fs, params.termCrit);
+    }
+
+    void write(FileStorage& fs) const
+    {
+        fs << "training_params" << "{";
+        write_params(fs);
+        fs << "}";
+        fs << "weights" << weights;
+        fs << "means" << means;
+
+        size_t i, n = covs.size();
+
+        fs << "covs" << "[";
+        for( i = 0; i < n; i++ )
+            fs << covs[i];
+        fs << "]";
+    }
+
+    void read_params(const FileNode& fn)
+    {
+        Params _params;
+        _params.nclusters = (int)fn["nclusters"];
+        String s = (String)fn["cov_mat_type"];
+        _params.covMatType = s == "spherical" ? COV_MAT_SPHERICAL :
+                             s == "diagonal" ? COV_MAT_DIAGONAL :
+                             s == "generic" ? COV_MAT_GENERIC : -1;
+        CV_Assert(_params.covMatType >= 0);
+        _params.termCrit = readTermCrit(fn);
+        setParams(_params);
+    }
+
+    void read(const FileNode& fn)
+    {
+        clear();
+        read_params(fn["training_params"]);
+
+        fn["weights"] >> weights;
+        fn["means"] >> means;
+
+        FileNode cfn = fn["covs"];
+        FileNodeIterator cfn_it = cfn.begin();
+        int i, n = (int)cfn.size();
+        covs.resize(n);
+
+        for( i = 0; i < n; i++, ++cfn_it )
+            (*cfn_it) >> covs[i];
+
+        decomposeCovs();
+        computeLogWeightDivDet();
+    }
+
     Mat getWeights() const { return weights; }
     Mat getMeans() const { return means; }
     void getCovs(std::vector<Mat>& _covs) const
@@ -718,11 +823,6 @@ public:
     Params params;
 
     // all inner matrices have type CV_64FC1
-    int nclusters;
-    int covMatType;
-    int maxIters;
-    double epsilon;
-
     Mat trainSamples;
     Mat trainProbs;
     Mat trainLogLikelihoods;
@@ -739,20 +839,20 @@ public:
 };
 
 
-Ptr<EM> createEM(InputArray samples, OutputArray logLikelihoods,
-                 OutputArray labels, OutputArray probs,
-                 const EM::Params& params)
+Ptr<EM> EM::train(InputArray samples, OutputArray logLikelihoods,
+                  OutputArray labels, OutputArray probs,
+                  const EM::Params& params)
 {
     Ptr<EMImpl> em = makePtr<EMImpl>(params);
-    if(!em->train(samples, logLikelihoods, labels, probs))
+    if(!em->train_(samples, logLikelihoods, labels, probs))
         em.release();
     return em;
 }
 
-Ptr<EM> createEM_startWithE(InputArray samples, InputArray means0,
-                            InputArray covs0, InputArray weights0,
-                            OutputArray logLikelihoods, OutputArray labels,
-                            OutputArray probs, const EM::Params& params)
+Ptr<EM> EM::train_startWithE(InputArray samples, InputArray means0,
+                             InputArray covs0, InputArray weights0,
+                             OutputArray logLikelihoods, OutputArray labels,
+                             OutputArray probs, const EM::Params& params)
 {
     Ptr<EMImpl> em = makePtr<EMImpl>(params);
     if(!em->trainE(samples, means0, covs0, weights0, logLikelihoods, labels, probs))
@@ -760,14 +860,19 @@ Ptr<EM> createEM_startWithE(InputArray samples, InputArray means0,
     return em;
 }
 
-Ptr<EM> createEM_startWithM(InputArray samples, InputArray probs0,
-                            OutputArray logLikelihoods, OutputArray labels,
-                            OutputArray probs, const EM::Params& params)
+Ptr<EM> EM::train_startWithM(InputArray samples, InputArray probs0,
+                             OutputArray logLikelihoods, OutputArray labels,
+                             OutputArray probs, const EM::Params& params)
 {
     Ptr<EMImpl> em = makePtr<EMImpl>(params);
     if(!em->trainM(samples, probs0, logLikelihoods, labels, probs))
         em.release();
     return em;
+}
+
+Ptr<EM> EM::create(const Params& params)
+{
+    return makePtr<EMImpl>(params);
 }
 
 }

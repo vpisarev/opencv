@@ -28,6 +28,7 @@
 enum { CV_TRAIN_ERROR=0, CV_TEST_ERROR=1 };
 
 using cv::Ptr;
+using cv::ml::StatModel;
 using cv::ml::TrainData;
 using cv::ml::NormalBayesClassifier;
 using cv::ml::SVM;
@@ -61,15 +62,7 @@ protected:
     std::vector<std::string> dataSetNames;
     cv::FileStorage validationFS;
 
-    // MLL models
-    Ptr<NormalBayesClassifier> nbayes;
-    Ptr<KNearest> knearest;
-    Ptr<SVM> svm;
-    Ptr<ANN_MLP> ann;
-    Ptr<DTrees> dtree;
-    Ptr<Boost> boost;
-    Ptr<RTrees> rtrees;
-    //CvERTrees* ertrees;
+    Ptr<StatModel> model;
 
     std::map<int, int> cls_map;
 

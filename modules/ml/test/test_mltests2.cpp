@@ -44,134 +44,6 @@
 using namespace cv;
 using namespace std;
 
-// auxiliary functions
-// 1. nbayes
-void nbayes_check_data( Ptr<TrainData> _data )
-{
-    Mat m = _data->getMissing();
-    if( !m.empty() )
-        CV_Error( CV_StsBadArg, "missing values are not supported" );
-    Mat var_types = _data->getVarType();
-    int nvars = (int)var_types.total();
-    bool is_classifier = var_types.at<uchar>(nvars-1) == cv::ml::VAR_CATEGORICAL;
-    if( fabs( norm( var_types, NORM_L1 ) - (nvars - 2)*cv::ml::VAR_ORDERED - cv::ml::VAR_CATEGORICAL ) > FLT_EPSILON ||
-        !is_classifier )
-        CV_Error( CV_StsBadArg, "incorrect types of predictors or responses" );
-}
-
-Ptr<NormalBayesClassifier> nbayes_train( Ptr<TrainData> _data )
-{
-    nbayes_check_data( _data );
-
-    Mat values = _data->getSamples();
-    Mat responses = _data->getResponses();
-    Mat train_sidx = _data->getTrainSampleIdx();
-    Mat var_idx = _data->getVarIdx();
-    return cv::ml::createNormalBayesClassifier(values, responses, var_idx, train_sidx);
-}
-
-float nbayes_calc_error( Ptr<NormalBayesClassifier> nbayes, Ptr<TrainData> _data, int type, vector<float> *resp )
-{
-    float err = 0;
-    nbayes_check_data( _data );
-    Mat values = _data->getSamples();
-    Mat response = _data->getResponses();
-    Mat sample_idx = (type == CV_TEST_ERROR) ? _data->getTestSampleIdx() : _data->getTrainSampleIdx();
-    int* sidx = !sample_idx.empty() ? sample_idx.ptr<int>() : 0;
-    int sample_count = (int)sample_idx.total();
-    sample_count = (type == CV_TRAIN_ERROR && sample_count == 0) ? values.rows : sample_count;
-    float* pred_resp = 0;
-    if( resp && (sample_count > 0) )
-    {
-        resp->resize( sample_count );
-        pred_resp = &((*resp)[0]);
-    }
-
-    for( int i = 0; i < sample_count; i++ )
-    {
-        int si = sidx ? sidx[i] : i;
-        Mat sample = values.row(si);
-        float r = (float)nbayes->predict( sample, noArray() );
-        if( pred_resp )
-            pred_resp[i] = r;
-        int d = fabs((double)r - response.at<float>(si)) <= FLT_EPSILON ? 0 : 1;
-        err += d;
-    }
-    err = sample_count ? err / (float)sample_count * 100 : -FLT_MAX;
-    return err;
-}
-
-// 2. knearest
-void knearest_check_data( Ptr<TrainData> _data )
-{
-    Mat values = _data->getSamples();
-    Mat var_idx = _data->getVarIdx();
-    int nvars = (int)var_idx.total();
-    if( nvars != 0 && nvars != values.cols )
-        CV_Error( CV_StsBadArg, "var_idx is not supported" );
-    if( !_data->getMissing().empty() )
-        CV_Error( CV_StsBadArg, "missing values are not supported" );
-}
-
-Ptr<KNearest> knearest_train( Ptr<TrainData> _data )
-{
-    Mat samples = _data->getSamples();
-    Mat responses = _data->getResponses();
-    Mat train_sidx = _data->getTrainSampleIdx();
-    Mat varType = _data->getVarType();
-    bool is_regression = _data->getResponseType() == cv::ml::VAR_ORDERED;
-    return cv::ml::createKNearest(samples, responses, train_sidx, is_regression);
-}
-
-float knearest_calc_error( Ptr<KNearest> knearest, Ptr<TrainData> _data, int k, int type, vector<float> *resp )
-{
-    float err = 0;
-    Mat samples = _data->getSamples();
-    Mat response = _data->getResponses();
-    Mat sample_idx = (type == CV_TEST_ERROR) ? _data->getTestSampleIdx() : _data->getTrainSampleIdx();
-    int* sidx = !sample_idx.empty() ? sample_idx.ptr<int>() : 0;
-    bool is_regression = _data->getResponseType() == cv::ml::VAR_ORDERED;
-    knearest_check_data( _data );
-    int sample_count = (int)sample_idx.total();
-    sample_count = (type == CV_TRAIN_ERROR && sample_count == 0) ? samples.rows : sample_count;
-    float* pred_resp = 0;
-    if( resp && (sample_count > 0) )
-    {
-        resp->resize( sample_count );
-        pred_resp = &((*resp)[0]);
-    }
-    if ( !is_regression )
-    {
-        for( int i = 0; i < sample_count; i++ )
-        {
-            int si = sidx ? sidx[i] : i;
-            Mat sample = samples.row(si);
-            float r = knearest->findNearest(sample, k, noArray());
-            if( pred_resp )
-                pred_resp[i] = r;
-            int d = fabs((double)r - response.at<float>(si)) <= FLT_EPSILON ? 0 : 1;
-            err += d;
-        }
-        err = sample_count ? err / (float)sample_count * 100 : -FLT_MAX;
-    }
-    else
-    {
-        for( int i = 0; i < sample_count; i++ )
-        {
-            int si = sidx ? sidx[i] : i;
-            Mat sample = samples.row(si);
-            float r = knearest->findNearest(sample, k, noArray());
-            if( pred_resp )
-                pred_resp[i] = r;
-            float d = r - response.at<float>(si);
-            err += d*d;
-        }
-        err = sample_count ? err / (float)sample_count : -FLT_MAX;
-    }
-    return err;
-}
-
-// 3. svm
 int str_to_svm_type(String& str)
 {
     if( !str.compare("C_SVC") )
@@ -201,91 +73,20 @@ int str_to_svm_kernel_type( String& str )
     return -1;
 }
 
-void svm_check_data( Ptr<TrainData> _data )
-{
-    if( !_data->getMissing().empty() )
-        CV_Error( CV_StsBadArg, "missing values are not supported" );
-    Mat var_types = _data->getVarType();
-    int i, n = (int)var_types.total();
-    for( i = 0; i < n-1; i++ )
-        if (var_types.at<uchar>(i) == cv::ml::VAR_CATEGORICAL)
-        {
-            CV_Error_( CV_StsBadArg, ("incorrect type of %d-predictor", i ) );
-        }
-}
-
-Ptr<SVM> svm_train( Ptr<TrainData> _data, SVM::Params _params )
-{
-    svm_check_data(_data);
-    Mat _train_data = _data->getSamples();
-    Mat _responses = _data->getResponses();
-    Mat _var_idx = _data->getVarIdx();
-    Mat _sample_idx = _data->getTrainSampleIdx();
-    return cv::ml::createSVM( _train_data, _responses, _var_idx, _sample_idx, _params );
-}
-
 Ptr<SVM> svm_train_auto( Ptr<TrainData> _data, SVM::Params _params,
                     int k_fold, ParamGrid C_grid, ParamGrid gamma_grid,
                     ParamGrid p_grid, ParamGrid nu_grid, ParamGrid coef_grid,
                     ParamGrid degree_grid )
 {
-    svm_check_data(_data);
     Mat _train_data = _data->getSamples();
     Mat _responses = _data->getResponses();
     Mat _var_idx = _data->getVarIdx();
     Mat _sample_idx = _data->getTrainSampleIdx();
 
-    return cv::ml::createSVMAuto( _train_data, _responses, _var_idx,
-        _sample_idx, _params, k_fold, C_grid, gamma_grid, p_grid, nu_grid, coef_grid, degree_grid );
-}
-
-float svm_calc_error( Ptr<SVM> svm, Ptr<TrainData> _data, int type, vector<float> *resp )
-{
-    svm_check_data(_data);
-    float err = 0;
-    Mat values = _data->getSamples();
-    Mat response = _data->getResponses();
-    Mat sample_idx = (type == CV_TEST_ERROR) ? _data->getTestSampleIdx() : _data->getTrainSampleIdx();
-    Mat var_types = _data->getVarType();
-    int* sidx = !sample_idx.empty() ? sample_idx.ptr<int>() : 0;
-    bool is_classifier = _data->getResponseType() == cv::ml::VAR_CATEGORICAL;
-    int sample_count = (int)sample_idx.total();
-    sample_count = (type == CV_TRAIN_ERROR && sample_count == 0) ? values.rows : sample_count;
-    float* pred_resp = 0;
-    if( resp && (sample_count > 0) )
-    {
-        resp->resize( sample_count );
-        pred_resp = &((*resp)[0]);
-    }
-    if ( is_classifier )
-    {
-        for( int i = 0; i < sample_count; i++ )
-        {
-            int si = sidx ? sidx[i] : i;
-            Mat sample = values.row(si);
-            float r = svm->predict( sample, noArray() );
-            if( pred_resp )
-                pred_resp[i] = r;
-            int d = fabs((double)r - response.at<float>(si)) <= FLT_EPSILON ? 0 : 1;
-            err += d;
-        }
-        err = sample_count ? err / (float)sample_count * 100 : -FLT_MAX;
-    }
-    else
-    {
-        for( int i = 0; i < sample_count; i++ )
-        {
-            int si = sidx ? sidx[i] : i;
-            Mat sample = values.row(si);
-            float r = svm->predict( sample, noArray() );
-            if( pred_resp )
-                pred_resp[i] = r;
-            float d = r - response.at<float>(si);
-            err += d*d;
-        }
-        err = sample_count ? err / (float)sample_count : -FLT_MAX;
-    }
-    return err;
+    Ptr<SVM> svm = SVM::create(_params);
+    if( svm->trainAuto( _data, k_fold, C_grid, gamma_grid, p_grid, nu_grid, coef_grid, degree_grid ) )
+        return svm;
+    return Ptr<SVM>();
 }
 
 // 4. em
@@ -343,15 +144,7 @@ Mat ann_get_new_responses( Ptr<TrainData> _data, map<int, int>& cls_map )
     return new_responses;
 }
 
-Ptr<ANN_MLP> ann_train( const Mat& layer_sizes, Ptr<TrainData> _data, const Mat& new_responses, ANN_MLP::Params _params, int flags = 0 )
-{
-    ann_check_data( _data );
-    Mat train_sidx = _data->getTrainSampleIdx();
-    Mat samples = _data->getSamples();
-    return cv::ml::createANN_MLP(layer_sizes, samples, new_responses, noArray(), train_sidx, _params, flags);
-}
-
-float ann_calc_error( Ptr<ANN_MLP> ann, Ptr<TrainData> _data, map<int, int>& cls_map, int type, vector<float> *resp_labels )
+float ann_calc_error( Ptr<StatModel> ann, Ptr<TrainData> _data, map<int, int>& cls_map, int type, vector<float> *resp_labels )
 {
     float err = 0;
     Mat samples = _data->getSamples();
@@ -493,8 +286,6 @@ void CV_MLBaseTest::run( int )
 
 int CV_MLBaseTest::prepare_test_case( int test_case_idx )
 {
-    int trainSampleCount, respIdx;
-    String varTypes;
     clear();
 
     string dataPath = ts->get_data_path();
@@ -506,30 +297,27 @@ int CV_MLBaseTest::prepare_test_case( int test_case_idx )
 
     string dataName = dataSetNames[test_case_idx],
         filename = dataPath + dataName + ".data";
-    if ( data.read_csv( filename.c_str() ) != 0)
-    {
-        char msg[100];
-        sprintf( msg, "file %s can not be read", filename.c_str() );
-        ts->printf( cvtest::TS::LOG, msg );
-        return cvtest::TS::FAIL_INVALID_TEST_DATA;
-    }
 
     FileNode dataParamsNode = validationFS.getFirstTopLevelNode()["validation"][modelName][dataName]["data_params"];
     CV_DbgAssert( !dataParamsNode.empty() );
 
     CV_DbgAssert( !dataParamsNode["LS"].empty() );
-    dataParamsNode["LS"] >> trainSampleCount;
-    CvTrainTestSplit spl( trainSampleCount );
-    data.set_train_test_split( &spl );
+    int trainSampleCount = (int)dataParamsNode["LS"];
 
     CV_DbgAssert( !dataParamsNode["resp_idx"].empty() );
-    dataParamsNode["resp_idx"] >> respIdx;
-    data.set_response_idx( respIdx );
+    int respIdx = (int)dataParamsNode["resp_idx"];
 
     CV_DbgAssert( !dataParamsNode["types"].empty() );
-    dataParamsNode["types"] >> varTypes;
-    data.set_var_types( varTypes.c_str() );
+    String varTypes = (String)dataParamsNode["types"];
 
+    data = TrainData::loadFromCSV(filename, 0, respIdx, respIdx+1, varTypes);
+    if( data.empty() )
+    {
+        ts->printf( cvtest::TS::LOG, "file %s can not be read", filename.c_str() );
+        return cvtest::TS::FAIL_INVALID_TEST_DATA;
+    }
+
+    data->setTrainTestSplit(trainSampleCount);
     return cvtest::TS::OK;
 }
 
@@ -544,14 +332,13 @@ int CV_MLBaseTest::train( int testCaseIdx )
     FileNode modelParamsNode =
         validationFS.getFirstTopLevelNode()["validation"][modelName][dataSetNames[testCaseIdx]]["model_params"];
 
-    if( !modelName.compare(CV_NBAYES) )
-        nbayes = nbayes_train( data );
-    else if( !modelName.compare(CV_KNEAREST) )
+    if( modelName == CV_NBAYES )
+        model = NormalBayesClassifier::create();
+    else if( modelName == CV_KNEAREST )
     {
-        assert( 0 );
-        //is_trained = knearest->train( &data );
+        model = KNearest::create();
     }
-    else if( !modelName.compare(CV_SVM) )
+    else if( modelName == CV_SVM )
     {
         String svm_type_str, kernel_type_str;
         modelParamsNode["svm_type"] >> svm_type_str;
@@ -565,13 +352,13 @@ int CV_MLBaseTest::train( int testCaseIdx )
         modelParamsNode["C"] >> params.C;
         modelParamsNode["nu"] >> params.nu;
         modelParamsNode["p"] >> params.p;
-        svm = svm_train( data, params );
+        model = SVM::create(params);
     }
-    else if( !modelName.compare(CV_EM) )
+    else if( modelName == CV_EM )
     {
         assert( 0 );
     }
-    else if( !modelName.compare(CV_ANN) )
+    else if( modelName == CV_ANN )
     {
         String train_method_str;
         double param1, param2;
@@ -579,12 +366,15 @@ int CV_MLBaseTest::train( int testCaseIdx )
         modelParamsNode["param1"] >> param1;
         modelParamsNode["param2"] >> param2;
         Mat new_responses = ann_get_new_responses( data, cls_map );
+        // binarize the responses
+        data = TrainData::create(data->getSamples(), data->getLayout(), new_responses,
+                                 data->getVarIdx(), data->getTrainSampleIdx());
         int layer_sz[] = { data->getNAllVars(), 100, 100, (int)cls_map.size() };
         Mat layer_sizes( 1, (int)(sizeof(layer_sz)/sizeof(layer_sz[0])), CV_32S, layer_sz );
-        ann = ann_train( layer_sizes, data, new_responses, ANN_MLP::Params(TermCriteria(TermCriteria::COUNT,300,0.01),
-            str_to_ann_train_method(train_method_str), param1, param2) );
+        model = ANN_MLP::create(layer_sizes, ANN_MLP::Params(TermCriteria(TermCriteria::COUNT,300,0.01),
+                                                        str_to_ann_train_method(train_method_str), param1, param2));
     }
-    else if( !modelName.compare(CV_DTREE) )
+    else if( modelName == CV_DTREE )
     {
         int MAX_DEPTH, MIN_SAMPLE_COUNT, MAX_CATEGORIES, CV_FOLDS;
         float REG_ACCURACY = 0;
@@ -595,10 +385,10 @@ int CV_MLBaseTest::train( int testCaseIdx )
         modelParamsNode["max_categories"] >> MAX_CATEGORIES;
         modelParamsNode["cv_folds"] >> CV_FOLDS;
         modelParamsNode["is_pruned"] >> IS_PRUNED;
-        dtree = cv::ml::createDTree(data, DTrees::Params(MAX_DEPTH, MIN_SAMPLE_COUNT, REG_ACCURACY, USE_SURROGATE,
-                                                        MAX_CATEGORIES, CV_FOLDS, false, IS_PRUNED, Mat() ));
+        model = DTrees::create(DTrees::Params(MAX_DEPTH, MIN_SAMPLE_COUNT, REG_ACCURACY, USE_SURROGATE,
+                                MAX_CATEGORIES, CV_FOLDS, false, IS_PRUNED, Mat() ));
     }
-    else if( !modelName.compare(CV_BOOST) )
+    else if( modelName == CV_BOOST )
     {
         int BOOST_TYPE, WEAK_COUNT, MAX_DEPTH;
         float WEIGHT_TRIM_RATE;
@@ -610,10 +400,9 @@ int CV_MLBaseTest::train( int testCaseIdx )
         modelParamsNode["weight_trim_rate"] >> WEIGHT_TRIM_RATE;
         modelParamsNode["max_depth"] >> MAX_DEPTH;
         modelParamsNode["use_surrogate"] >> USE_SURROGATE;
-        boost = cv::ml::createBoost( data,
-            Boost::Params(BOOST_TYPE, WEAK_COUNT, WEIGHT_TRIM_RATE, MAX_DEPTH, USE_SURROGATE, Mat()) );
+        model = Boost::create( Boost::Params(BOOST_TYPE, WEAK_COUNT, WEIGHT_TRIM_RATE, MAX_DEPTH, USE_SURROGATE, Mat()) );
     }
-    else if( !modelName.compare(CV_RTREES) )
+    else if( modelName == CV_RTREES )
     {
         int MAX_DEPTH, MIN_SAMPLE_COUNT, MAX_CATEGORIES, CV_FOLDS, NACTIVE_VARS, MAX_TREES_NUM;
         float REG_ACCURACY = 0, OOB_EPS = 0.0;
@@ -626,28 +415,13 @@ int CV_MLBaseTest::train( int testCaseIdx )
         modelParamsNode["is_pruned"] >> IS_PRUNED;
         modelParamsNode["nactive_vars"] >> NACTIVE_VARS;
         modelParamsNode["max_trees_num"] >> MAX_TREES_NUM;
-        rtrees = cv::ml::createRTrees(data,
-            RTrees::Params( MAX_DEPTH, MIN_SAMPLE_COUNT, REG_ACCURACY,
+        model = RTrees::create(RTrees::Params( MAX_DEPTH, MIN_SAMPLE_COUNT, REG_ACCURACY,
             USE_SURROGATE, MAX_CATEGORIES, Mat(), true, // (calc_var_importance == true) <=> RF processes variable importance
             NACTIVE_VARS, TermCriteria(TermCriteria::COUNT, MAX_TREES_NUM, OOB_EPS)));
     }
-    /*else if( !modelName.compare(CV_ERTREES) )
-    {
-        int MAX_DEPTH, MIN_SAMPLE_COUNT, MAX_CATEGORIES, CV_FOLDS, NACTIVE_VARS, MAX_TREES_NUM;
-        float REG_ACCURACY = 0, OOB_EPS = 0.0;
-        bool USE_SURROGATE, IS_PRUNED;
-        modelParamsNode["max_depth"] >> MAX_DEPTH;
-        modelParamsNode["min_sample_count"] >> MIN_SAMPLE_COUNT;
-        modelParamsNode["use_surrogate"] >> USE_SURROGATE;
-        modelParamsNode["max_categories"] >> MAX_CATEGORIES;
-        modelParamsNode["cv_folds"] >> CV_FOLDS;
-        modelParamsNode["is_pruned"] >> IS_PRUNED;
-        modelParamsNode["nactive_vars"] >> NACTIVE_VARS;
-        modelParamsNode["max_trees_num"] >> MAX_TREES_NUM;
-        is_trained = ertrees->train( &data, CvRTParams( MAX_DEPTH, MIN_SAMPLE_COUNT, REG_ACCURACY,
-            USE_SURROGATE, MAX_CATEGORIES, 0, false, // (calc_var_importance == true) <=> RF processes variable importance
-            NACTIVE_VARS, MAX_TREES_NUM, OOB_EPS, CV_TERMCRIT_ITER)) != 0;
-    }*/
+
+    if( !model.empty() )
+        is_trained = model->train(data, 0);
 
     if( !is_trained )
     {
@@ -661,67 +435,40 @@ float CV_MLBaseTest::get_test_error( int /*testCaseIdx*/, vector<float> *resp )
 {
     int type = CV_TEST_ERROR;
     float err = 0;
-    if( !modelName.compare(CV_NBAYES) )
-        err = nbayes_calc_error( nbayes, &data, type, resp );
-    else if( !modelName.compare(CV_KNEAREST) )
-    {
+    Mat _resp;
+    if( modelName == CV_EM )
         assert( 0 );
-        /*testCaseIdx = 0;
-        int k = 2;
-        validationFS.getFirstTopLevelNode()["validation"][modelName][dataSetNames[testCaseIdx]]["model_params"]["k"] >> k;
-        err = knearest->calc_error( &data, k, type, resp );*/
-    }
-    else if( !modelName.compare(CV_SVM) )
-        err = svm_calc_error( svm, data, type, resp );
-    else if( !modelName.compare(CV_EM) )
-        assert( 0 );
-    else if( !modelName.compare(CV_ANN) )
-        err = ann_calc_error( ann, data, cls_map, type, resp );
-    else if( !modelName.compare(CV_DTREE) )
-        err = dtree->calc_error( data, type, resp );
-    else if( !modelName.compare(CV_BOOST) )
-        err = boost->calc_error( data, type, resp );
-    else if( !modelName.compare(CV_RTREES) )
-        err = rtrees->calc_error( data, type, resp );
-    /*else if( !modelName.compare(CV_ERTREES) )
-        err = ertrees->calc_error( data, type, resp );*/
+    else if( modelName == CV_ANN )
+        err = ann_calc_error( model, data, cls_map, type, resp );
+    else if( modelName == CV_DTREE || modelName == CV_BOOST || modelName == CV_RTREES ||
+             modelName == CV_SVM || modelName == CV_NBAYES || modelName == CV_KNEAREST )
+        err = model->calcError( data, true, _resp );
+    if( !_resp.empty() && resp )
+        _resp.convertTo(*resp, CV_32F);
     return err;
 }
 
 void CV_MLBaseTest::save( const char* filename )
 {
-    if( !modelName.compare(CV_NBAYES) )
-        nbayes->save( filename );
-    else if( !modelName.compare(CV_KNEAREST) )
-        knearest->save( filename );
-    else if( !modelName.compare(CV_SVM) )
-        svm->save( filename );
-    else if( !modelName.compare(CV_ANN) )
-        ann->save( filename );
-    else if( !modelName.compare(CV_DTREE) )
-        dtree->save( filename );
-    else if( !modelName.compare(CV_BOOST) )
-        boost->save( filename );
-    else if( !modelName.compare(CV_RTREES) )
-        rtrees->save( filename );
+    model->save( filename );
 }
 
 void CV_MLBaseTest::load( const char* filename )
 {
-    if( !modelName.compare(CV_NBAYES) )
-        nbayes = cv::ml::loadNormalBayes( filename );
-    else if( !modelName.compare(CV_KNEAREST) )
-        knearest = cv::ml::loadKNearest( filename );
-    else if( !modelName.compare(CV_SVM) )
-        svm = cv::ml::loadSVM( filename );
-    else if( !modelName.compare(CV_ANN) )
-        ann = cv::ml::loadANN_MLP( filename );
-    else if( !modelName.compare(CV_DTREE) )
-        dtree = cv::ml::loadDTree( filename );
-    else if( !modelName.compare(CV_BOOST) )
-        boost = cv::ml::loadBoost( filename );
-    else if( !modelName.compare(CV_RTREES) )
-        rtrees = cv::ml::loadRTrees( filename );
+    if( modelName == CV_NBAYES )
+        model = StatModel::load<NormalBayesClassifier>( filename );
+    else if( modelName == CV_KNEAREST )
+        model = StatModel::load<KNearest>( filename );
+    else if( modelName == CV_SVM )
+        model = StatModel::load<SVM>( filename );
+    else if( modelName == CV_ANN )
+        model = StatModel::load<ANN_MLP>( filename );
+    else if( modelName == CV_DTREE )
+        model = StatModel::load<DTrees>( filename );
+    else if( modelName == CV_BOOST )
+        model = StatModel::load<Boost>( filename );
+    else if( modelName == CV_RTREES )
+        model = StatModel::load<RTrees>( filename );
     else
         CV_Error( CV_StsNotImplemented, "invalid stat model name");
 }

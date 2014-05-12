@@ -52,28 +52,49 @@ Mat TrainData::getSubVector(const Mat& vec, const Mat& idx)
 {
     if( idx.empty() )
         return vec;
-    int i, n = idx.checkVector(1, CV_32S);
+    int i, j, n = idx.checkVector(1, CV_32S);
     int type = vec.type();
-    CV_Assert( n >= 0 && (vec.cols == 1 || vec.rows == 1) && (type == CV_32F || type == CV_64F) );
-    int m = vec.cols + vec.rows - 1;
-    Mat subvec;
-    if( vec.cols == m )
-        subvec.create(1, n, type);
+    CV_Assert( type == CV_32F || type == CV_64F );
+    int dims = 1, m;
+
+    if( vec.cols == 1 || vec.rows == 1 )
+    {
+        dims = 1;
+        m = vec.cols + vec.rows - 1;
+    }
     else
-        subvec.create(n, 1, type);
+    {
+        dims = vec.cols;
+        m = vec.rows;
+    }
+
+    Mat subvec;
+
+    if( vec.cols == m )
+        subvec.create(dims, n, type);
+    else
+        subvec.create(n, dims, type);
     if( type == CV_32F )
         for( i = 0; i < n; i++ )
         {
             int k = idx.at<int>(i);
             CV_Assert( 0 <= k && k < m );
-            subvec.at<float>(i) = vec.at<float>(k);
+            if( dims == 1 )
+                subvec.at<float>(i) = vec.at<float>(k);
+            else
+                for( j = 0; j < dims; j++ )
+                    subvec.at<float>(i, j) = vec.at<float>(k, j);
         }
     else
         for( i = 0; i < n; i++ )
         {
             int k = idx.at<int>(i);
             CV_Assert( 0 <= k && k < m );
-            subvec.at<double>(i) = vec.at<double>(k);
+            if( dims == 1 )
+                subvec.at<double>(i) = vec.at<double>(k);
+            else
+                for( j = 0; j < dims; j++ )
+                    subvec.at<double>(i, j) = vec.at<double>(k, j);
         }
     return subvec;
 }
@@ -83,6 +104,7 @@ class TrainDataImpl : public TrainData
 public:
     TrainDataImpl()
     {
+        file = 0;
         clear();
     }
 
@@ -189,7 +211,8 @@ public:
         missing = _missing.getMat();
 
         int nsamples = layout == ROW_SAMPLE ? samples.rows : samples.cols;
-        int nvars = layout == ROW_SAMPLE ? samples.cols : samples.rows;
+        int ninputvars = layout == ROW_SAMPLE ? samples.cols : samples.rows;
+        int i, noutputvars = 0;
 
         CV_Assert( samples.type() == CV_32F || samples.type() == CV_32S );
 
@@ -206,38 +229,61 @@ public:
         {
             CV_Assert( sampleWeights.checkVector(1, CV_32F, true) == nsamples );
         }
+        else
+        {
+            sampleWeights = Mat::ones(nsamples, 1, CV_32F);
+        }
 
         if( !varIdx.empty() )
         {
             CV_Assert( (varIdx.checkVector(1, CV_32S, true) > 0 &&
-                       checkRange(varIdx, true, 0, 0, nvars-1)) ||
-                       varIdx.checkVector(1, CV_8U, true) == nvars );
+                       checkRange(varIdx, true, 0, 0, ninputvars)) ||
+                       varIdx.checkVector(1, CV_8U, true) == ninputvars );
             if( varIdx.type() == CV_8U )
                 varIdx = convertMaskToIdx(varIdx);
         }
 
-        /*if( !responses.empty() )
+        if( !responses.empty() )
         {
-            if( )
-            CV_Assert(
+            CV_Assert( responses.type() == CV_32F || responses.type() == CV_32S );
+            if( (responses.cols == 1 || responses.rows == 1) && (int)responses.total() == nsamples )
+                noutputvars = 1;
+            else
+            {
+                CV_Assert( (layout == ROW_SAMPLE && responses.rows == nsamples) ||
+                           (layout == COL_SAMPLE && responses.cols == nsamples) );
+                noutputvars = layout == ROW_SAMPLE ? responses.cols : responses.rows;
+            }
+            if( !responses.isContinuous() || (layout == COL_SAMPLE && noutputvars > 1) )
+            {
+                Mat temp;
+                transpose(responses, temp);
+                responses = temp;
+            }
+        }
 
-                       (responses.checkVector(1, CV_32S, true) == nsamples ||
-                       responses.checkVector(1, CV_32F, true) == nsamples) );
-        }*/
+        int nvars = ninputvars + noutputvars;
 
         if( !varType.empty() )
         {
-            CV_Assert( varType.checkVector(1, CV_8U, true) == nvars+1 &&
-                      checkRange(varType, true, 0, VAR_ORDERED, VAR_CATEGORICAL) );
+            CV_Assert( varType.checkVector(1, CV_8U, true) == nvars &&
+                       checkRange(varType, true, 0, VAR_ORDERED, VAR_CATEGORICAL+1) );
         }
         else
         {
-            varType.create(1, nvars+1, CV_8U);
+            varType.create(1, nvars, CV_8U);
             varType = Scalar::all(VAR_ORDERED);
-            varType.at<uchar>(nvars) = responses.type() < CV_32F ? VAR_CATEGORICAL : VAR_ORDERED;
+            if( noutputvars == 1 )
+                varType.at<uchar>(ninputvars) = responses.type() < CV_32F ? VAR_CATEGORICAL : VAR_ORDERED;
         }
 
-        if( varType.at<uchar>(nvars) == VAR_CATEGORICAL )
+        if( noutputvars > 1 )
+        {
+            for( i = 0; i < noutputvars; i++ )
+                CV_Assert( varType.at<uchar>(ninputvars + i) == VAR_ORDERED );
+        }
+
+        if( varType.at<uchar>(ninputvars) == VAR_CATEGORICAL )
             preprocessCategorical(responses, normCatResponses, classLabels, classCounters);
 
         if( !missing.empty() )
@@ -294,7 +340,7 @@ public:
 
         std::sort(idx, idx + n, CmpByIdx(idata, istep));
 
-        int clscount = 0;
+        int clscount = 1;
         for( i = 1; i < n; i++ )
             clscount += idata[idx[i]*istep] != idata[idx[i-1]*istep];
 
@@ -323,7 +369,8 @@ public:
         counters.at<int>(clslabel) = i - previdx;
     }
 
-    bool loadCSV(const String& filename, int headerLines, int responseIdx,
+    bool loadCSV(const String& filename, int headerLines,
+                 int responseStartIdx, int responseEndIdx,
                  const String& varTypeSpec, char delimiter, char missch)
     {
         const int M = 1000000;
@@ -345,7 +392,8 @@ public:
         bool haveMissed = false;
         char* buf = &_buf[0];
 
-        int i, ridx = responseIdx, ninputvars = 0;
+        int i, ridx0 = responseStartIdx, ridx1 = responseEndIdx;
+        int ninputvars = 0, noutputvars = 0;
 
         samples.release();
 
@@ -401,8 +449,11 @@ public:
                 else
                     vtypes = rowtypes;
 
-                ridx = ridx >= 0 ? ridx : ridx == -1 ? nvars - 1 : -1;
-                ninputvars = nvars - (ridx >= 0);
+                ridx0 = ridx0 >= 0 ? ridx0 : ridx0 == -1 ? nvars - 1 : -1;
+                ridx1 = ridx1 >= 0 ? ridx1 : ridx0 >= 0 ? ridx0+1 : -1;
+                CV_Assert(ridx1 > ridx0);
+                noutputvars = ridx0 >= 0 ? ridx1 - ridx0 : 0;
+                ninputvars = nvars - noutputvars;
             }
             else
                 CV_Assert( nvars == (int)rowvals.size() );
@@ -414,12 +465,12 @@ public:
                            (varTypesSet && (vtypes[i] == rowtypes[i] || rowtypes[i] == VAR_ORDERED)) );
             }
 
-            if( ridx >= 0 )
+            if( ridx0 >= 0 )
             {
-                for( i = ridx; i < nvars-1; i++ )
-                    std::swap(rowvals[i], rowvals[i+1]);
-                float rval = rowvals[nvars-1];
-                allresponses.push_back(rval);
+                for( i = ridx1; i < nvars; i++ )
+                    std::swap(rowvals[i], rowvals[i-noutputvars]);
+                for( i = ninputvars; i < nvars; i++ )
+                    allresponses.push_back(rowvals[i]);
                 rowvals.pop_back();
             }
             Mat rmat(1, ninputvars, CV_32F, &rowvals[0]);
@@ -435,13 +486,20 @@ public:
         if( haveMissed )
             compare(samples, MISSED_VAL, missing, CMP_EQ);
 
-        if( ridx >= 0 )
+        if( ridx0 >= 0 )
         {
-            for( i = ridx; i < nvars-1; i++ )
-                std::swap(vtypes[i], vtypes[i+1]);
+            for( i = ridx1; i < nvars; i++ )
+                std::swap(vtypes[i], vtypes[i-noutputvars]);
+            if( noutputvars > 1 )
+            {
+                for( i = ninputvars; i < nvars; i++ )
+                    if( vtypes[i] == VAR_CATEGORICAL )
+                        CV_Error(CV_StsBadArg,
+                                 "If responses are vector values, not scalars, they must be marked as ordered responses");
+            }
         }
 
-        if( !varTypesSet && vtypes[ninputvars] == VAR_ORDERED )
+        if( !varTypesSet && noutputvars == 1 && vtypes[ninputvars] == VAR_ORDERED )
         {
             for( i = 0; i < nsamples; i++ )
                 if( allresponses[i] != cvRound(allresponses[i]) )
@@ -450,11 +508,13 @@ public:
                 vtypes[ninputvars] = VAR_CATEGORICAL;
         }
 
-        Mat(allresponses).copyTo(responses);
+        Mat(nsamples, noutputvars, CV_32F, &allresponses[0]).copyTo(responses);
         Mat(vtypes).copyTo(varType);
 
         if( vtypes[ninputvars] == VAR_CATEGORICAL )
             preprocessCategorical(responses, normCatResponses, classLabels, classCounters);
+
+        sampleWeights = Mat::ones(nsamples, 1, CV_32F);
 
         return true;
     }
@@ -535,7 +595,7 @@ public:
                             ptr = stopstring + 1;
                             CV_Assert( 0 <= b1 && b1 <= b2 && b2 < nvars );
                             for (int i = b1; i <= b2; i++)
-                                varType.at<uchar>(i) = (uchar)tp;
+                                vtypes[i] = (uchar)tp;
                             specCounter += b2 - b1 + 1;
                         }
                         else
@@ -659,20 +719,22 @@ public:
 };
 
 
-Ptr<TrainData> loadDataFromCSV(const String& filename,
-                               int headerLines, int responseIdx,
-                               const String& varTypeSpec,
-                               char delimiter, char missch)
+Ptr<TrainData> TrainData::loadFromCSV(const String& filename,
+                                      int headerLines,
+                                      int responseStartIdx,
+                                      int responseEndIdx,
+                                      const String& varTypeSpec,
+                                      char delimiter, char missch)
 {
     Ptr<TrainDataImpl> td = makePtr<TrainDataImpl>();
-    if(!td->loadCSV(filename, headerLines, responseIdx, varTypeSpec, delimiter, missch))
+    if(!td->loadCSV(filename, headerLines, responseStartIdx, responseEndIdx, varTypeSpec, delimiter, missch))
         td.release();
     return td;
 }
 
-Ptr<TrainData> createTrainData(InputArray samples, int layout, InputArray responses,
-                               InputArray varIdx, InputArray sampleIdx, InputArray sampleWeights,
-                               InputArray varType)
+Ptr<TrainData> TrainData::create(InputArray samples, int layout, InputArray responses,
+                                 InputArray varIdx, InputArray sampleIdx, InputArray sampleWeights,
+                                 InputArray varType)
 {
     Ptr<TrainDataImpl> td = makePtr<TrainDataImpl>();
     td->setData(samples, layout, responses, varIdx, sampleIdx, sampleWeights, varType, noArray());

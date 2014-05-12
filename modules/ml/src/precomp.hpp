@@ -94,6 +94,32 @@ namespace ml
             vec[i] = i;
     }
 
+    static inline void writeTermCrit(FileStorage& fs, const TermCriteria& termCrit)
+    {
+        if( (termCrit.type & TermCriteria::EPS) != 0 )
+            fs << "epsilon" << termCrit.epsilon;
+        if( (termCrit.type & TermCriteria::COUNT) != 0 )
+            fs << "iterations" << termCrit.maxCount;
+    }
+
+    static inline TermCriteria readTermCrit(const FileNode& fn)
+    {
+        TermCriteria termCrit;
+        double epsilon = (double)fn["epsilon"];
+        if( epsilon > 0 )
+        {
+            termCrit.type |= TermCriteria::EPS;
+            termCrit.epsilon = epsilon;
+        }
+        int iters = (double)fn["iterations"];
+        if( iters > 0 )
+        {
+            termCrit.type |= TermCriteria::COUNT;
+            termCrit.maxCount = iters;
+        }
+        return termCrit;
+    }
+
     class DTreesImpl : public DTrees
     {
     public:
@@ -175,6 +201,11 @@ namespace ml
         virtual ~DTreesImpl();
         virtual void clear();
 
+        String getDefaultModelName() const { return "opencv_ml_dtree"; }
+        bool isTrained() const { return !roots.empty(); }
+        bool isClassifier() const { return _isClassifier; }
+        int getVarCount() const { return varType.empty() ? 0 : (int)(varType.size() - 1); }
+
         virtual void setParams(const Params& _params);
         virtual void startTraining( const Ptr<TrainData>& trainData, int flags );
         virtual void endTraining();
@@ -234,7 +265,7 @@ namespace ml
         vector<int> subsets;
         vector<float> classLabels;
         bool haveCatVars;
-        bool isClassifier;
+        bool _isClassifier;
         
         Ptr<WorkData> w;
     };

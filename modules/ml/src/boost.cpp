@@ -84,7 +84,8 @@ class DTreesImplForBoost : public DTreesImpl
 {
 public:
     DTreesImplForBoost() {}
-    
+    virtual ~DTreesImplForBoost() {}
+
     void setBParams(const Boost::Params& p)
     {
         bparams = p;
@@ -106,7 +107,7 @@ public:
 
         if( bparams.boostType != Boost::DISCRETE )
         {
-            isClassifier = false;
+            _isClassifier = false;
             int i, n = (int)w->cat_responses.size();
             w->ord_responses.resize(n);
 
@@ -430,6 +431,9 @@ class BoostImpl : public Boost
 {
 public:
     BoostImpl() {}
+    virtual ~BoostImpl() {}
+
+    String getDefaultModelName() const { return "opencv_ml_boost"; }
 
     bool train( const Ptr<TrainData>& trainData, int flags )
     {
@@ -451,8 +455,13 @@ public:
         impl.read(fn);
     }
 
-    void setParams(const Params& p) { impl.setBParams(p); }
-    Params getParams() const { return impl.getBParams(); }
+    void setBParams(const Params& p) { impl.setBParams(p); }
+    Params getBParams() const { return impl.getBParams(); }
+
+    int getVarCount() const { return impl.getVarCount(); }
+
+    bool isTrained() const { return impl.isTrained(); }
+    bool isClassifier() const { return impl.isClassifier(); }
 
     const vector<int>& getRoots() const { return impl.getRoots(); }
     const vector<Node>& getNodes() const { return impl.getNodes(); }
@@ -463,12 +472,10 @@ public:
 };
 
 
-Ptr<Boost> createBoost(const Ptr<TrainData>& trainData, const Boost::Params& params)
+Ptr<Boost> Boost::create(const Params& params)
 {
     Ptr<BoostImpl> p = makePtr<BoostImpl>();
-    p->setParams(params);
-    if( !p->train(trainData, 0) )
-        p.release();
+    p->setBParams(params);
     return p;
 }
 

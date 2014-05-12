@@ -43,8 +43,11 @@
 namespace cv {
 namespace ml {
 
+NormalBayesClassifier::~NormalBayesClassifier() {}
+
 class NormalBayesClassifierImpl : public NormalBayesClassifier
 {
+public:
     NormalBayesClassifierImpl()
     {
         nallvars = 0;
@@ -124,6 +127,8 @@ class NormalBayesClassifierImpl : public NormalBayesClassifier
             }
         }
 
+        Mat vt;
+
         // calculate avg, covariance matrix, c
         for( cls = 0; cls < nclasses; cls++ )
         {
@@ -166,6 +171,7 @@ class NormalBayesClassifierImpl : public NormalBayesClassifier
             }
 
             completeSymm( cov, 1 );
+
             SVD::compute(cov, w, cov_rotate_mats[cls], noArray());
             transpose(cov_rotate_mats[cls], cov_rotate_mats[cls]);
             cv::max(w, min_variation, w);
@@ -435,10 +441,22 @@ class NormalBayesClassifierImpl : public NormalBayesClassifier
         nallvars = 0;
     }
 
+    bool isTrained() const { return !avg.empty(); }
+    bool isClassifier() const { return true; }
+    int getVarCount() const { return nallvars; }
+    String getDefaultModelName() const { return "opencv_ml_nbayes"; }
+
     int nallvars;
     Mat var_idx, cls_labels, c;
     vector<Mat> count, sum, productsum, avg, inv_eigen_values, cov_rotate_mats;
 };
+
+
+Ptr<NormalBayesClassifier> NormalBayesClassifier::create()
+{
+    Ptr<NormalBayesClassifierImpl> p = makePtr<NormalBayesClassifierImpl>();
+    return p;
+}
 
 }
 }

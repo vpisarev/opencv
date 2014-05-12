@@ -131,17 +131,17 @@ public:
     virtual void setTrainTestSplitRatio(float ratio, bool shuffle=true) = 0;
 
     static Mat getSubVector(const Mat& vec, const Mat& idx);
+    static Ptr<TrainData> loadFromCSV(const String& filename,
+                                      int headerLineCount,
+                                      int responseStartIdx=-1,
+                                      int responseEndIdx=-1,
+                                      const String& varTypeSpec=String(),
+                                      char delimiter=',',
+                                      char missch='?');
+    static Ptr<TrainData> create(InputArray samples, int layout, InputArray responses,
+                                 InputArray varIdx=noArray(), InputArray sampleIdx=noArray(),
+                                 InputArray sampleWeights=noArray(), InputArray varType=noArray());
 };
-
-CV_EXPORTS Ptr<TrainData> loadDataFromCSV(const String& filename,
-                                          int headerLineCount, int responseIdx=-1,
-                                          const String& varTypeSpec=String(),
-                                          char delimiter=',',
-                                          char missch='?');
-
-CV_EXPORTS Ptr<TrainData> createTrainData(InputArray samples, int layout, InputArray responses,
-                                          InputArray varIdx, InputArray sampleIdx,
-                                          InputArray sampleWeights, InputArray varType);
 
 
 class CV_EXPORTS_W StatModel : public Algorithm
@@ -151,18 +151,25 @@ public:
     virtual ~StatModel();
     virtual void clear();
 
-    virtual int getVarCount() const;
-    virtual int getSampleCount() const;
+    virtual int getVarCount() const = 0;
 
-    virtual bool isTrained() const;
-    virtual bool isRegression() const;
+    virtual bool isTrained() const = 0;
+    virtual bool isClassifier() const = 0;
 
-    virtual bool train( const Ptr<TrainData>& trainData, int flags=0 );
+    virtual bool train( const Ptr<TrainData>& trainData, int flags=0 ) = 0;
     virtual float calcError( const Ptr<TrainData>& data, bool test, OutputArray resp ) const;
     virtual float predict( InputArray samples, OutputArray results, int flags=0 ) const = 0;
 
+    template<typename _Tp> static Ptr<_Tp> load(const String& filename)
+    {
+        FileStorage fs(filename, FileStorage::READ);
+        Ptr<_Tp> p = _Tp::create();
+        p->read(fs.getFirstTopLevelNode());
+        return p->isTrained() ? p : Ptr<_Tp>();
+    }
+
     virtual void save(const String& filename) const;
-    virtual String defaultModelName() const;
+    virtual String getDefaultModelName() const = 0;
 };
 
 /****************************************************************************************\
@@ -179,11 +186,10 @@ class CV_EXPORTS_W NormalBayesClassifier : public StatModel
 public:
     virtual ~NormalBayesClassifier();
     virtual float predictProb( InputArray inputs, OutputArray outputs,
-                               OutputArray outputProbs, int flags=0 ) const;
-};
+                               OutputArray outputProbs, int flags=0 ) const = 0;
 
-CV_EXPORTS_W Ptr<NormalBayesClassifier> createNormalBayesClassifier(InputArray trainData, InputArray responses,
-                                                                    InputArray varIdx, InputArray sampleIdx);
+    static Ptr<NormalBayesClassifier> create();
+};
 
 /****************************************************************************************\
 *                          K-Nearest Neighbour Classifier                                *
@@ -193,18 +199,14 @@ CV_EXPORTS_W Ptr<NormalBayesClassifier> createNormalBayesClassifier(InputArray t
 class CV_EXPORTS_W KNearest : public StatModel
 {
 public:
+    virtual void setDefaultK(int k) = 0;
+    virtual int getDefaultK() const = 0;
     virtual float findNearest( InputArray samples, int k,
                                OutputArray results,
-                               OutputArray neighbors=noArray(),
                                OutputArray neighborResponses=noArray(),
-                               OutputArray dist=noArray() ) const;
-    int getMaxK() const;
-    virtual bool isRegression() const;
+                               OutputArray dist=noArray() ) const = 0;
+    static Ptr<KNearest> create(bool isclassifier=true);
 };
-
-CV_EXPORTS_W Ptr<KNearest> createKNearest(InputArray trainData, InputArray responses,
-                                          InputArray sampleIdx,
-                                          bool isRegression=false, int maxK=32);
 
 /****************************************************************************************\
 *                                   Support Vector Machines                              *
@@ -238,7 +240,7 @@ public:
     {
     public:
         virtual ~Kernel();
-        virtual int getType() const;
+        virtual int getType() const = 0;
         virtual void calc( int vcount, int n, const float* vecs, const float* another, float* results ) = 0;
     };
 
@@ -253,36 +255,30 @@ public:
 
     virtual ~SVM();
 
-    CV_WRAP virtual Mat getSupportVectors() const;
-    virtual Params getParams() const;
-    virtual void getDecisionFunction(int i, OutputArray alpha, OutputArray svidx) const;
+    virtual bool trainAuto( const Ptr<TrainData>& data, int kFold = 10,
+                    ParamGrid Cgrid = SVM::getDefaultGrid(SVM::C),
+                    ParamGrid gammaGrid  = SVM::getDefaultGrid(SVM::GAMMA),
+                    ParamGrid pGrid      = SVM::getDefaultGrid(SVM::P),
+                    ParamGrid nuGrid     = SVM::getDefaultGrid(SVM::NU),
+                    ParamGrid coeffGrid  = SVM::getDefaultGrid(SVM::COEF),
+                    ParamGrid degreeGrid = SVM::getDefaultGrid(SVM::DEGREE),
+                    bool balanced=false) = 0;
+
+    CV_WRAP virtual Mat getSupportVectors() const = 0;
+
+    virtual void setParams(const Params& p, const Ptr<Kernel>& customKernel=Ptr<Kernel>()) = 0;
+    virtual Params getParams() const = 0;
+    virtual Ptr<Kernel> getKernel() const = 0;
+    virtual double getDecisionFunction(int i, OutputArray alpha, OutputArray svidx) const = 0;
 
     static ParamGrid getDefaultGrid( int param_id );
+    static Ptr<SVM> create(const Params& p=Params(), const Ptr<Kernel>& customKernel=Ptr<Kernel>());
 };
-
-CV_EXPORTS Ptr<SVM::Kernel> createStandardSVMKernel(const SVM::Params& params);
-
-CV_EXPORTS_W Ptr<SVM> createSVM( InputArray trainData, InputArray responses,
-                                 InputArray varIdx, InputArray sampleIdx,
-                                 const SVM::Params& params,
-                                 const Ptr<SVM::Kernel>& kernel=Ptr<SVM::Kernel>() );
-
-CV_EXPORTS_W Ptr<SVM> createSVMAuto( InputArray trainData, InputArray responses,
-                                     InputArray varIdx, InputArray sampleIdx,
-                                     const SVM::Params& params, int kFold = 10,
-                                     ParamGrid Cgrid = SVM::getDefaultGrid(SVM::C),
-                                     ParamGrid gammaGrid  = SVM::getDefaultGrid(SVM::GAMMA),
-                                     ParamGrid pGrid      = SVM::getDefaultGrid(SVM::P),
-                                     ParamGrid nuGrid     = SVM::getDefaultGrid(SVM::NU),
-                                     ParamGrid coeffGrid  = SVM::getDefaultGrid(SVM::COEF),
-                                     ParamGrid degreeGrid = SVM::getDefaultGrid(SVM::DEGREE),
-                                     bool balanced=false);
-CV_EXPORTS Ptr<SVM> loadSVM( const String& filename );
 
 /****************************************************************************************\
 *                              Expectation - Maximization                                *
 \****************************************************************************************/
-class CV_EXPORTS_W EM : public Algorithm
+class CV_EXPORTS_W EM : public StatModel
 {
 public:
     // Type of covariation matrices
@@ -305,34 +301,38 @@ public:
         TermCriteria termCrit;
     };
 
+    virtual void setParams(const Params& p) = 0;
+    virtual Params getParams() const = 0;
     virtual Mat getWeights() const = 0;
     virtual Mat getMeans() const = 0;
     virtual void getCovs(std::vector<Mat>& covs) const = 0;
 
     CV_WRAP virtual Vec2d predict2(InputArray sample, OutputArray probs) const = 0;
+
+    virtual bool train( const Ptr<TrainData>& trainData, int flags=0 ) = 0;
+
+    static Ptr<EM> train(InputArray samples,
+                          OutputArray logLikelihoods=noArray(),
+                          OutputArray labels=noArray(),
+                          OutputArray probs=noArray(),
+                          const Params& params=Params());
+
+    static Ptr<EM> train_startWithE(InputArray samples, InputArray means0,
+                                     InputArray covs0=noArray(),
+                                     InputArray weights0=noArray(),
+                                     OutputArray logLikelihoods=noArray(),
+                                     OutputArray labels=noArray(),
+                                     OutputArray probs=noArray(),
+                                     const Params& params=Params());
+
+    static Ptr<EM> train_startWithM(InputArray samples, InputArray probs0,
+                                     OutputArray logLikelihoods=noArray(),
+                                     OutputArray labels=noArray(),
+                                     OutputArray probs=noArray(),
+                                     const Params& params=Params());
+    static Ptr<EM> create(const Params& params=Params());
 };
 
-CV_EXPORTS_W Ptr<EM> createEM(InputArray samples,
-                              OutputArray logLikelihoods=noArray(),
-                              OutputArray labels=noArray(),
-                              OutputArray probs=noArray(),
-                              const EM::Params& params=EM::Params());
-
-CV_EXPORTS_W Ptr<EM> createEM_startWithE(InputArray samples, InputArray means0,
-                                         InputArray covs0=noArray(),
-                                         InputArray weights0=noArray(),
-                                         OutputArray logLikelihoods=noArray(),
-                                         OutputArray labels=noArray(),
-                                         OutputArray probs=noArray(),
-                                         const EM::Params& params=EM::Params());
-
-CV_EXPORTS_W Ptr<EM> createEM_startWithM(InputArray samples, InputArray probs0,
-                                         OutputArray logLikelihoods=noArray(),
-                                         OutputArray labels=noArray(),
-                                         OutputArray probs=noArray(),
-                                         const EM::Params& params=EM::Params());
-
-CV_EXPORTS Ptr<EM> loadEM(const String& filename);
 
 /****************************************************************************************\
 *                                      Decision Tree                                     *
@@ -393,15 +393,16 @@ public:
 
     virtual ~DTrees();
 
+    virtual void setDParams(const Params& p);
+    virtual Params getDParams() const;
+
     virtual const std::vector<int>& getRoots() const = 0;
     virtual const std::vector<Node>& getNodes() const = 0;
     virtual const std::vector<Split>& getSplits() const = 0;
     virtual const std::vector<int>& getSubsets() const = 0;
-};
 
-CV_EXPORTS Ptr<DTrees> createDTree( const Ptr<TrainData>& trainData,
-                                    const DTrees::Params& params );
-CV_EXPORTS Ptr<DTrees> loadDTree( const String& filename );
+    static Ptr<DTrees> create(const Params& params=Params());
+};
 
 /****************************************************************************************\
 *                                   Random Trees Classifier                              *
@@ -425,16 +426,13 @@ public:
         CV_PROP_RW TermCriteria termCrit;
     };
 
-    void setParams(const Params& p);
-    Params getParams() const;
+    virtual void setRParams(const Params& p) = 0;
+    virtual Params getRParams() const = 0;
 
     virtual Mat getVarImportance() const = 0;
+
+    static Ptr<RTrees> create(const Params& params=Params());
 };
-
-
-CV_EXPORTS Ptr<RTrees> createRTrees(const Ptr<TrainData>& trainData,
-                                      const RTrees::Params& params);
-CV_EXPORTS Ptr<DTrees> loadRTrees( const String& filename );
 
 /****************************************************************************************\
 *                                   Boosted tree classifier                              *
@@ -459,12 +457,11 @@ public:
     enum { DISCRETE=0, REAL=1, LOGIT=2, GENTLE=3 };
 
     virtual ~Boost();
-    const Params& getParams() const;
-};
+    virtual Params getBParams() const = 0;
+    virtual void setBParams(const Params& p) = 0;
 
-CV_EXPORTS Ptr<Boost> createBoost(const Ptr<TrainData>& trainData,
-                                  const Boost::Params& params = Boost::Params());
-CV_EXPORTS Ptr<Boost> loadBoost( const String& filename );
+    static Ptr<Boost> create(const Params& params=Params());
+};
 
 /****************************************************************************************\
 *                                   Gradient Boosted Trees                               *
@@ -492,10 +489,9 @@ public:
 
     virtual float predictSerial( InputArray samples,
                                  OutputArray weakResponses, int flags) const;
-};
 
-CV_EXPORTS_W Ptr<GBTrees> createGBTrees(const Ptr<TrainData>& trainData,
-                                        const GBTrees::Params& params=GBTrees::Params());
+    static Ptr<GBTrees> create(const Params& p);
+};
 
 /****************************************************************************************\
 *                              Artificial Neural Networks (ANN)                          *
@@ -533,14 +529,14 @@ public:
 
     virtual Mat getLayerSizes() const = 0;
     virtual Mat getWeights(int layerIdx) const = 0;
-};
+    virtual void setParams(const Params& p) = 0;
+    virtual Params getParams() const = 0;
 
-CV_EXPORTS_W Ptr<ANN_MLP> createANN_MLP(InputArray layerSizes,
-                                        InputArray inputs, InputArray outputs,
-                                        InputArray sampleWeights, InputArray sampleIdx,
-                                        ANN_MLP::Params params, int flags,
-                                        int activateFunc=ANN_MLP::SIGMOID_SYM,
-                                        double fparam1=0, double fparam2=0);
+    static Ptr<ANN_MLP> create(InputArray layerSizes=noArray(),
+                               const Params& params=Params(),
+                               int activateFunc=ANN_MLP::SIGMOID_SYM,
+                               double fparam1=0, double fparam2=0);
+};
 
 /****************************************************************************************\
 *                           Auxilary functions declarations                              *

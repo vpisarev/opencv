@@ -50,6 +50,17 @@ using std::vector;
 
 DTrees::~DTrees() {}
 
+void DTrees::setDParams(const DTrees::Params&)
+{
+    CV_Error(CV_StsNotImplemented, "");
+}
+
+DTrees::Params DTrees::getDParams() const
+{
+    CV_Error(CV_StsNotImplemented, "");
+    return DTrees::Params();
+}
+
 DTrees::Params::Params()
 {
     maxDepth = INT_MAX;
@@ -299,7 +310,7 @@ int DTreesImpl::addNodeAndTrySplit( int parent, const vector<int>& sidx )
 
     if( n <= params.minSampleCount || node.depth >= params.maxDepth )
         can_split = false;
-    else if( isClassifier )
+    else if( _isClassifier )
     {
         int nz = countNonZero(w->cls_count);
         if( nz <= 1 )
@@ -342,14 +353,14 @@ int DTreesImpl::findBestSplit( const vector<int>& _sidx )
         int mi = catCount[vi];
         if( mi <= 0 )
         {
-            if( isClassifier )
+            if( _isClassifier )
                 split = findSplitOrdClass(vi, _sidx, best_split.quality);
             else
                 split = findSplitOrdReg(vi, _sidx, best_split.quality);
         }
         else
         {
-            if( isClassifier )
+            if( _isClassifier )
                 split = findSplitCatClass(vi, _sidx, best_split.quality, subset);
             else
                 split = findSplitCatReg(vi, _sidx, best_split.quality, subset);
@@ -396,7 +407,7 @@ void DTreesImpl::calcValue( int nidx, const vector<int>& _sidx )
         w->cv_node_error.resize(sz + cv_n);
     }
 
-    if( isClassifier )
+    if( _isClassifier )
     {
         // in case of classification tree:
         //  * node value is the label of the class that has the largest weight in the node.
@@ -1094,7 +1105,7 @@ int DTreesImpl::pruneCV( int root )
 
     int ti, tree_count = 0, j, cv_n = params.CVFolds, n = w->wnodes[root].sample_count;
     // currently, 1SE for regression is not implemented
-    bool use_1se = params.use1SERule != 0 && isClassifier;
+    bool use_1se = params.use1SERule != 0 && _isClassifier;
     double min_err = 0, min_err_se = 0;
     int min_idx = -1;
 
@@ -1276,7 +1287,7 @@ float DTreesImpl::predictTrees( const Range& range, const Mat& sample, int flags
 
     if( predictType == PREDICT_AUTO )
     {
-        predictType = !isClassifier || (classLabels.size() == 2 && (flags & RAW_OUTPUT) != 0) ?
+        predictType = !_isClassifier || (classLabels.size() == 2 && (flags & RAW_OUTPUT) != 0) ?
             PREDICT_SUM : PREDICT_MAX_VOTE;
     }
 
@@ -1375,7 +1386,7 @@ float DTreesImpl::predict( InputArray _samples, OutputArray _results, int flags 
     bool needresults = _results.needed();
     float retval = 0.f;
 
-    if( isClassifier && (flags & PREDICT_MASK) == PREDICT_MAX_VOTE )
+    if( _isClassifier && (flags & PREDICT_MASK) == PREDICT_MAX_VOTE )
         rtype = CV_32S;
 
     if( needresults )
@@ -1406,7 +1417,7 @@ void DTreesImpl::writeTrainingParams(FileStorage& fs) const
 {
     fs << "use_surrogates" << (params0.useSurrogates ? 1 : 0);
 
-    if( isClassifier )
+    if( _isClassifier )
     {
         fs << "max_categories" << params0.maxCategories;
     }
@@ -1428,7 +1439,7 @@ void DTreesImpl::writeTrainingParams(FileStorage& fs) const
 
 void DTreesImpl::writeParams(FileStorage& fs) const
 {
-    fs << "is_classifier" << isClassifier;
+    fs << "is_classifier" << _isClassifier;
     fs << "var_all" << (int)varType.size();
     fs << "var_count" << getVarCount();
 
@@ -1509,7 +1520,7 @@ void DTreesImpl::writeNode( FileStorage& fs, int nidx, int depth ) const
     fs << "depth" << depth;
     fs << "value" << node.value;
 
-    if( isClassifier )
+    if( _isClassifier )
         fs << "norm_class_idx" << node.classIdx;
 
     if( node.split >= 0 )
@@ -1566,7 +1577,7 @@ void DTreesImpl::write( FileStorage& fs ) const
 
 void DTreesImpl::readParams( const FileNode& fn )
 {
-    isClassifier = (int)fn["is_classifier"];
+    _isClassifier = (int)fn["is_classifier"] != 0;
     /*int var_all = (int)fn["var_all"];
     int var_count = (int)fn["var_count"];
     int cat_var_count = (int)fn["cat_var_count"];
@@ -1580,7 +1591,7 @@ void DTreesImpl::readParams( const FileNode& fn )
     {
         params0.useSurrogates = (int)tparams_node["use_surrogates"] != 0;
 
-        if( isClassifier )
+        if( _isClassifier )
         {
             params0.maxCategories = (int)tparams_node["max_categories"];
         }
@@ -1677,7 +1688,7 @@ int DTreesImpl::readNode( const FileNode& fn )
     Node node;
     node.value = (double)fn["value"];
 
-    if( isClassifier )
+    if( _isClassifier )
         node.classIdx = (int)fn["norm_class_idx"];
 
     FileNode sfn = fn["splits"];
@@ -1746,12 +1757,10 @@ void DTreesImpl::read( const FileNode& fn )
     roots.push_back(root);
 }
 
-Ptr<DTrees> createDTree(const Ptr<TrainData>& trainData, const DTrees::Params& params)
+Ptr<DTrees> DTrees::create(const DTrees::Params& params)
 {
     Ptr<DTreesImpl> p = makePtr<DTreesImpl>();
-    p->setParams(params);
-    if( !p->train(trainData, 0) )
-        p.release();
+    p->setDParams(params);
     return p;
 }
     

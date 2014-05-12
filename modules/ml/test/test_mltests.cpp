@@ -53,6 +53,7 @@ int CV_AMLTest::run_test_case( int testCaseIdx )
 {
     int code = cvtest::TS::OK;
     code = prepare_test_case( testCaseIdx );
+    int ntrainSamples = data->getNTrainSamples();
 
     if (code == cvtest::TS::OK)
     {
@@ -65,7 +66,7 @@ int CV_AMLTest::run_test_case( int testCaseIdx )
         for (int k = 0; k < icount; k++)
         {
 #endif
-            data.mix_train_and_test_idx();
+            data->setTrainTestSplit(ntrainSamples, true);
             code = train( testCaseIdx );
 #ifdef GET_STAT
             float case_result = get_error();
@@ -125,6 +126,6 @@ int CV_AMLTest::validate_test_results( int testCaseIdx )
 TEST(ML_DTree, regression) { CV_AMLTest test( CV_DTREE ); test.safe_run(); }
 TEST(ML_Boost, regression) { CV_AMLTest test( CV_BOOST ); test.safe_run(); }
 TEST(ML_RTrees, regression) { CV_AMLTest test( CV_RTREES ); test.safe_run(); }
-TEST(ML_ERTrees, regression) { CV_AMLTest test( CV_ERTREES ); test.safe_run(); }
+TEST(DISABLED_ML_ERTrees, regression) { CV_AMLTest test( CV_ERTREES ); test.safe_run(); }
 
 /* End of file. */

@@ -312,8 +312,9 @@ void CV_KNearestTest::run( int /*start_from*/ )
     generateData( testData, testLabels, sizes, means, covs, CV_32FC1, CV_32FC1 );
 
     int code = cvtest::TS::OK;
-    Ptr<KNearest> knearest = cv::ml::createKNearest(trainData, trainLabels, noArray(), false, 4);;
-    knearest->findNearest( testData, 4, bestLabels, noArray(), noArray(), noArray());
+    Ptr<KNearest> knearest = KNearest::create(false);
+    knearest->train(TrainData::create(trainData, cv::ml::ROW_SAMPLE, trainLabels), 0);;
+    knearest->findNearest( testData, 4, bestLabels);
     float err;
     if( !calcErr( bestLabels, testLabels, sizes, err, true ) )
     {
@@ -378,13 +379,13 @@ int CV_EMTest::runCase( int caseIndex, const EM_Params& params,
     Ptr<EM> em;
     EM::Params emp(params.nclusters, params.covMatType, params.termCrit);
     if( params.startStep == EM::START_AUTO_STEP )
-        em = cv::ml::createEM( trainData, noArray(), labels, noArray(), emp );
+        em = EM::train( trainData, noArray(), labels, noArray(), emp );
     else if( params.startStep == EM::START_E_STEP )
-        em = cv::ml::createEM_startWithE( trainData, *params.means, *params.covs,
-                                         *params.weights, noArray(), labels, noArray(), emp );
+        em = EM::train_startWithE( trainData, *params.means, *params.covs,
+                                   *params.weights, noArray(), labels, noArray(), emp );
     else if( params.startStep == EM::START_M_STEP )
-        em = cv::ml::createEM_startWithM( trainData, *params.probs,
-                                          noArray(), labels, noArray(), emp );
+        em = EM::train_startWithM( trainData, *params.probs,
+                                   noArray(), labels, noArray(), emp );
 
     // check train error
     if( !calcErr( labels, trainLabels, sizes, err , false, false ) )
@@ -524,7 +525,7 @@ protected:
 
         Mat labels;
 
-        Ptr<EM> em = cv::ml::createEM(samples, noArray(), labels, noArray(), EM::Params(nclusters));
+        Ptr<EM> em = EM::train(samples, noArray(), labels, noArray(), EM::Params(nclusters));
 
         Mat firstResult(samples.rows, 1, CV_32SC1);
         for( int i = 0; i < samples.rows; i++)
@@ -552,7 +553,7 @@ protected:
         // Read in
         try
         {
-            em = cv::ml::loadEM(filename);
+            em = StatModel::load<EM>(filename);
         }
         catch(...)
         {
@@ -588,7 +589,7 @@ protected:
         // 2. predict classID using Bayes classifier for estimated distributions.
 
         string dataFilename = string(ts->get_data_path()) + "spambase.data";
-        Ptr<TrainData> data = cv::ml::loadDataFromCSV(dataFilename, 0);
+        Ptr<TrainData> data = TrainData::loadFromCSV(dataFilename, 0);
 
         if( data.empty() )
         {
@@ -625,8 +626,8 @@ protected:
                     samples1.push_back(sample);
             }
         }
-        Ptr<EM> model0 = cv::ml::createEM(samples0, noArray(), noArray(), noArray(), EM::Params(3));
-        Ptr<EM> model1 = cv::ml::createEM(samples1, noArray(), noArray(), noArray(), EM::Params(3));
+        Ptr<EM> model0 = EM::train(samples0, noArray(), noArray(), noArray(), EM::Params(3));
+        Ptr<EM> model1 = EM::train(samples1, noArray(), noArray(), noArray(), EM::Params(3));
 
         Mat trainConfusionMat(2, 2, CV_32SC1, Scalar(0)),
             testConfusionMat(2, 2, CV_32SC1, Scalar(0));
