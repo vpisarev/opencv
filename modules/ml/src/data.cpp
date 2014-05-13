@@ -54,7 +54,7 @@ Mat TrainData::getSubVector(const Mat& vec, const Mat& idx)
         return vec;
     int i, j, n = idx.checkVector(1, CV_32S);
     int type = vec.type();
-    CV_Assert( type == CV_32F || type == CV_64F );
+    CV_Assert( type == CV_32S || type == CV_32F || type == CV_64F );
     int dims = 1, m;
 
     if( vec.cols == 1 || vec.rows == 1 )
@@ -74,7 +74,18 @@ Mat TrainData::getSubVector(const Mat& vec, const Mat& idx)
         subvec.create(dims, n, type);
     else
         subvec.create(n, dims, type);
-    if( type == CV_32F )
+    if( type == CV_32S )
+        for( i = 0; i < n; i++ )
+        {
+            int k = idx.at<int>(i);
+            CV_Assert( 0 <= k && k < m );
+            if( dims == 1 )
+                subvec.at<int>(i) = vec.at<int>(k);
+            else
+                for( j = 0; j < dims; j++ )
+                    subvec.at<int>(i, j) = vec.at<int>(k, j);
+        }
+    else if( type == CV_32F )
         for( i = 0; i < n; i++ )
         {
             int k = idx.at<int>(i);

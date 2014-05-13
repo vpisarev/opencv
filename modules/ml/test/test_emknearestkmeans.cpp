@@ -312,7 +312,7 @@ void CV_KNearestTest::run( int /*start_from*/ )
     generateData( testData, testLabels, sizes, means, covs, CV_32FC1, CV_32FC1 );
 
     int code = cvtest::TS::OK;
-    Ptr<KNearest> knearest = KNearest::create(false);
+    Ptr<KNearest> knearest = KNearest::create(true);
     knearest->train(TrainData::create(trainData, cv::ml::ROW_SAMPLE, trainLabels), 0);;
     knearest->findNearest( testData, 4, bestLabels);
     float err;

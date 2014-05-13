@@ -144,8 +144,8 @@ public:
 
                 Cv32suf si;
                 si.f = (float)s;
-                Cv32suf* dd = (Cv32suf*)(dbuf + testidx*k);
-                float* nr = rbuf + testidx*k;
+                Cv32suf* dd = (Cv32suf*)(&dbuf[testidx*k]);
+                float* nr = &rbuf[testidx*k];
 
                 for( i = k; i > 0; i-- )
                     if( si.i >= dd[i-1].i )
@@ -158,8 +158,8 @@ public:
                     dd[j+1].i = dd[j].i;
                     nr[j+1] = nr[j];
                 }
-                dd[j].i = si.i;
-                nr[j] = rptr[baseidx];
+                dd[i].i = si.i;
+                nr[i] = rptr[baseidx];
             }
         }
 
@@ -310,6 +310,7 @@ public:
 
         findKNearestInvoker invoker(this, k, test_samples, pres, pnr, pd, &result);
         parallel_for_(Range(0, testcount), invoker);
+        //invoker(Range(0, testcount));
         return result;
     }
 

@@ -190,29 +190,32 @@ public:
 
         _layer_sizes.copyTo(layer_sizes);
         int l_count = layer_count();
-        if( l_count <= 0 )
-            CV_Error( CV_StsBadArg, "The array of layer neuron counters must be a non-empty integer vector" );
 
         set_activ_func( _activ_func, _f_param1, _f_param2 );
 
         weights.resize(l_count + 2);
         max_lsize = 0;
 
-        for( int i = 0; i < l_count; i++ )
+        if( l_count > 0 )
         {
-            int n = layer_sizes[i];
-            if( n < 1 + (0 < i && i < l_count-1))
-                CV_Error( CV_StsOutOfRange,
-                         "there should be at least one input and one output "
-                         "and every hidden layer must have more than 1 neuron" );
-            max_lsize = std::max( max_lsize, n );
-            if( i > 0 )
-                weights[i].create(layer_sizes[i-1]+1, n, CV_64F);
-        }
+            for( int i = 0; i < l_count; i++ )
+            {
+                int n = layer_sizes[i];
+                if( n < 1 + (0 < i && i < l_count-1))
+                    CV_Error( CV_StsOutOfRange,
+                             "there should be at least one input and one output "
+                             "and every hidden layer must have more than 1 neuron" );
+                max_lsize = std::max( max_lsize, n );
+                if( i > 0 )
+                    weights[i].create(layer_sizes[i-1]+1, n, CV_64F);
+            }
 
-        weights[0].create(1, layer_sizes.front()*2, CV_64F);
-        weights[l_count].resize(layer_sizes.back()*2);
-        weights[l_count+1].resize(layer_sizes.back()*2);
+            int ninputs = layer_sizes.front();
+            int noutputs = layer_sizes.back();
+            weights[0].create(1, ninputs*2, CV_64F);
+            weights[l_count].create(1, noutputs*2, CV_64F);
+            weights[l_count+1].create(1, noutputs*2, CV_64F);
+        }
     }
 
     float predict( InputArray _inputs, OutputArray _outputs, int ) const
@@ -677,7 +680,7 @@ public:
 
         int iter = params.trainMethod == Params::BACKPROP ?
             train_backprop( inputs, outputs, sw, termcrit ) :
-            iter = train_rprop( inputs, outputs, sw, termcrit );
+            train_rprop( inputs, outputs, sw, termcrit );
 
         return iter;
     }
@@ -842,7 +845,7 @@ public:
         void operator()( const Range& range ) const
         {
             double inv_count = 1./inputs.rows;
-            int ivcount = ann->layer_sizes[0];
+            int ivcount = ann->layer_sizes.front();
             int ovcount = ann->layer_sizes.back();
             int itype = inputs.type(), otype = outputs.type();
             int count = inputs.rows;
@@ -856,7 +859,7 @@ public:
             for( i = 0; i < l_count; i++ )
             {
                 x[i].resize(ann->layer_sizes[i]*dcount0);
-                df[i].resize(ann->layer_sizes[i]);
+                df[i].resize(ann->layer_sizes[i]*dcount0);
             }
 
             for( int si = range.start; si < range.end; si++ )
@@ -976,13 +979,14 @@ public:
             total += layer_sizes[i];
             dw[i].create(weights[i].size(), CV_64F);
             dw[i].setTo(Scalar::all(params.rpDW0));
-            prev_dEdw_sign[i].create(weights[i].size(), CV_8S);
-            dEdw[i].create(weights[i].size(), CV_64F);
+            prev_dEdw_sign[i] = Mat::zeros(weights[i].size(), CV_8S);
+            dEdw[i] = Mat::zeros(weights[i].size(), CV_64F);
         }
 
         int dcount0 = max_buf_size/(2*total);
         dcount0 = std::max( dcount0, 1 );
         dcount0 = std::min( dcount0, count );
+        int chunk_count = (count + dcount0 - 1)/dcount0;
 
         // run rprop loop
         /*
@@ -1009,8 +1013,9 @@ public:
                 dEdw[i].setTo(Scalar::all(0));
 
             // first, iterate through all the samples and compute dEdw
-            parallel_for_(Range(0, count),
-                          RPropLoop(this, inputs, outputs, _sw, dcount0, dEdw, &E));
+            RPropLoop invoker(this, inputs, outputs, _sw, dcount0, dEdw, &E);
+            parallel_for_(Range(0, chunk_count), invoker);
+            //invoker(Range(0, chunk_count));
 
             // now update weights
             for( i = 1; i < l_count; i++ )
@@ -1018,10 +1023,11 @@ public:
                 int n1 = layer_sizes[i-1], n2 = layer_sizes[i];
                 for( int k = 0; k <= n1; k++ )
                 {
+                    CV_Assert(weights[i].size() == Size(n2, n1+1));
                     double* wk = weights[i].ptr<double>(k);
                     double* dwk = dw[i].ptr<double>(k);
                     double* dEdwk = dEdw[i].ptr<double>(k);
-                    char* prevEk = prev_dEdw_sign[i].ptr<char>(k);
+                    schar* prevEk = prev_dEdw_sign[i].ptr<schar>(k);
 
                     for( int j = 0; j < n2; j++ )
                     {
@@ -1047,7 +1053,7 @@ public:
                         }
                         else
                         {
-                            prevEk[j] = (char)s;
+                            prevEk[j] = (schar)s;
                             wk[j] = wval + dval*s;
                         }
                         dEdwk[j] = 0.;
@@ -1120,20 +1126,22 @@ public:
         
         write_params( fs );
 
+        size_t esz = weights[0].elemSize();
+
         fs << "input_scale" << "[";
-        fs.writeRaw("d", weights[0].data, weights[0].total());
+        fs.writeRaw("d", weights[0].data, weights[0].total()*esz);
 
         fs << "]" << "output_scale" << "[";
-        fs.writeRaw("d", weights[l_count].data, weights[l_count].total());
+        fs.writeRaw("d", weights[l_count].data, weights[l_count].total()*esz);
 
         fs << "]" << "inv_output_scale" << "[";
-        fs.writeRaw("d", weights[l_count+1].data, weights[l_count+1].total());
+        fs.writeRaw("d", weights[l_count+1].data, weights[l_count+1].total()*esz);
 
         fs << "]" << "weights" << "[";
         for( i = 1; i < l_count; i++ )
         {
             fs << "[";
-            fs.writeRaw("d", weights[i].data, weights[i].total());
+            fs.writeRaw("d", weights[i].data, weights[i].total()*esz);
             fs << "]";
         }
         fs << "]";
@@ -1212,24 +1220,28 @@ public:
         clear();
 
         vector<int> _layer_sizes;
+        fn["layer_sizes"] >> _layer_sizes;
         create( _layer_sizes, SIGMOID_SYM, 0, 0 );
 
         int i, l_count = layer_count();
         read_params(fn);
-        
+
+        size_t esz = weights[0].elemSize();
+
         FileNode w = fn["input_scale"];
-        w.readRaw("d", weights[0].data, weights[0].total());
+        w.readRaw("d", weights[0].data, weights[0].total()*esz);
 
         w = fn["output_scale"];
-        w.readRaw("d", weights[l_count].data, weights[l_count].total());
+        w.readRaw("d", weights[l_count].data, weights[l_count].total()*esz);
 
         w = fn["inv_output_scale"];
-        w.readRaw("d", weights[l_count+1].data, weights[l_count+1].total());
+        w.readRaw("d", weights[l_count+1].data, weights[l_count+1].total()*esz);
 
         FileNodeIterator w_it = fn["weights"].begin();
 
         for( i = 1; i < l_count; i++, ++w_it )
-            (*w_it).readRaw("d", weights[i].data, weights[i].total());
+            (*w_it).readRaw("d", weights[i].data, weights[i].total()*esz);
+        trained = true;
     }
 
     Mat getLayerSizes() const

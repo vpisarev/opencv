@@ -130,15 +130,19 @@ int CV_SLMLTest::validate_test_results( int testCaseIdx )
         remove( fname2.c_str() );
     }
 
-    // 2. compare responses
-    CV_Assert( test_resps1.size() == test_resps2.size() );
-    vector<float>::const_iterator it1 = test_resps1.begin(), it2 = test_resps2.begin();
-    for( ; it1 != test_resps1.end(); ++it1, ++it2 )
+    if( code >= 0 )
     {
-        if( fabs(*it1 - *it2) > FLT_EPSILON )
+        // 2. compare responses
+        CV_Assert( test_resps1.size() == test_resps2.size() );
+        vector<float>::const_iterator it1 = test_resps1.begin(), it2 = test_resps2.begin();
+        for( ; it1 != test_resps1.end(); ++it1, ++it2 )
         {
-            ts->printf( cvtest::TS::LOG, "in test case %d responses predicted before saving and after loading is different", testCaseIdx );
-            code = cvtest::TS::FAIL_INVALID_OUTPUT;
+            if( fabs(*it1 - *it2) > FLT_EPSILON )
+            {
+                ts->printf( cvtest::TS::LOG, "in test case %d responses predicted before saving and after loading is different", testCaseIdx );
+                code = cvtest::TS::FAIL_INVALID_OUTPUT;
+                break;
+            }
         }
     }
     return code;

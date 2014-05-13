@@ -298,6 +298,9 @@ public:
     {
         switch( params.kernelType )
         {
+        case SVM::LINEAR:
+            calc_linear(vcount, var_count, vecs, another, results);
+            break;
         case SVM::RBF:
             calc_rbf(vcount, var_count, vecs, another, results);
             break;
@@ -338,12 +341,15 @@ static void sortSamplesByClasses( const Mat& _samples, const Mat& _responses,
     CV_Assert( _responses.isContinuous() && _responses.checkVector(1, CV_32S) == nsamples );
 
     setRangeVector(sidx_all, nsamples);
-    std::sort(sidx_all.begin(), sidx_all.end(), cmp_lt_idx<int>(_responses.ptr<int>()));
+
+    const int* rptr = _responses.ptr<int>();
+    std::sort(sidx_all.begin(), sidx_all.end(), cmp_lt_idx<int>(rptr));
     class_ranges.clear();
     class_ranges.push_back(0);
+
     for( i = 0; i < nsamples; i++ )
     {
-        if( i == nsamples-1 || sidx_all[i] != sidx_all[i+1] )
+        if( i == nsamples-1 || rptr[sidx_all[i]] != rptr[sidx_all[i+1]] )
             class_ranges.push_back(i+1);
     }
 }
@@ -513,7 +519,7 @@ public:
             lru_cache.clear();
             lru_cache.resize(sample_count+1, KernelRow(-1, 0, 0));
             lru_first = lru_last = 0;
-            lru_cache_data.create(cache_size, sample_count, QFLOAT_TYPE);
+            lru_cache_data.create(max_cache_size, sample_count, QFLOAT_TYPE);
         }
 
         Qfloat* get_row_base( int i, bool* _existed )
@@ -1145,12 +1151,13 @@ public:
 
             CV_Assert( (int)_yf.size() == sample_count );
 
-            _alpha.assign(alpha_count, std::min(sum, C));
+            _alpha.resize(alpha_count);
             vector<schar> _y(alpha_count);
             vector<double> _b(alpha_count);
 
             for( int i = 0; i < sample_count; i++ )
             {
+                _alpha[i] = _alpha[i + sample_count] = std::min(sum, C);
                 sum -= _alpha[i];
 
                 _b[i] = -_yf[i];
@@ -1304,6 +1311,12 @@ public:
         return kernel;
     }
 
+    int getSVCount(int i) const
+    {
+        return (i < (int)(decision_func.size()-1) ? decision_func[i+1].ofs :
+                (int)df_index.size()) - decision_func[i].ofs;
+    }
+
     bool do_train( const Mat& _samples, const Mat& _responses )
     {
         int svmType = params.svmType;
@@ -1352,7 +1365,6 @@ public:
             }
 
             decision_func.push_back(DecisionFunc(sinfo.rho, 0));
-            decision_func.push_back(DecisionFunc(0., sv_count));
         }
         else
         {
@@ -1423,7 +1435,7 @@ public:
                     // form input for the binary classification problem
                     for( k = 0; k < ci+cj; k++ )
                     {
-                        int idx = k < ci ? si+k : sj+k;
+                        int idx = k < ci ? si+k : sj+k-ci;
                         memcpy(temp_samples.ptr(k), _samples.ptr(sidx_all[idx]), samplesize);
                         sidx[k] = sidx_all[idx];
                         temp_y[k] = k < ci ? 1 : -1;
@@ -1447,12 +1459,13 @@ public:
                         return false;
                     df.rho = sinfo.rho;
                     df.ofs = (int)df_index.size();
+                    decision_func.push_back(df);
 
                     for( k = 0; k < ci + cj; k++ )
                     {
                         if( std::abs(_alpha[k]) > 0 )
                         {
-                            int idx = k < ci ? si+k : sj+k;
+                            int idx = k < ci ? si+k : sj+k-ci;
                             sv_tab[idx] = 1;
                             df_index.push_back(sidx_all[idx]);
                             df_alpha.push_back(_alpha[k]);
@@ -1460,7 +1473,6 @@ public:
                     }
                 }
             }
-            decision_func.push_back(DecisionFunc(0., (int)df_index.size()));
 
             // allocate support vectors and initialize sv_tab
             for( i = 0, k = 0; i < sample_count; i++ )
@@ -1496,12 +1508,10 @@ public:
             return;
 
         int i, df_count = (int)decision_func.size();
-        DecisionFunc* dfp = &decision_func[0];
 
         for( i = 0; i < df_count; i++ )
         {
-            int sv_count = dfp[i+1].ofs - dfp[i].ofs;
-            if( sv_count != 1 )
+            if( getSVCount(i) != 1 )
                 break;
         }
 
@@ -1520,9 +1530,10 @@ public:
         {
             float* dst = new_sv.ptr<float>(i);
             memset(v, 0, var_count*sizeof(v[0]));
-            int j, k, sv_count = dfp[i+1].ofs - dfp[i].ofs;
-            const int* sv_index = &df_index[dfp[i].ofs];
-            const double* sv_alpha = &df_alpha[dfp[i].ofs];
+            int j, k, sv_count = getSVCount(i);
+            const DecisionFunc& df = decision_func[i];
+            const int* sv_index = &df_index[df.ofs];
+            const double* sv_alpha = &df_alpha[df.ofs];
             for( j = 0; j < sv_count; j++ )
             {
                 const float* src = sv.ptr<float>(sv_index[j]);
@@ -1532,13 +1543,13 @@ public:
             }
             for( k = 0; k < var_count; k++ )
                 dst[k] = (float)v[k];
-            new_df.push_back(DecisionFunc(dfp[i].rho, i));
+            new_df.push_back(DecisionFunc(df.rho, i));
         }
 
-        new_df.push_back(DecisionFunc(0., df_count));
         setRangeVector(df_index, df_count);
         df_alpha.assign(df_count, 1.);
-        sv = new_sv;
+        std::swap(sv, new_sv);
+        std::swap(decision_func, new_df);
     }
 
     bool train( const Ptr<TrainData>& data, int )
@@ -1783,7 +1794,7 @@ public:
             AutoBuffer<float> _buffer(sv_total + (class_count+1)*2);
             float* buffer = _buffer;
 
-            int i, j, k, si;
+            int i, j, dfi, k, si;
 
             if( svmType == EPS_SVR || svmType == NU_SVR || svmType == ONE_CLASS )
             {
@@ -1811,16 +1822,16 @@ public:
                     double sum = 0.;
 
                     memset( vote, 0, class_count*sizeof(vote[0]));
-                    const SVMImpl::DecisionFunc* df = &svm->decision_func[0];
 
-                    for( i = 0; i < class_count; i++ )
+                    for( i = dfi = 0; i < class_count; i++ )
                     {
-                        for( j = i+1; j < class_count; j++, df++ )
+                        for( j = i+1; j < class_count; j++, dfi++ )
                         {
-                            sum = -df->rho;
-                            int sv_count = df[1].ofs - df->ofs;
-                            const double* alpha = &svm->df_alpha[df->ofs];
-                            const int* sv_index = &svm->df_index[df->ofs];
+                            const DecisionFunc& df = svm->decision_func[dfi];
+                            sum = -df.rho;
+                            int sv_count = svm->getSVCount(dfi);
+                            const double* alpha = &svm->df_alpha[df.ofs];
+                            const int* sv_index = &svm->df_index[df.ofs];
                             for( k = 0; k < sv_count; k++ )
                                 sum += alpha[k]*buffer[sv_index[k]];
 
@@ -1881,7 +1892,7 @@ public:
     {
         CV_Assert( 0 <= i && i < (int)decision_func.size());
         const DecisionFunc& df = decision_func[i];
-        int count = decision_func[i+1].ofs - df.ofs;
+        int count = getSVCount(i);
         Mat(1, count, CV_64F, (double*)&df_alpha[df.ofs]).copyTo(_alpha);
         Mat(1, count, CV_32S, (int*)&df_index[df.ofs]).copyTo(_svidx);
         return df.rho;
@@ -1986,29 +1997,28 @@ public:
         for( i = 0; i < sv_total; i++ )
         {
             fs << "[:";
-            fs.writeRaw("f", sv.ptr(i), sv.cols);
+            fs.writeRaw("f", sv.ptr(i), sv.cols*sv.elemSize());
             fs << "]";
         }
         fs << "]";
 
         // write decision functions
-        int df_count = class_count > 1 ? class_count*(class_count-1)/2 : 1;
-        CV_Assert((int)decision_func.size() == df_count);
+        int df_count = (int)decision_func.size();
 
         fs << "decision_functions" << "[";
         for( i = 0; i < df_count; i++ )
         {
-            const DecisionFunc& dfi = decision_func[i];
-            int sv_count = decision_func[i+1].ofs - dfi.ofs;
+            const DecisionFunc& df = decision_func[i];
+            int sv_count = getSVCount(i);
             fs << "{" << "sv_count" << sv_count
-               << "rho" << dfi.rho
+               << "rho" << df.rho
                << "alpha" << "[:";
-            fs.writeRaw("d", (const uchar*)&df_alpha[dfi.ofs], sv_count);
+            fs.writeRaw("d", (const uchar*)&df_alpha[df.ofs], sv_count*sizeof(df_alpha[0]));
             fs << "]";
-            if( class_count > 1 )
+            if( class_count > 2 )
             {
                 fs << "index" << "[:";
-                fs.writeRaw("i", (const uchar*)&df_index[dfi.ofs], sv_count);
+                fs.writeRaw("i", (const uchar*)&df_index[df.ofs], sv_count*sizeof(df_index[0]));
                 fs << "]";
             }
             else
@@ -2106,7 +2116,7 @@ public:
         FileNodeIterator sv_it = sv_node.begin();
         for( i = 0; i < sv_total; i++, ++sv_it )
         {
-            (*sv_it).readRaw("f", sv.ptr(i), var_count);
+            (*sv_it).readRaw("f", sv.ptr(i), var_count*sv.elemSize());
         }
 
         // read decision functions
@@ -2123,13 +2133,15 @@ public:
             int sv_count = (int)dfi["sv_count"];
             int ofs = (int)df_index.size();
             df.rho = (double)dfi["rho"];
+            df.ofs = ofs;
             df_index.resize(ofs + sv_count);
             df_alpha.resize(ofs + sv_count);
-            dfi["alpha"].readRaw("d", (uchar*)&df_alpha[ofs], sv_count);
-            if( class_count > 1 )
-                dfi["index"].readRaw("i", (uchar*)&df_index[ofs], sv_count);
+            dfi["alpha"].readRaw("d", (uchar*)&df_alpha[ofs], sv_count*sizeof(df_alpha[0]));
+            if( class_count > 2 )
+                dfi["index"].readRaw("i", (uchar*)&df_index[ofs], sv_count*sizeof(df_index[0]));
+            decision_func.push_back(df);
         }
-        if( class_count < 2 )
+        if( class_count <= 2 )
             setRangeVector(df_index, sv_total);
         if( (int)fn["optimize_linear"] != 0 )
             optimize_linear_svm();
