@@ -106,6 +106,7 @@ public:
     virtual int getNVars() const = 0;
     virtual int getNAllVars() const = 0;
 
+    virtual void getSample(InputArray varIdx, int sidx, float* buf) const = 0;
     virtual Mat getSamples() const = 0;
     virtual Mat getMissing() const = 0;
     virtual Mat getTrainSamples(int layout=ROW_SAMPLE,
@@ -117,6 +118,7 @@ public:
     virtual Mat getTestNormCatResponses() const = 0;
     virtual Mat getResponses() const = 0;
     virtual Mat getNormCatResponses() const = 0;
+    virtual Mat getSampleWeights() const = 0;
     virtual Mat getTrainSampleWeights() const = 0;
     virtual Mat getTestSampleWeights() const = 0;
     virtual Mat getVarIdx() const = 0;
@@ -124,8 +126,14 @@ public:
     virtual int getResponseType() const = 0;
     virtual Mat getTrainSampleIdx() const = 0;
     virtual Mat getTestSampleIdx() const = 0;
+    virtual void getValues(int vi, InputArray sidx, float* values) const = 0;
+    virtual void getNormCatValues(int vi, InputArray sidx, int* values) const = 0;
 
+    virtual int getCatCount(int vi) const = 0;
     virtual Mat getClassLabels() const = 0;
+
+    virtual Mat getCatOfs() const = 0;
+    virtual Mat getCatMap() const = 0;
     
     virtual void setTrainTestSplit(int count, bool shuffle=true) = 0;
     virtual void setTrainTestSplitRatio(float ratio, bool shuffle=true) = 0;

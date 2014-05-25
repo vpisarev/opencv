@@ -116,7 +116,7 @@ public:
         allVars.resize(nvars);
         activeVars.resize(m);
         for( i = 0; i < nvars; i++ )
-            allVars[i] = w->vidx[i];
+            allVars[i] = varIdx[i];
     }
 
     void endTraining()
@@ -132,7 +132,7 @@ public:
         Params dp(rparams.maxDepth, rparams.minSampleCount, rparams.regressionAccuracy,
                   rparams.useSurrogates, rparams.maxCategories, rparams.CVFolds,
                   rparams.use1SERule, rparams.truncatePrunedTree, rparams.priors);
-        setParams(dp);
+        setDParams(dp);
         startTraining(trainData, flags);
         int treeidx, ntrees = (rparams.termCrit.type & TermCriteria::COUNT) != 0 ?
             rparams.termCrit.maxCount : 10000;
@@ -151,8 +151,9 @@ public:
         int nallvars = w->data->getNAllVars();
         const int* vidx = !varIdx.empty() ? &varIdx[0] : 0;
         vector<float> samplebuf(nallvars);
-        float* psamples = (float*)w->samples.ptr<float>();
-        size_t sstep0 = w->samples.step/sizeof(psamples[0]), sstep1 = 1;
+        Mat samples = w->data->getSamples();
+        float* psamples = samples.ptr<float>();
+        size_t sstep0 = samples.step/sizeof(psamples[0]), sstep1 = 1;
         Mat sample0, sample(nallvars, 1, CV_32F, &samplebuf[0]);
         int predictFlags = _isClassifier ? (PREDICT_MAX_VOTE + RAW_OUTPUT) : PREDICT_SUM;
 

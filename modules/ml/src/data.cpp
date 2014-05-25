@@ -40,6 +40,8 @@
 
 #include "precomp.hpp"
 #include <ctype.h>
+#include <algorithm>
+#include <iterator>
 
 namespace cv { namespace ml {
 
@@ -113,6 +115,8 @@ Mat TrainData::getSubVector(const Mat& vec, const Mat& idx)
 class TrainDataImpl : public TrainData
 {
 public:
+    typedef std::map<String, int> MapType;
+
     TrainDataImpl()
     {
         file = 0;
@@ -155,6 +159,10 @@ public:
     }
     Mat getTrainSampleIdx() const { return !trainSampleIdx.empty() ? trainSampleIdx : sampleIdx; }
     Mat getTestSampleIdx() const { return testSampleIdx; }
+    Mat getSampleWeights() const
+    {
+        return sampleWeights;
+    }
     Mat getTrainSampleWeights() const
     {
         return getSubVector(sampleWeights, getTrainSampleIdx());
@@ -185,6 +193,16 @@ public:
     Mat getNormCatResponses() const { return normCatResponses; }
     Mat getClassLabels() const { return classLabels; }
     Mat getClassCounters() const { return classCounters; }
+    int getCatCount(int vi) const
+    {
+        int n = (int)catOfs.total();
+        CV_Assert( 0 <= vi && vi < n );
+        Vec2i ofs = catOfs.at<Vec2i>(vi);
+        return ofs[1] - ofs[0];
+    }
+
+    Mat getCatOfs() const { return catOfs; }
+    Mat getCatMap() const { return catMap; }
 
     void closeFile() { if(file) fclose(file); file=0; }
     void clear()
@@ -200,10 +218,14 @@ public:
         normCatResponses.release();
         classLabels.release();
         classCounters.release();
+        catMap.release();
+        catOfs.release();
         rng = RNG(-1);
-        totalClassCount = 0;
+        nameMap = MapType();
         layout = ROW_SAMPLE;
     }
+
+    typedef std::map<int, int> CatMapHash;
 
     void setData(InputArray _samples, int _layout, InputArray _responses,
                  InputArray _varIdx, InputArray _sampleIdx, InputArray _sampleWeights,
@@ -252,6 +274,8 @@ public:
                        varIdx.checkVector(1, CV_8U, true) == ninputvars );
             if( varIdx.type() == CV_8U )
                 varIdx = convertMaskToIdx(varIdx);
+            varIdx = varIdx.clone();
+            std::sort(varIdx.ptr<int>(), varIdx.ptr<int>() + varIdx.total());
         }
 
         if( !responses.empty() )
@@ -294,8 +318,68 @@ public:
                 CV_Assert( varType.at<uchar>(ninputvars + i) == VAR_ORDERED );
         }
 
+        catOfs = Mat::zeros(1, nvars, CV_32SC2);
+
+        vector<int> labels, counters, sortbuf, tempCatMap;
+        vector<Vec2i> tempCatOfs;
+        CatMapHash ofshash;
+
+        // we iterate through all the variables. For each categorical variable we build a map
+        // in order to convert input values of the variable into normalized values (0..catcount_vi-1)
+        // often many categorical variables are similar, so we compress the map - try to re-use
+        // maps for different variables if they are identical
+        for( i = 0; i < ninputvars; i++ )
+        {
+            if( varType.at<uchar>(i) == VAR_CATEGORICAL )
+            {
+                preprocessCategorical(samples.col(i), 0, labels, 0, sortbuf);
+                int j, m = (int)labels.size();
+                CV_Assert( m > 0 );
+                int a = labels.front(), b = labels.back();
+                const int* currmap = &labels[0];
+                int hashval = ((unsigned)a*127 + (unsigned)b)*127 + m;
+                CatMapHash::iterator it = ofshash.find(hashval);
+                if( it != ofshash.end() )
+                {
+                    int vi = it->second;
+                    Vec2i ofs0 = tempCatOfs[vi];
+                    int m0 = ofs0[1] - ofs0[0];
+                    const int* map0 = &tempCatMap[ofs0[0]];
+                    if( m0 == m && map0[0] == a && map0[m0-1] == b )
+                    {
+                        for( j = 0; j < m; j++ )
+                            if( map0[j] != currmap[j] )
+                                break;
+                        if( j == m )
+                        {
+                            // re-use the map
+                            tempCatOfs.push_back(ofs0);
+                            continue;
+                        }
+                    }
+                }
+                else
+                    ofshash[hashval] = i;
+                Vec2i ofs;
+                ofs[0] = (int)tempCatMap.size();
+                ofs[1] = ofs[0] + m;
+                tempCatOfs.push_back(ofs);
+                std::copy(labels.begin(), labels.end(), std::back_inserter(tempCatMap));
+            }
+        }
+
+        if( !tempCatOfs.empty() )
+        {
+            Mat(tempCatOfs).copyTo(catOfs);
+            Mat(tempCatMap).copyTo(catMap);
+        }
+
         if( varType.at<uchar>(ninputvars) == VAR_CATEGORICAL )
-            preprocessCategorical(responses, normCatResponses, classLabels, classCounters);
+        {
+            preprocessCategorical(responses, &normCatResponses, labels, &counters, sortbuf);
+            Mat(labels).copyTo(classLabels);
+            Mat(counters).copyTo(classCounters);
+        }
 
         if( !missing.empty() )
         {
@@ -321,18 +405,25 @@ public:
         int step;
     };
 
-    void preprocessCategorical(const Mat& data, Mat& normdata, Mat& labels, Mat& counters)
+    void preprocessCategorical(const Mat& data, Mat* normdata, vector<int>& labels,
+                               vector<int>* counters, vector<int>& sortbuf)
     {
         CV_Assert((data.cols == 1 || data.rows == 1) && (data.type() == CV_32S || data.type() == CV_32F));
-        normdata.create(data.size(), CV_32S);
+        int* odata = 0;
+        int ostep = 0;
+
+        if(normdata)
+        {
+            normdata->create(data.size(), CV_32S);
+            odata = normdata->ptr<int>();
+            ostep = (int)(normdata->step/sizeof(int));
+        }
 
         int i, n = data.cols + data.rows - 1;
-        cv::AutoBuffer<int> ibuf(n*2);
-        int* idx = ibuf;
+        sortbuf.resize(n*2);
+        int* idx = &sortbuf[0];
         int* idata = (int*)data.ptr<int>();
         int istep = (int)(data.step/sizeof(int));
-        int* odata = normdata.ptr<int>();
-        int ostep = (int)(normdata.step/sizeof(int));
 
         if( data.type() == CV_32F )
         {
@@ -359,8 +450,9 @@ public:
         int prev = ~idata[idx[0]*istep];
         int previdx = 0;
 
-        labels.create(1, clscount, CV_32S);
-        counters.create(1, clscount, CV_32S);
+        labels.resize(clscount);
+        if(counters)
+            counters->resize(clscount);
 
         for( i = 0; i < n; i++ )
         {
@@ -368,16 +460,18 @@ public:
             if( l != prev )
             {
                 clslabel++;
-                labels.at<int>(clslabel) = l;
+                labels[clslabel] = l;
                 int k = i - previdx;
-                if( clslabel > 0 )
-                    counters.at<int>(clslabel-1) = k;
+                if( clslabel > 0 && counters )
+                    counters->at(clslabel-1) = k;
                 prev = l;
                 previdx = i;
             }
-            odata[i*ostep] = clslabel;
+            if(odata)
+                odata[i*ostep] = clslabel;
         }
-        counters.at<int>(clslabel) = i - previdx;
+        if(counters)
+            counters->at(clslabel) = i - previdx;
     }
 
     bool loadCSV(const String& filename, int headerLines,
@@ -406,7 +500,9 @@ public:
         int i, ridx0 = responseStartIdx, ridx1 = responseEndIdx;
         int ninputvars = 0, noutputvars = 0;
 
-        samples.release();
+        Mat tempSamples, tempMissing, tempResponses;
+        MapType tempNameMap;
+        int catCounter = 0;
 
         // skip header lines
         int lineno = 0;
@@ -437,7 +533,7 @@ public:
             for(;;)
             {
                 float val=0.f; int tp = 0;
-                decodeElem( token, val, tp, missch );
+                decodeElem( token, val, tp, missch, tempNameMap, catCounter );
                 if( tp == VAR_MISSED )
                     haveMissed = true;
                 rowvals.push_back(val);
@@ -485,7 +581,7 @@ public:
                 rowvals.pop_back();
             }
             Mat rmat(1, ninputvars, CV_32F, &rowvals[0]);
-            samples.push_back(rmat);
+            tempSamples.push_back(rmat);
         }
 
         closeFile();
@@ -495,7 +591,7 @@ public:
             return false;
 
         if( haveMissed )
-            compare(samples, MISSED_VAL, missing, CMP_EQ);
+            compare(tempSamples, MISSED_VAL, tempMissing, CMP_EQ);
 
         if( ridx0 >= 0 )
         {
@@ -519,18 +615,17 @@ public:
                 vtypes[ninputvars] = VAR_CATEGORICAL;
         }
 
-        Mat(nsamples, noutputvars, CV_32F, &allresponses[0]).copyTo(responses);
-        Mat(vtypes).copyTo(varType);
-
-        if( vtypes[ninputvars] == VAR_CATEGORICAL )
-            preprocessCategorical(responses, normCatResponses, classLabels, classCounters);
-
-        sampleWeights = Mat::ones(nsamples, 1, CV_32F);
-
-        return true;
+        Mat(nsamples, noutputvars, CV_32F, &allresponses[0]).copyTo(tempResponses);
+        setData(tempSamples, ROW_SAMPLE, tempResponses, noArray(), noArray(),
+                noArray(), Mat(vtypes).clone(), tempMissing);
+        bool ok = !samples.empty();
+        if(ok)
+            std::swap(tempNameMap, nameMap);
+        return ok;
     }
 
-    void decodeElem( const char* token, float& elem, int& type, char missch)
+    void decodeElem( const char* token, float& elem, int& type,
+                     char missch, MapType& namemap, int& counter ) const
     {
         char* stopstring = NULL;
         elem = (float)strtod( token, &stopstring );
@@ -541,11 +636,11 @@ public:
         }
         else if( *stopstring != '\0' )
         {
-            MapType::iterator it = classMap.find(token);
-            if( it == classMap.end() )
+            MapType::iterator it = namemap.find(token);
+            if( it == namemap.end() )
             {
-                classMap[token] = ++totalClassCount;
-                elem = (float)totalClassCount;
+                elem = (float)counter;
+                namemap[token] = counter++;
             }
             else
                 elem = (float)it->second;
@@ -555,7 +650,7 @@ public:
             type = VAR_ORDERED;
     }
 
-    void setVarTypes( const String& s, int nvars, std::vector<uchar>& vtypes )
+    void setVarTypes( const String& s, int nvars, std::vector<uchar>& vtypes ) const
     {
         const char* errmsg = "type spec is not correct; it should have format \"cat\", \"ord\" or "
           "\"ord[n1,n2-n3,n4-n5,...]cat[m1-m2,m3,m4-m5,...]\", where n's and m's are 0-based variable indices";
@@ -717,18 +812,115 @@ public:
         return dsamples;
     }
 
+    void getValues( int vi, InputArray _sidx, float* values ) const
+    {
+        Mat sidx = _sidx.getMat();
+        int i, n, nsamples = getNSamples();
+        CV_Assert( 0 <= vi && vi < getNAllVars() );
+        CV_Assert( (n = sidx.checkVector(1, CV_32S)) >= 0 );
+        const int* s = n > 0 ? sidx.ptr<int>() : 0;
+        if( n == 0 )
+            n = nsamples;
+
+        size_t step = samples.step/samples.elemSize();
+        size_t sstep = layout == ROW_SAMPLE ? step : 1;
+        size_t vstep = layout == ROW_SAMPLE ? 1 : step;
+
+        const float* src = samples.ptr<float>() + vi*vstep;
+        for( i = 0; i < n; i++ )
+        {
+            int j = i;
+            if( s )
+            {
+                j = s[i];
+                CV_DbgAssert( 0 <= j && j < nsamples );
+            }
+            values[i] = src[j*sstep];
+        }
+    }
+
+    void getNormCatValues( int vi, InputArray _sidx, int* values ) const
+    {
+        float* fvalues = (float*)values;
+        getValues(vi, _sidx, fvalues);
+        int i, n = (int)_sidx.total();
+        Vec2i ofs = catOfs.at<Vec2i>(vi);
+        int m = ofs[1] - ofs[0];
+
+        CV_Assert( m > 0 ); // if m==0, vi is an ordered variable
+        const int* cmap = &catMap.at<int>(ofs[0]);
+        bool fastMap = (m == cmap[m] - cmap[0]);
+
+        if( fastMap )
+        {
+            for( i = 0; i < n; i++ )
+            {
+                int val = cvRound(fvalues[i]);
+                int idx = val - cmap[0];
+                CV_Assert(cmap[idx] == val);
+                values[i] = idx;
+            }
+        }
+        else
+        {
+            for( i = 0; i < n; i++ )
+            {
+                int val = cvRound(fvalues[i]);
+                int a = 0, b = m, c = -1;
+
+                while( a < b )
+                {
+                    c = (a + b) >> 1;
+                    if( val < cmap[c] )
+                        b = c;
+                    else if( val > cmap[c] )
+                        a = c+1;
+                    else
+                        break;
+                }
+
+                CV_DbgAssert( c >= 0 && val == cmap[c] );
+                values[i] = c;
+            }
+        }
+    }
+
+    void getSample(InputArray _vidx, int sidx, float* buf) const
+    {
+        CV_Assert(buf != 0 && 0 <= sidx && sidx < getNSamples());
+        Mat vidx = _vidx.getMat();
+        int i, n, nvars = getNAllVars();
+        CV_Assert( (n = vidx.checkVector(1, CV_32S)) >= 0 );
+        const int* vptr = n > 0 ? vidx.ptr<int>() : 0;
+        if( n == 0 )
+            n = nvars;
+
+        size_t step = samples.step/samples.elemSize();
+        size_t sstep = layout == ROW_SAMPLE ? step : 1;
+        size_t vstep = layout == ROW_SAMPLE ? 1 : step;
+
+        const float* src = samples.ptr<float>() + sidx*sstep;
+        for( i = 0; i < n; i++ )
+        {
+            int j = i;
+            if( vptr )
+            {
+                j = vptr[i];
+                CV_DbgAssert( 0 <= j && j < nvars );
+            }
+            buf[i] = src[j*vstep];
+        }
+    }
+
     FILE* file;
     int layout;
     Mat samples, missing, varType, varIdx, responses;
     Mat sampleIdx, trainSampleIdx, testSampleIdx;
-    Mat sampleWeights;
+    Mat sampleWeights, catMap, catOfs;
     Mat normCatResponses, classLabels, classCounters;
+    MapType nameMap;
     RNG rng;
-    typedef std::map<String, int> MapType;
-    MapType classMap;
-    int totalClassCount;
 };
-
 
 Ptr<TrainData> TrainData::loadFromCSV(const String& filename,
                                       int headerLines,

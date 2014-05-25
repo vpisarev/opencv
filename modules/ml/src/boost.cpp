@@ -177,7 +177,7 @@ public:
         Params dp(bparams.maxDepth, bparams.minSampleCount, bparams.regressionAccuracy,
                   bparams.useSurrogates, bparams.maxCategories, 0,
                   false, false, bparams.priors);
-        setParams(dp);
+        setDParams(dp);
         startTraining(trainData, flags);
         int treeidx, ntrees = bparams.weakCount >= 0 ? bparams.weakCount : 10000;
         vector<int> sidx = w->sidx;
@@ -195,21 +195,19 @@ public:
 
     void updateWeightsAndTrim( int treeidx, vector<int>& sidx )
     {
-        int i, j, n = (int)w->sidx.size();
-        int nallvars = w->data->getNAllVars();
+        int i, j, n = (int)sidx.size();
+        int nvars = (int)varIdx.size();
         double sumw = 0.;
-        cv::AutoBuffer<double> buf(n*3);
+        cv::AutoBuffer<double> buf(n*3 + nvars);
         double* result = buf;
-        float* psamples = (float*)w->samples.ptr<float>();
-        size_t sstep0 = w->samples.step/sizeof(psamples[0]), sstep1 = 1;
+        float* sbuf = (float*)(result + n*3);
+        Mat sample(1, nvars, CV_32F, sbuf);
         int predictFlags = bparams.boostType == Boost::DISCRETE ? (PREDICT_MAX_VOTE | RAW_OUTPUT) : PREDICT_SUM;
-
-        if( w->data->getLayout() == ROW_SAMPLE )
-            std::swap(sstep0, sstep1);
+        predictFlags |= COMPRESSED_INPUT;
 
         for( i = 0; i < n; i++ )
         {
-            Mat sample(nallvars, 1, CV_32F, psamples + i*sstep0, sstep1*sizeof(psamples[0]));
+            w->data->getSample(varIdx, sidx[i], sbuf );
             result[i] = predictTrees(Range(treeidx, treeidx+1), sample, predictFlags);
         }
 

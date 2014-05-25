@@ -157,13 +157,12 @@ namespace ml
         {
             WSplit()
             {
-                var_idx = condensed_idx = inversed = next = 0;
+                var_idx = inversed = next = 0;
                 quality = c = 0.f;
                 subset_ofs = 0;
             }
 
             int var_idx;
-            int condensed_idx;
             int inversed;
             float quality;
             int next;
@@ -174,9 +173,6 @@ namespace ml
         struct WorkData
         {
             WorkData(const Ptr<TrainData>& _data);
-            int getNumValid(int, const vector<int>& sidx) const;
-            void getOrdVarData( int vi, const vector<int>& _sidx, float* values );
-            void getCatVarData( int vi, const vector<int>& _sidx, int* values );
 
             Ptr<TrainData> data;
             vector<WNode> wnodes;
@@ -191,9 +187,6 @@ namespace ml
             vector<int> cat_responses;
             vector<double> ord_responses;
             vector<int> sidx;
-            vector<int> vidx;
-            Mat samples;
-            int layout;
             int maxSubsetSize;
         };
 
@@ -205,10 +198,13 @@ namespace ml
         bool isTrained() const { return !roots.empty(); }
         bool isClassifier() const { return _isClassifier; }
         int getVarCount() const { return varType.empty() ? 0 : (int)(varType.size() - 1); }
+        int getCatCount(int vi) const { return catOfs[vi][1] - catOfs[vi][0]; }
 
-        virtual void setParams(const Params& _params);
+        virtual void setDParams(const Params& _params);
+        virtual Params getDParams() const;
         virtual void startTraining( const Ptr<TrainData>& trainData, int flags );
         virtual void endTraining();
+        virtual void initCompVarIdx();
         virtual bool train( const Ptr<TrainData>& trainData, int flags );
 
         virtual int addTree( const vector<int>& sidx );
@@ -255,16 +251,15 @@ namespace ml
         Params params0, params;
         
         vector<int> varIdx;
-        vector<int> varType;
-        vector<int> catCount;
-        vector<int> catOfs;
+        vector<int> compVarIdx;
+        vector<uchar> varType;
+        vector<Vec2i> catOfs;
         vector<int> catMap;
         vector<int> roots;
         vector<Node> nodes;
         vector<Split> splits;
         vector<int> subsets;
-        vector<float> classLabels;
-        bool haveCatVars;
+        vector<int> classLabels;
         bool _isClassifier;
         
         Ptr<WorkData> w;
