@@ -123,14 +123,15 @@ public:
             for( i = 0; i < n; i++ )
                 w->ord_responses[i] = w->cat_responses[i] > 0 ? b : a;
         }
+
+        normalize(w->sample_weights, w->sample_weights, 1, 0, NORM_L1);
     }
 
     void endTraining()
     {
         DTreesImpl::endTraining();
-        vector<double> e1, e2;
-        std::swap(boostWeights, e1);
-        std::swap(sumResult, e2);
+        vector<double> e;
+        std::swap(sumResult, e);
     }
 
     void scaleTree( int root, double scale )
@@ -195,7 +196,7 @@ public:
 
     void updateWeightsAndTrim( int treeidx, vector<int>& sidx )
     {
-        int i, j, n = (int)sidx.size();
+        int i, n = (int)w->sidx.size();
         int nvars = (int)varIdx.size();
         double sumw = 0.;
         cv::AutoBuffer<double> buf(n*3 + nvars);
@@ -207,7 +208,7 @@ public:
 
         for( i = 0; i < n; i++ )
         {
-            w->data->getSample(varIdx, sidx[i], sbuf );
+            w->data->getSample(varIdx, w->sidx[i], sbuf );
             result[i] = predictTrees(Range(treeidx, treeidx+1), sample, predictFlags);
         }
 
@@ -223,9 +224,10 @@ public:
 
             for( i = 0; i < n; i++ )
             {
-                double wval = boostWeights[i];
+                int si = w->sidx[i];
+                double wval = w->sample_weights[si];
                 sumw += wval;
-                err += wval*(result[i] != w->cat_responses[w->sidx[i]]);
+                err += wval*(result[i] != w->cat_responses[si]);
             }
 
             if( sumw != 0 )
@@ -236,11 +238,12 @@ public:
             sumw = 0;
             for( i = 0; i < n; i++ )
             {
-                double wval = boostWeights[i];
-                if( result[i] != w->cat_responses[w->sidx[i]] )
+                int si = w->sidx[i];
+                double wval = w->sample_weights[si];
+                if( result[i] != w->cat_responses[si] )
                     wval *= scale;
                 sumw += wval;
-                boostWeights[i] = wval;
+                w->sample_weights[si] = wval;
             }
 
             scaleTree(roots[treeidx], C);
@@ -256,9 +259,10 @@ public:
             //   w_i *= exp(-y_i*f(x_i))
             for( i = 0; i < n; i++ )
             {
-                double wval = boostWeights[i]*std::exp(-result[i]*w->ord_responses[w->sidx[i]]);
+                int si = w->sidx[i];
+                double wval = w->sample_weights[si]*std::exp(-result[i]*w->ord_responses[si]);
                 sumw += wval;
-                boostWeights[i] = wval;
+                w->sample_weights[si] = wval;
             }
         }
         else if( bparams.boostType == Boost::LOGIT )
@@ -277,21 +281,21 @@ public:
 
             for( i = 0; i < n; i++ )
             {
+                int si = w->sidx[i];
                 sumResult[i] += 0.5*result[i];
                 double p = 1./(1 + std::exp(-2*sumResult[i]));
                 double wval = std::max( p*(1 - p), lb_weight_thresh ), z;
-                boostWeights[i] = wval;
+                w->sample_weights[si] = wval;
                 sumw += wval;
-                j = w->sidx[i];
-                if( w->ord_responses[j] > 0 )
+                if( w->ord_responses[si] > 0 )
                 {
                     z = 1./p;
-                    w->ord_responses[j] = std::min(z, lb_z_max);
+                    w->ord_responses[si] = std::min(z, lb_z_max);
                 }
                 else
                 {
                     z = 1./(1-p);
-                    w->ord_responses[j] = -std::min(z, lb_z_max);
+                    w->ord_responses[si] = -std::min(z, lb_z_max);
                 }
             }
         }
@@ -301,15 +305,14 @@ public:
         // renormalize weights
         if( sumw > FLT_EPSILON )
         {
-            sumw = 1./sumw;
-            for( i = 0; i < n; ++i )
-                boostWeights[i] *= sumw;
+            normalize(w->sample_weights, w->sample_weights, 1, 0, NORM_L1);
         }
 
         if( bparams.weightTrimRate <= 0. || bparams.weightTrimRate >= 1. )
             return;
 
-        std::copy(boostWeights.begin(), boostWeights.end(), result);
+        for( i = 0; i < n; i++ )
+            result[i] = w->sample_weights[w->sidx[i]];
         std::sort(result, result + n);
 
         // as weight trimming occurs immediately after updating the weights,
@@ -329,8 +332,9 @@ public:
 
         for( i = 0; i < n; i++ )
         {
-            if( boostWeights[i] >= threshold )
-                sidx.push_back(w->sidx[i]);
+            int si = w->sidx[i];
+            if( w->sample_weights[si] >= threshold )
+                sidx.push_back(si);
         }
     }
 
@@ -420,7 +424,6 @@ public:
     }
     
     Boost::Params bparams;
-    vector<double> boostWeights;
     vector<double> sumResult;
 };
 

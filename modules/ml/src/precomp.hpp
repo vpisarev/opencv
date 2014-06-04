@@ -128,7 +128,7 @@ namespace ml
             WNode()
             {
                 class_idx = sample_count = depth = complexity = 0;
-                parent = left = right = split = -1;
+                parent = left = right = split = defaultDir = -1;
                 Tn = INT_MAX;
                 value = maxlr = alpha = node_risk = tree_risk = tree_error = 0.;
             }
@@ -140,6 +140,7 @@ namespace ml
             int parent;
             int left;
             int right;
+            int defaultDir;
 
             int split;
 
@@ -157,17 +158,17 @@ namespace ml
         {
             WSplit()
             {
-                var_idx = inversed = next = 0;
+                varIdx = inversed = next = 0;
                 quality = c = 0.f;
-                subset_ofs = 0;
+                subsetOfs = -1;
             }
 
-            int var_idx;
+            int varIdx;
             int inversed;
             float quality;
             int next;
             float c;
-            int subset_ofs;
+            int subsetOfs;
         };
 
         struct WorkData
@@ -179,7 +180,6 @@ namespace ml
             vector<WSplit> wsplits;
             vector<int> wsubsets;
             vector<int> cv_Tn;
-            vector<double> cls_count;
             vector<double> cv_node_risk;
             vector<double> cv_node_error;
             vector<int> cv_labels;
@@ -199,6 +199,7 @@ namespace ml
         bool isClassifier() const { return _isClassifier; }
         int getVarCount() const { return varType.empty() ? 0 : (int)(varType.size() - 1); }
         int getCatCount(int vi) const { return catOfs[vi][1] - catOfs[vi][0]; }
+        int getSubsetSize(int vi) const { return (getCatCount(vi) + 31)/32; }
 
         virtual void setDParams(const Params& _params);
         virtual Params getDParams() const;
@@ -222,7 +223,7 @@ namespace ml
         virtual WSplit findSplitOrdReg( int vi, const vector<int>& _sidx, double initQuality );
         virtual WSplit findSplitCatReg( int vi, const vector<int>& _sidx, double initQuality, int* subset );
 
-        virtual void calcDir( int splitidx, const vector<int>& _sidx, vector<int>& _sleft, vector<int>& _sright );
+        virtual int calcDir( int splitidx, const vector<int>& _sidx, vector<int>& _sleft, vector<int>& _sright );
         virtual int pruneCV( int root );
 
         virtual double updateTreeRNC( int root, double T, int fold );
@@ -260,6 +261,7 @@ namespace ml
         vector<Split> splits;
         vector<int> subsets;
         vector<int> classLabels;
+        vector<float> missingSubst;
         bool _isClassifier;
         
         Ptr<WorkData> w;

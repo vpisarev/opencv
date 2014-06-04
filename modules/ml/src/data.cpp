@@ -45,7 +45,7 @@
 
 namespace cv { namespace ml {
 
-static const float MISSED_VAL = FLT_MAX;
+static const float MISSED_VAL = TrainData::missingValue();
 static const int VAR_MISSED = VAR_ORDERED;
 
 TrainData::~TrainData() {}
@@ -204,6 +204,8 @@ public:
     Mat getCatOfs() const { return catOfs; }
     Mat getCatMap() const { return catMap; }
 
+    Mat getDefaultSubstValues() const { return missingSubst; }
+
     void closeFile() { if(file) fclose(file); file=0; }
     void clear()
     {
@@ -319,10 +321,19 @@ public:
         }
 
         catOfs = Mat::zeros(1, nvars, CV_32SC2);
+        missingSubst.create(1, nvars, CV_32F);
 
         vector<int> labels, counters, sortbuf, tempCatMap;
         vector<Vec2i> tempCatOfs;
         CatMapHash ofshash;
+
+        AutoBuffer<uchar> buf(nsamples);
+        Mat non_missing(layout == ROW_SAMPLE ? Size(1, nsamples) : Size(nsamples, 1), CV_8U, (uchar*)buf);
+        bool haveMissing = !missing.empty();
+        if( haveMissing )
+        {
+            CV_Assert( missing.size() == samples.size() && missing.type() == CV_8U );
+        }
 
         // we iterate through all the variables. For each categorical variable we build a map
         // in order to convert input values of the variable into normalized values (0..catcount_vi-1)
@@ -330,9 +341,12 @@ public:
         // maps for different variables if they are identical
         for( i = 0; i < ninputvars; i++ )
         {
+            Mat values_i = layout == ROW_SAMPLE ? samples.col(i) : samples.row(i);
+
             if( varType.at<uchar>(i) == VAR_CATEGORICAL )
             {
-                preprocessCategorical(samples.col(i), 0, labels, 0, sortbuf);
+                preprocessCategorical(values_i, 0, labels, 0, sortbuf);
+                missingSubst.at<float>(i) = -1.f;
                 int j, m = (int)labels.size();
                 CV_Assert( m > 0 );
                 int a = labels.front(), b = labels.back();
@@ -365,6 +379,13 @@ public:
                 ofs[1] = ofs[0] + m;
                 tempCatOfs.push_back(ofs);
                 std::copy(labels.begin(), labels.end(), std::back_inserter(tempCatMap));
+            }
+            else if( haveMissing )
+            {
+                tempCatOfs.push_back(Vec2i(0, 0));
+                Mat missing_i = layout == ROW_SAMPLE ? missing.col(i) : missing.row(i);
+                compare(missing_i, Scalar::all(0), non_missing, CMP_EQ);
+                missingSubst.at<float>(i) = (float)(mean(values_i, non_missing)[0]);
             }
         }
 
@@ -423,7 +444,7 @@ public:
         sortbuf.resize(n*2);
         int* idx = &sortbuf[0];
         int* idata = (int*)data.ptr<int>();
-        int istep = (int)(data.step/sizeof(int));
+        int istep = data.isContinuous() ? 1 : (int)data.step1();
 
         if( data.type() == CV_32F )
         {
@@ -431,8 +452,13 @@ public:
             const float* fdata = data.ptr<float>();
             for( i = 0; i < n; i++ )
             {
-                idata[i] = cvRound(fdata[i*istep]);
-                CV_Assert( (float)idata[i] == fdata[i*istep] );
+                if( fdata[i*istep] == MISSED_VAL )
+                    idata[i] = -1;
+                else
+                {
+                    idata[i] = cvRound(fdata[i*istep]);
+                    CV_Assert( (float)idata[i] == fdata[i*istep] );
+                }
             }
             istep = 1;
         }
@@ -586,7 +612,7 @@ public:
 
         closeFile();
 
-        int nsamples = samples.rows;
+        int nsamples = tempSamples.rows;
         if( nsamples == 0 )
             return false;
 
@@ -827,6 +853,7 @@ public:
         size_t vstep = layout == ROW_SAMPLE ? 1 : step;
 
         const float* src = samples.ptr<float>() + vi*vstep;
+        float subst = missingSubst.at<float>(vi);
         for( i = 0; i < n; i++ )
         {
             int j = i;
@@ -836,6 +863,8 @@ public:
                 CV_DbgAssert( 0 <= j && j < nsamples );
             }
             values[i] = src[j*sstep];
+            if( values[i] == MISSED_VAL )
+                values[i] = subst;
         }
     }
 
@@ -914,7 +943,7 @@ public:
 
     FILE* file;
     int layout;
-    Mat samples, missing, varType, varIdx, responses;
+    Mat samples, missing, varType, varIdx, responses, missingSubst;
     Mat sampleIdx, trainSampleIdx, testSampleIdx;
     Mat sampleWeights, catMap, catOfs;
     Mat normCatResponses, classLabels, classCounters;

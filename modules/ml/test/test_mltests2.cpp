@@ -313,7 +313,7 @@ int CV_MLBaseTest::prepare_test_case( int test_case_idx )
     data = TrainData::loadFromCSV(filename, 0, respIdx, respIdx+1, varTypes);
     if( data.empty() )
     {
-        ts->printf( cvtest::TS::LOG, "file %s can not be read", filename.c_str() );
+        ts->printf( cvtest::TS::LOG, "file %s can not be read\n", filename.c_str() );
         return cvtest::TS::FAIL_INVALID_TEST_DATA;
     }
 
@@ -378,10 +378,10 @@ int CV_MLBaseTest::train( int testCaseIdx )
     {
         int MAX_DEPTH, MIN_SAMPLE_COUNT, MAX_CATEGORIES, CV_FOLDS;
         float REG_ACCURACY = 0;
-        bool USE_SURROGATE, IS_PRUNED;
+        bool USE_SURROGATE = false, IS_PRUNED;
         modelParamsNode["max_depth"] >> MAX_DEPTH;
         modelParamsNode["min_sample_count"] >> MIN_SAMPLE_COUNT;
-        modelParamsNode["use_surrogate"] >> USE_SURROGATE;
+        //modelParamsNode["use_surrogate"] >> USE_SURROGATE;
         modelParamsNode["max_categories"] >> MAX_CATEGORIES;
         modelParamsNode["cv_folds"] >> CV_FOLDS;
         modelParamsNode["is_pruned"] >> IS_PRUNED;
@@ -392,24 +392,24 @@ int CV_MLBaseTest::train( int testCaseIdx )
     {
         int BOOST_TYPE, WEAK_COUNT, MAX_DEPTH;
         float WEIGHT_TRIM_RATE;
-        bool USE_SURROGATE;
+        bool USE_SURROGATE = false;
         String typeStr;
         modelParamsNode["type"] >> typeStr;
         BOOST_TYPE = str_to_boost_type( typeStr );
         modelParamsNode["weak_count"] >> WEAK_COUNT;
         modelParamsNode["weight_trim_rate"] >> WEIGHT_TRIM_RATE;
         modelParamsNode["max_depth"] >> MAX_DEPTH;
-        modelParamsNode["use_surrogate"] >> USE_SURROGATE;
+        //modelParamsNode["use_surrogate"] >> USE_SURROGATE;
         model = Boost::create( Boost::Params(BOOST_TYPE, WEAK_COUNT, WEIGHT_TRIM_RATE, MAX_DEPTH, USE_SURROGATE, Mat()) );
     }
     else if( modelName == CV_RTREES )
     {
         int MAX_DEPTH, MIN_SAMPLE_COUNT, MAX_CATEGORIES, CV_FOLDS, NACTIVE_VARS, MAX_TREES_NUM;
         float REG_ACCURACY = 0, OOB_EPS = 0.0;
-        bool USE_SURROGATE, IS_PRUNED;
+        bool USE_SURROGATE = false, IS_PRUNED;
         modelParamsNode["max_depth"] >> MAX_DEPTH;
         modelParamsNode["min_sample_count"] >> MIN_SAMPLE_COUNT;
-        modelParamsNode["use_surrogate"] >> USE_SURROGATE;
+        //modelParamsNode["use_surrogate"] >> USE_SURROGATE;
         modelParamsNode["max_categories"] >> MAX_CATEGORIES;
         modelParamsNode["cv_folds"] >> CV_FOLDS;
         modelParamsNode["is_pruned"] >> IS_PRUNED;

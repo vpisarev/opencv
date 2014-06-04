@@ -95,13 +95,12 @@ DTrees::Node::Node()
 {
     classIdx = 0;
     value = 0;
-    parent = left = right = split = -1;
+    parent = left = right = split = defaultDir = -1;
 }
 
 DTrees::Split::Split()
 {
     varIdx = 0;
-    condensedIdx = 0;
     inversed = false;
     quality = 0.f;
     next = -1;
@@ -155,6 +154,7 @@ void DTreesImpl::startTraining( const Ptr<TrainData>& data, int )
 
     data->getCatOfs().copyTo(catOfs);
     data->getCatMap().copyTo(catMap);
+    data->getDefaultSubstValues().copyTo(missingSubst);
 
     int nallvars = data->getNAllVars();
 
@@ -265,52 +265,83 @@ int DTreesImpl::addTree(const vector<int>& sidx )
         w->cv_node_risk.resize(n*cv_n);
     }
 
-    if( _isClassifier )
-        w->cls_count.resize(classLabels.size());
-
     // build the tree recursively
-    int root = addNodeAndTrySplit(-1, sidx);
+    int w_root = addNodeAndTrySplit(-1, sidx);
+    int maxdepth = INT_MAX;//pruneCV(root);
 
-    int pruned_tree_idx = pruneCV(root);
+    int w_nidx = w_root, pidx = -1, depth = 0;
+    int root = (int)nodes.size();
 
-    /*void CvDTree::free_prune_data(bool _cut_tree)
+    for(;;)
     {
-        CvDTreeNode* node = root;
+        const WNode& wnode = w->wnodes[w_nidx];
+        Node node;
+        node.parent = pidx;
+        node.classIdx = wnode.class_idx;
+        node.value = wnode.value;
+        node.defaultDir = wnode.defaultDir;
 
-        for(;;)
+        int wsplit_idx = wnode.split;
+        if( wsplit_idx >= 0 )
         {
-            CvDTreeNode* parent;
-            for(;;)
+            const WSplit& wsplit = w->wsplits[wsplit_idx];
+            Split split;
+            split.c = wsplit.c;
+            split.quality = wsplit.quality;
+            split.inversed = wsplit.inversed;
+            split.varIdx = wsplit.varIdx;
+            split.subsetOfs = -1;
+            if( wsplit.subsetOfs >= 0 )
             {
-                // do not call cvSetRemoveByPtr( cv_heap, node->cv_Tn )
-                // as we will clear the whole cross-validation heap at the end
-                node->cv_Tn = 0;
-                node->cv_node_error = node->cv_node_risk = 0;
-                if( !node->left )
-                    break;
-                node = node->left;
+                int ssize = getSubsetSize(split.varIdx);
+                split.subsetOfs = (int)subsets.size();
+                subsets.resize(split.subsetOfs + ssize);
+                memcpy(&subsets[split.subsetOfs], &w->wsubsets[wsplit.subsetOfs], ssize*sizeof(int));
+            }
+            node.split = (int)splits.size();
+            splits.push_back(split);
+        }
+        int nidx = (int)nodes.size();
+        nodes.push_back(node);
+        if( pidx >= 0 )
+        {
+            int w_pidx = w->wnodes[w_nidx].parent;
+            if( w->wnodes[w_pidx].left == w_nidx )
+            {
+                nodes[pidx].left = nidx;
+            }
+            else
+            {
+                CV_Assert(w->wnodes[w_pidx].right == w_nidx);
+                nodes[pidx].right = nidx;
+            }
+        }
+
+        if( wnode.left >= 0 && depth+1 < maxdepth )
+        {
+            w_nidx = wnode.left;
+            pidx = nidx;
+            depth++;
+        }
+        else
+        {
+            int w_pidx = wnode.parent;
+            while( w_pidx >= 0 && w->wnodes[pidx].right == w_nidx )
+            {
+                w_nidx = w_pidx;
+                w_pidx = w->wnodes[w_pidx].parent;
+                nidx = pidx;
+                pidx = nodes[pidx].parent;
+                depth--;
             }
 
-            for( parent = node->parent; parent && parent->right == node;
-                node = parent, parent = parent->parent )
-            {
-                if( _cut_tree && parent->Tn <= pruned_tree_idx )
-                {
-                    data->free_node( parent->left );
-                    data->free_node( parent->right );
-                    parent->left = parent->right = 0;
-                }
-            }
-            
-            if( !parent )
+            if( w_pidx < 0 )
                 break;
-            
-            node = parent->right;
+
+            w_nidx = w->wnodes[w_pidx].right;
+            CV_Assert( w_nidx >= 0 );
         }
-        
-        if( data->cv_heap )
-            cvClearSet( data->cv_heap );
-    }*/
+    }
     roots.push_back(root);
     return root;
 }
@@ -353,7 +384,6 @@ int DTreesImpl::addNodeAndTrySplit( int parent, const vector<int>& sidx )
 
     node.parent = parent;
     node.depth = parent >= 0 ? w->wnodes[parent].depth + 1 : 0;
-
     int nfolds = params.CVFolds;
 
     if( nfolds > 0 )
@@ -363,23 +393,30 @@ int DTreesImpl::addNodeAndTrySplit( int parent, const vector<int>& sidx )
         w->cv_node_risk.resize((nidx+1)*nfolds);
     }
 
-    int n = node.sample_count = (int)sidx.size();
+    int i, n = node.sample_count = (int)sidx.size();
     bool can_split = true;
     vector<int> sleft, sright;
 
     calcValue( nidx, sidx );
 
+    //printf("depth=%d, nidx=%d, parent=%d, n=%d, value=%.1f, risk=%.1f\n", node.depth, nidx, node.parent, n, node.value, node.node_risk);
+
     if( n <= params.minSampleCount || node.depth >= params.maxDepth )
         can_split = false;
     else if( _isClassifier )
     {
-        int nz = countNonZero(w->cls_count);
-        if( nz <= 1 )
+        const int* responses = &w->cat_responses[0];
+        const int* s = &sidx[0];
+        int first = responses[s[0]];
+        for( i = 1; i < n; i++ )
+            if( responses[s[i]] != first )
+                break;
+        if( i == n )
             can_split = false;
     }
     else
     {
-        if( sqrt(node.node_risk)/n < params.regressionAccuracy )
+        if( sqrt(node.node_risk) < params.regressionAccuracy )
             can_split = false;
     }
 
@@ -388,12 +425,12 @@ int DTreesImpl::addNodeAndTrySplit( int parent, const vector<int>& sidx )
 
     if( node.split >= 0 )
     {
-        calcDir( node.split, sidx, sleft, sright );
+        node.defaultDir = calcDir( node.split, sidx, sleft, sright );
         if( params.useSurrogates )
             CV_Error( CV_StsNotImplemented, "surrogate splits are not implemented yet");
 
-        node.left = addNodeAndTrySplit( nidx, sleft );
-        node.right = addNodeAndTrySplit( nidx, sright );
+        w->wnodes[nidx].left = addNodeAndTrySplit( nidx, sleft );
+        w->wnodes[nidx].right = addNodeAndTrySplit( nidx, sright );
     }
     return nidx;
 }
@@ -405,47 +442,42 @@ int DTreesImpl::findBestSplit( const vector<int>& _sidx )
     int vi_, nv = (int)activeVars.size();
     AutoBuffer<int> buf(w->maxSubsetSize*2);
     int *subset = buf, *best_subset = subset + w->maxSubsetSize;
-    int best_mi = 0;
     WSplit split, best_split;
     best_split.quality = 0.;
 
     for( vi_ = 0; vi_ < nv; vi_++ )
     {
         int vi = activeVars[vi_];
-        int mi = getCatCount(vi);
-        if( mi <= 0 )
-        {
-            if( _isClassifier )
-                split = findSplitOrdClass(vi, _sidx, best_split.quality);
-            else
-                split = findSplitOrdReg(vi, _sidx, best_split.quality);
-        }
-        else
+        if( varType[vi] == VAR_CATEGORICAL )
         {
             if( _isClassifier )
                 split = findSplitCatClass(vi, _sidx, best_split.quality, subset);
             else
                 split = findSplitCatReg(vi, _sidx, best_split.quality, subset);
         }
+        else
+        {
+            if( _isClassifier )
+                split = findSplitOrdClass(vi, _sidx, best_split.quality);
+            else
+                split = findSplitOrdReg(vi, _sidx, best_split.quality);
+        }
         if( split.quality > best_split.quality )
         {
             best_split = split;
-            best_mi = mi;
             std::swap(subset, best_subset);
         }
     }
 
     if( best_split.quality > 0 )
     {
-        CV_Assert( compVarIdx[best_split.var_idx] >= 0 );
-        if( best_mi > 0 )
-        {
-            int i, prevsz = (int)w->wsubsets.size(), ssize = (best_mi + 31)/32;
-            w->wsubsets.resize(prevsz + ssize);
-            for( i = 0; i < ssize; i++ )
-                w->wsubsets[prevsz + i] = best_subset[i];
-            best_split.subset_ofs = prevsz;
-        }
+        int best_vi = best_split.varIdx;
+        CV_Assert( compVarIdx[best_split.varIdx] >= 0 && best_vi >= 0 );
+        int i, prevsz = (int)w->wsubsets.size(), ssize = getSubsetSize(best_vi);
+        w->wsubsets.resize(prevsz + ssize);
+        for( i = 0; i < ssize; i++ )
+            w->wsubsets[prevsz + i] = best_subset[i];
+        best_split.subsetOfs = prevsz;
         w->wsplits.push_back(best_split);
         splitidx = (int)(w->wsplits.size()-1);
     }
@@ -459,7 +491,7 @@ void DTreesImpl::calcValue( int nidx, const vector<int>& _sidx )
     int i, j, k, n = (int)_sidx.size(), cv_n = params.CVFolds;
     int m = (int)classLabels.size();
 
-    cv::AutoBuffer<double> buf(std::max(m, 3)*std::max(cv_n,1));
+    cv::AutoBuffer<double> buf(std::max(m, 3)*(cv_n+1));
 
     if( cv_n > 0 )
     {
@@ -480,8 +512,8 @@ void DTreesImpl::calcValue( int nidx, const vector<int>& _sidx )
         //    misclassified samples with cv_labels(*)==j.
 
         // compute the number of instances of each class
-        double* cv_cls_count = buf;
-        double* cls_count = &w->cls_count[0];
+        double* cls_count = buf;
+        double* cv_cls_count = cls_count + m;
 
         double max_val = -1, total_weight = 0;
         int max_k = -1;
@@ -493,8 +525,8 @@ void DTreesImpl::calcValue( int nidx, const vector<int>& _sidx )
         {
             for( i = 0; i < n; i++ )
             {
-                int idx = _sidx[i];
-                cls_count[w->cat_responses[idx]] += w->sample_weights[idx];
+                int si = _sidx[i];
+                cls_count[w->cat_responses[si]] += w->sample_weights[si];
             }
         }
         else
@@ -505,9 +537,9 @@ void DTreesImpl::calcValue( int nidx, const vector<int>& _sidx )
 
             for( i = 0; i < n; i++ )
             {
-                int idx = _sidx[i];
-                j = w->cv_labels[idx]; k = w->cat_responses[idx];
-                cv_cls_count[j*m + k] += w->sample_weights[idx];
+                int si = _sidx[i];
+                j = w->cv_labels[si]; k = w->cat_responses[si];
+                cv_cls_count[j*m + k] += w->sample_weights[si];
             }
 
             for( j = 0; j < cv_n; j++ )
@@ -568,22 +600,24 @@ void DTreesImpl::calcValue( int nidx, const vector<int>& _sidx )
         //    where node_value_j is the node value calculated
         //    as described in the previous bullet, and summation is done
         //    over the samples with cv_labels(*)==j.
-        double sum = 0, sum2 = 0;
+        double sum = 0, sum2 = 0, sumw = 0;
 
         if( cv_n == 0 )
         {
             for( i = 0; i < n; i++ )
             {
-                int idx = _sidx[i];
-                double t = w->ord_responses[idx]*w->sample_weights[idx];
-                sum += t;
-                sum2 += t*t;
+                int si = _sidx[i];
+                double wval = w->sample_weights[si];
+                double t = w->ord_responses[si];
+                sum += t*wval;
+                sum2 += t*t*wval;
+                sumw += wval;
             }
         }
         else
         {
             double *cv_sum = buf, *cv_sum2 = cv_sum + cv_n;
-            int* cv_count = (int*)(cv_sum2 + cv_n);
+            double* cv_count = (double*)(cv_sum2 + cv_n);
 
             for( j = 0; j < cv_n; j++ )
             {
@@ -593,34 +627,36 @@ void DTreesImpl::calcValue( int nidx, const vector<int>& _sidx )
 
             for( i = 0; i < n; i++ )
             {
-                int idx = _sidx[i];
-                j = w->cv_labels[idx];
-                double t = w->ord_responses[idx];
-                cv_sum[j] += t;
-                cv_sum2[j] += t*t;
-                cv_count[j]++;
+                int si = _sidx[i];
+                j = w->cv_labels[si];
+                double wval = w->sample_weights[si];
+                double t = w->ord_responses[si];
+                cv_sum[j] += t*wval;
+                cv_sum2[j] += t*t*wval;
+                cv_count[j] += wval;
             }
             
             for( j = 0; j < cv_n; j++ )
             {
                 sum += cv_sum[j];
                 sum2 += cv_sum2[j];
+                sumw += cv_count[j];
             }
 
             for( j = 0; j < cv_n; j++ )
             {
                 double s = sum - cv_sum[j], si = sum - s;
                 double s2 = sum2 - cv_sum2[j], s2i = sum2 - s2;
-                int c = cv_count[j], ci = n - c;
-                double r = si/std::max(ci, 1);
+                double c = cv_count[j], ci = sumw - c;
+                double r = si/std::max(ci, DBL_EPSILON);
                 w->cv_node_risk[nidx*cv_n + j] = s2i - r*r*ci;
                 w->cv_node_error[nidx*cv_n + j] = s2 - 2*r*s + c*r*r;
                 w->cv_Tn[nidx*cv_n + j] = INT_MAX;
             }
         }
         
-        node->node_risk = sum2 - (sum/n)*sum;
-        node->value = sum/n;
+        node->node_risk = sum2 - (sum/sumw)*sum;
+        node->value = sum/sumw;
     }
 }
 
@@ -649,8 +685,8 @@ DTreesImpl::WSplit DTreesImpl::findSplitOrdClass( int vi, const vector<int>& _si
     for( i = 0; i < n; i++ )
     {
         sorted_idx[i] = i;
-        int j = sidx[i];
-        rcw[responses[j]] += weights[j];
+        int si = sidx[i];
+        rcw[responses[si]] += weights[si];
     }
 
     std::sort(sorted_idx, sorted_idx + n, cmp_lt_idx<float>(values));
@@ -667,10 +703,10 @@ DTreesImpl::WSplit DTreesImpl::findSplitOrdClass( int vi, const vector<int>& _si
     {
         int curr = sorted_idx[i];
         int next = sorted_idx[i+1];
-        int j = sidx[curr];
-        double wval = weights[j], w2 = wval*wval;
+        int si = sidx[curr];
+        double wval = weights[si], w2 = wval*wval;
         L += wval; R -= wval;
-        int idx = responses[j];
+        int idx = responses[si];
         double lv = lcw[idx], rv = rcw[idx];
         lsum2 += 2*lv*wval + w2;
         rsum2 -= 2*rv*wval - w2;
@@ -690,7 +726,7 @@ DTreesImpl::WSplit DTreesImpl::findSplitOrdClass( int vi, const vector<int>& _si
     WSplit split;
     if( best_i >= 0 )
     {
-        split.var_idx = vi;
+        split.varIdx = vi;
         split.c = (values[sorted_idx[best_i]] + values[sorted_idx[best_i+1]])*0.5f;
         split.inversed = 0;
         split.quality = (float)best_val;
@@ -818,7 +854,7 @@ DTreesImpl::WSplit DTreesImpl::findSplitCatClass( int vi, const vector<int>& _si
 
     int* cluster_labels = 0;
     double** dbl_ptr = 0;
-    int i, j, k, idx;
+    int i, j, k, si, idx;
     double L = 0, R = 0;
     double best_val = initQuality;
     int prevcode = 0, best_subset = -1, subset_i, subset_n, subtract = 0;
@@ -831,10 +867,10 @@ DTreesImpl::WSplit DTreesImpl::findSplitCatClass( int vi, const vector<int>& _si
 
     for( i = 0; i < n; i++ )
     {
-        idx = _sidx[i];
+        si = _sidx[i];
         j = labels[i];
-        k = responses[i];
-        cjk[j*m + k] += weights[idx];
+        k = responses[si];
+        cjk[j*m + k] += weights[si];
     }
 
     if( m > 2 )
@@ -865,6 +901,7 @@ DTreesImpl::WSplit DTreesImpl::findSplitCatClass( int vi, const vector<int>& _si
         double sum = 0;
         for( j = 0; j < mi; j++ )
             sum += cjk[j*m + k];
+        CV_Assert(sum > 0);
         rc[k] = sum;
         lc[k] = 0;
     }
@@ -946,9 +983,9 @@ DTreesImpl::WSplit DTreesImpl::findSplitCatClass( int vi, const vector<int>& _si
     WSplit split;
     if( best_subset >= 0 )
     {
-        split.var_idx = vi;
+        split.varIdx = vi;
         split.quality = (float)best_val;
-        memset( subset, 0, (_mi + 31)/32 * sizeof(int) );
+        memset( subset, 0, getSubsetSize(vi) * sizeof(int) );
         if( m == 2 )
         {
             for( i = 0; i <= best_subset; i++ )
@@ -983,16 +1020,16 @@ DTreesImpl::WSplit DTreesImpl::findSplitOrdReg( int vi, const vector<int>& _sidx
     w->data->getValues(vi, _sidx, values);
     const double* responses = &w->ord_responses[0];
 
-    int i, j, best_i = -1;
+    int i, si, best_i = -1;
     double L = 0, R = 0;
     double best_val = initQuality, lsum = 0, rsum = 0;
 
     for( i = 0; i < n; i++ )
     {
         sorted_idx[i] = i;
-        j = _sidx[i];
-        R += weights[j];
-        rsum += weights[j]*responses[j];
+        si = _sidx[i];
+        R += weights[si];
+        rsum += weights[si]*responses[si];
     }
 
     std::sort(sorted_idx, sorted_idx + n, cmp_lt_idx<float>(values));
@@ -1002,9 +1039,9 @@ DTreesImpl::WSplit DTreesImpl::findSplitOrdReg( int vi, const vector<int>& _sidx
     {
         int curr = sorted_idx[i];
         int next = sorted_idx[i+1];
-        j = _sidx[curr];
-        double wval = weights[j];
-        double t = responses[j]*wval;
+        si = _sidx[curr];
+        double wval = weights[si];
+        double t = responses[si]*wval;
         L += wval; R -= wval;
         lsum += t; rsum -= t;
 
@@ -1022,7 +1059,7 @@ DTreesImpl::WSplit DTreesImpl::findSplitOrdReg( int vi, const vector<int>& _sidx
     WSplit split;
     if( best_i >= 0 )
     {
-        split.var_idx = vi;
+        split.varIdx = vi;
         split.c = (values[sorted_idx[best_i]] + values[sorted_idx[best_i+1]])*0.5f;
         split.inversed = 0;
         split.quality = (float)best_val;
@@ -1039,7 +1076,7 @@ DTreesImpl::WSplit DTreesImpl::findSplitCatReg( int vi, const vector<int>& _sidx
     int mi = getCatCount(vi);
 
     AutoBuffer<double> buf(3*mi + 3 + n);
-    double* sum = buf;
+    double* sum = (double*)buf + 1;
     double* counts = sum + mi + 1;
     double** sum_ptr = (double**)(counts + mi);
     int* cat_labels = (int*)(sum_ptr + mi);
@@ -1047,7 +1084,7 @@ DTreesImpl::WSplit DTreesImpl::findSplitCatReg( int vi, const vector<int>& _sidx
     w->data->getNormCatValues(vi, _sidx, cat_labels);
 
     double L = 0, R = 0, best_val = initQuality, lsum = 0, rsum = 0;
-    int i, j, best_subset = -1, subset_i;
+    int i, si, best_subset = -1, subset_i;
 
     for( i = -1; i < mi; i++ )
         sum[i] = counts[i] = 0;
@@ -1056,9 +1093,9 @@ DTreesImpl::WSplit DTreesImpl::findSplitCatReg( int vi, const vector<int>& _sidx
     for( i = 0; i < n; i++ )
     {
         int idx = cat_labels[i];
-        j = _sidx[i];
-        double wval = weights[j];
-        sum[idx] += responses[j]*wval;
+        si = _sidx[i];
+        double wval = weights[si];
+        sum[idx] += responses[si]*wval;
         counts[idx] += wval;
     }
 
@@ -1104,9 +1141,9 @@ DTreesImpl::WSplit DTreesImpl::findSplitCatReg( int vi, const vector<int>& _sidx
     WSplit split;
     if( best_subset >= 0 )
     {
-        split.var_idx = vi;
+        split.varIdx = vi;
         split.quality = (float)best_val;
-        memset( subset, 0, (mi + 31)/32 * sizeof(int));
+        memset( subset, 0, getSubsetSize(vi) * sizeof(int));
         for( i = 0; i <= best_subset; i++ )
         {
             int idx = (int)(sum_ptr[i] - sum);
@@ -1116,16 +1153,20 @@ DTreesImpl::WSplit DTreesImpl::findSplitCatReg( int vi, const vector<int>& _sidx
     return split;
 }
 
-void DTreesImpl::calcDir( int splitidx, const vector<int>& _sidx,
-                          vector<int>& _sleft, vector<int>& _sright )
+int DTreesImpl::calcDir( int splitidx, const vector<int>& _sidx,
+                         vector<int>& _sleft, vector<int>& _sright )
 {
     WSplit split = w->wsplits[splitidx];
-    int i, j, n = (int)_sidx.size(), vi = split.var_idx;
+    int i, si, n = (int)_sidx.size(), vi = split.varIdx;
     _sleft.reserve(n);
     _sright.reserve(n);
+    _sleft.clear();
+    _sright.clear();
 
     AutoBuffer<float> buf(n);
     int mi = getCatCount(vi);
+    double wleft = 0, wright = 0;
+    const double* weights = &w->sample_weights[0];
 
     if( mi <= 0 ) // split on an ordered variable
     {
@@ -1135,29 +1176,43 @@ void DTreesImpl::calcDir( int splitidx, const vector<int>& _sidx,
 
         for( i = 0; i < n; i++ )
         {
-            j = _sidx[i];
+            si = _sidx[i];
             if( values[i] <= c )
-                _sleft.push_back(j);
+            {
+                _sleft.push_back(si);
+                wleft += weights[si];
+            }
             else
-                _sright.push_back(j);
+            {
+                _sright.push_back(si);
+                wright += weights[si];
+            }
         }
     }
     else
     {
-        const int* subset = &w->wsubsets[split.subset_ofs];
+        const int* subset = &w->wsubsets[split.subsetOfs];
         int* cat_labels = (int*)(float*)buf;
         w->data->getNormCatValues(vi, _sidx, cat_labels);
 
         for( i = 0; i < n; i++ )
         {
-            j = _sidx[i];
+            si = _sidx[i];
             unsigned u = cat_labels[i];
             if( CV_DTREE_CAT_DIR(u, subset) < 0 )
-                _sleft.push_back(j);
+            {
+                _sleft.push_back(si);
+                wleft += weights[si];
+            }
             else
-                _sright.push_back(j);
+            {
+                _sright.push_back(si);
+                wright += weights[si];
+            }
         }
     }
+    CV_Assert( (int)_sleft.size() < n && (int)_sright.size() < n );
+    return wleft > wright ? -1 : 1;
 }
 
 int DTreesImpl::pruneCV( int root )
@@ -1345,9 +1400,11 @@ float DTreesImpl::predictTrees( const Range& range, const Mat& sample, int flags
     const Vec2i* cofs = !catOfs.empty() ? &catOfs[0] : 0;
     const int* cmap = !catMap.empty() ? &catMap[0] : 0;
     const float* psample = sample.ptr<float>();
+    const float* missingSubstPtr = missingSubst.empty() ? &missingSubst[0] : 0;
     size_t sstep = sample.isContinuous() ? 1 : sample.step/sizeof(float);
     double sum = 0.;
     int lastClassIdx = -1;
+    const float MISSED_VAL = TrainData::missingValue();
 
     for( i = 0; i < catbufsize; i++ )
         catbuf[i] = -1;
@@ -1367,18 +1424,29 @@ float DTreesImpl::predictTrees( const Range& range, const Mat& sample, int flags
     for( int ridx = range.start; ridx < range.end; ridx++ )
     {
         int nidx = roots[ridx], prev = nidx, c = 0;
-        const Node* node;
 
-        while( nidx >= 0 )
+        for(;;)
         {
             prev = nidx;
-            node = &nodes[nidx];
-            const Split& split = splits[node->split];
+            const Node& node = nodes[nidx];
+            if( node.split < 0 )
+                break;
+            const Split& split = splits[node.split];
             int vi = split.varIdx;
             int ci = cvidx ? cvidx[vi] : vi;
             float val = psample[ci*sstep];
+            if( val == MISSED_VAL )
+            {
+                if( !missingSubstPtr )
+                {
+                    nidx = node.defaultDir < 0 ? node.left : node.right;
+                    continue;
+                }
+                val = missingSubstPtr[vi];
+            }
+
             if( vtype[vi] == VAR_ORDERED )
-                nidx = val <= split.c ? node->left : node->right;
+                nidx = val <= split.c ? node.left : node.right;
             else
             {
                 if( flags & PREPROCESSED_INPUT )
@@ -1414,7 +1482,7 @@ float DTreesImpl::predictTrees( const Range& range, const Mat& sample, int flags
                     }
                     const int* subset = &subsets[split.subsetOfs];
                     unsigned u = c;
-                    nidx = CV_DTREE_CAT_DIR(u, subset) < 0 ? node->left : node->right;
+                    nidx = CV_DTREE_CAT_DIR(u, subset) < 0 ? node.left : node.right;
                 }
             }
         }
@@ -1699,9 +1767,9 @@ int DTreesImpl::readSplit( const FileNode& fn )
     int ci = varType[vi];
     if( ci >= 0 ) // split on categorical var
     {
-        int i, val, nb = (getCatCount(vi) + 31)/32;
+        int i, val, ssize = getSubsetSize(vi);
         split.subsetOfs = (int)subsets.size();
-        for( i = 0; i < nb; i++ )
+        for( i = 0; i < ssize; i++ )
             subsets.push_back(0);
         int* subset = &subsets[split.subsetOfs];
         FileNode fns = fn["in"];
@@ -1730,7 +1798,7 @@ int DTreesImpl::readSplit( const FileNode& fn )
         // for categorical splits we do not use inversed splits,
         // instead we inverse the variable set in the split
         if( split.inversed )
-            for( i = 0; i < nb; i++ )
+            for( i = 0; i < ssize; i++ )
                 subset[i] ^= -1;
     }
     else

@@ -49,6 +49,7 @@
 
 #ifdef __cplusplus
 
+#include <float.h>
 #include <map>
 #include <iostream>
 
@@ -97,6 +98,7 @@ public:
 class CV_EXPORTS TrainData
 {
 public:
+    static inline float missingValue() { return FLT_MAX; }
     virtual ~TrainData();
 
     virtual int getLayout() const = 0;
@@ -128,6 +130,7 @@ public:
     virtual Mat getTestSampleIdx() const = 0;
     virtual void getValues(int vi, InputArray sidx, float* values) const = 0;
     virtual void getNormCatValues(int vi, InputArray sidx, int* values) const = 0;
+    virtual Mat getDefaultSubstValues() const = 0;
 
     virtual int getCatCount(int vi) const = 0;
     virtual Mat getClassLabels() const = 0;
@@ -376,12 +379,13 @@ public:
     {
     public:
         Node();
-        int classIdx;
         double value;
+        int classIdx;
 
         int parent;
         int left;
         int right;
+        int defaultDir;
 
         int split;
     };
@@ -391,7 +395,6 @@ public:
     public:
         Split();
         int varIdx;
-        int condensedIdx;
         bool inversed;
         float quality;
         int next;
