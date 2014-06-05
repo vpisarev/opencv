@@ -41,6 +41,9 @@
 //M*/
 
 #include "precomp.hpp"
+
+#if 0
+
 #include "opencv2/ml.hpp"
 #include <queue>
 
@@ -456,3 +459,6 @@ cv::Ptr<Octave> Octave::create(cv::Rect boundingBox, int npositives, int nnegati
         new BoostedSoftCascadeOctave(boundingBox, npositives, nnegatives, logScale, shrinkage, builder));
     return octave;
 }
+
+#endif
+

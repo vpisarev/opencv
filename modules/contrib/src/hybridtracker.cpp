@@ -41,6 +41,7 @@
 //M*/
 #include "precomp.hpp"
 #include "opencv2/contrib/hybridtracker.hpp"
+#include "opencv2/core/core_c.h"
 
 using namespace cv;
 

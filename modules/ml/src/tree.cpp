@@ -115,7 +115,10 @@ DTreesImpl::WorkData::WorkData(const Ptr<TrainData>& _data)
     vector<int> subsampleIdx;
     Mat sidx0 = _data->getTrainSampleIdx();
     if( !sidx0.empty() )
+    {
         sidx0.copyTo(sidx);
+        std::sort(sidx.begin(), sidx.end());
+    }
     else
     {
         int n = _data->getNSamples();
@@ -326,7 +329,7 @@ int DTreesImpl::addTree(const vector<int>& sidx )
         else
         {
             int w_pidx = wnode.parent;
-            while( w_pidx >= 0 && w->wnodes[pidx].right == w_nidx )
+            while( w_pidx >= 0 && w->wnodes[w_pidx].right == w_nidx )
             {
                 w_nidx = w_pidx;
                 w_pidx = w->wnodes[w_pidx].parent;
@@ -399,8 +402,6 @@ int DTreesImpl::addNodeAndTrySplit( int parent, const vector<int>& sidx )
 
     calcValue( nidx, sidx );
 
-    //printf("depth=%d, nidx=%d, parent=%d, n=%d, value=%.1f, risk=%.1f\n", node.depth, nidx, node.parent, n, node.value, node.node_risk);
-
     if( n <= params.minSampleCount || node.depth >= params.maxDepth )
         can_split = false;
     else if( _isClassifier )
@@ -423,6 +424,8 @@ int DTreesImpl::addNodeAndTrySplit( int parent, const vector<int>& sidx )
     if( can_split )
         node.split = findBestSplit( sidx );
 
+    //printf("depth=%d, nidx=%d, parent=%d, n=%d, %s, value=%.1f, risk=%.1f\n", node.depth, nidx, node.parent, n, (node.split < 0 ? "leaf" : varType[w->wsplits[node.split].varIdx] == VAR_CATEGORICAL ? "cat" : "ord"), node.value, node.node_risk);
+
     if( node.split >= 0 )
     {
         node.defaultDir = calcDir( node.split, sidx, sleft, sright );
@@ -432,6 +435,7 @@ int DTreesImpl::addNodeAndTrySplit( int parent, const vector<int>& sidx )
         w->wnodes[nidx].left = addNodeAndTrySplit( nidx, sleft );
         w->wnodes[nidx].right = addNodeAndTrySplit( nidx, sright );
     }
+
     return nidx;
 }
 
@@ -451,16 +455,16 @@ int DTreesImpl::findBestSplit( const vector<int>& _sidx )
         if( varType[vi] == VAR_CATEGORICAL )
         {
             if( _isClassifier )
-                split = findSplitCatClass(vi, _sidx, best_split.quality, subset);
+                split = findSplitCatClass(vi, _sidx, 0, subset);
             else
-                split = findSplitCatReg(vi, _sidx, best_split.quality, subset);
+                split = findSplitCatReg(vi, _sidx, 0, subset);
         }
         else
         {
             if( _isClassifier )
-                split = findSplitOrdClass(vi, _sidx, best_split.quality);
+                split = findSplitOrdClass(vi, _sidx, 0);
             else
-                split = findSplitOrdReg(vi, _sidx, best_split.quality);
+                split = findSplitOrdReg(vi, _sidx, 0);
         }
         if( split.quality > best_split.quality )
         {
@@ -1389,7 +1393,9 @@ float DTreesImpl::predictTrees( const Range& range, const Mat& sample, int flags
     CV_Assert( sample.type() == CV_32F );
 
     int predictType = flags & PREDICT_MASK;
-    int nvars = (int)varType.size();
+    int nvars = (int)varIdx.size();
+    if( nvars == 0 )
+        nvars = (int)varType.size();
     int i, ncats = (int)catOfs.size(), nclasses = (int)classLabels.size();
     int catbufsize = ncats > 0 ? nvars : 0;
     AutoBuffer<int> buf(nclasses + catbufsize + 1);
@@ -1400,7 +1406,7 @@ float DTreesImpl::predictTrees( const Range& range, const Mat& sample, int flags
     const Vec2i* cofs = !catOfs.empty() ? &catOfs[0] : 0;
     const int* cmap = !catMap.empty() ? &catMap[0] : 0;
     const float* psample = sample.ptr<float>();
-    const float* missingSubstPtr = missingSubst.empty() ? &missingSubst[0] : 0;
+    const float* missingSubstPtr = !missingSubst.empty() ? &missingSubst[0] : 0;
     size_t sstep = sample.isContinuous() ? 1 : sample.step/sizeof(float);
     double sum = 0.;
     int lastClassIdx = -1;
@@ -1453,11 +1459,11 @@ float DTreesImpl::predictTrees( const Range& range, const Mat& sample, int flags
                     c = cvRound(val);
                 else
                 {
-                    c = catbuf[vi];
+                    c = catbuf[ci];
                     if( c < 0 )
                     {
-                        int a = c = cofs[ci][0];
-                        int b = cofs[ci][1];
+                        int a = c = cofs[vi][0];
+                        int b = cofs[vi][1];
 
                         int ival = cvRound(val);
                         if( ival != val )
@@ -1475,10 +1481,10 @@ float DTreesImpl::predictTrees( const Range& range, const Mat& sample, int flags
                                 break;
                         }
 
-                        if( c < 0 || ival != cmap[c] )
-                            continue;
+                        CV_Assert( c >= 0 && ival == cmap[c] );
 
-                        catbuf[ci] = c -= cofs[ci][0];
+                        c -= cofs[vi][0];
+                        catbuf[ci] = c;
                     }
                     const int* subset = &subsets[split.subsetOfs];
                     unsigned u = c;
@@ -1515,13 +1521,16 @@ float DTreesImpl::predictTrees( const Range& range, const Mat& sample, int flags
 
 float DTreesImpl::predict( InputArray _samples, OutputArray _results, int flags ) const
 {
+    CV_Assert( !roots.empty() );
     Mat samples = _samples.getMat(), results;
     int i, nsamples = samples.rows;
     int rtype = CV_32F;
     bool needresults = _results.needed();
     float retval = 0.f;
+    bool iscls = isClassifier();
+    float scale = !iscls ? 1.f/(int)roots.size() : 1.f;
 
-    if( _isClassifier && (flags & PREDICT_MASK) == PREDICT_MAX_VOTE )
+    if( iscls && (flags & PREDICT_MASK) == PREDICT_MAX_VOTE )
         rtype = CV_32S;
 
     if( needresults )
@@ -1534,7 +1543,7 @@ float DTreesImpl::predict( InputArray _samples, OutputArray _results, int flags 
 
     for( i = 0; i < nsamples; i++ )
     {
-        float val = predictTrees( Range(0, (int)roots.size()), samples.row(i), flags );
+        float val = predictTrees( Range(0, (int)roots.size()), samples.row(i), flags )*scale;
         if( needresults )
         {
             if( rtype == CV_32F )
@@ -1551,15 +1560,8 @@ float DTreesImpl::predict( InputArray _samples, OutputArray _results, int flags 
 void DTreesImpl::writeTrainingParams(FileStorage& fs) const
 {
     fs << "use_surrogates" << (params0.useSurrogates ? 1 : 0);
-
-    if( _isClassifier )
-    {
-        fs << "max_categories" << params0.maxCategories;
-    }
-    else
-    {
-        fs << "regression_accuracy" << params0.regressionAccuracy;
-    }
+    fs << "max_categories" << params0.maxCategories;
+    fs << "regression_accuracy" << params0.regressionAccuracy;
 
     fs << "max_depth" << params0.maxDepth;
     fs << "min_sample_count" << params0.minSampleCount;
@@ -1574,14 +1576,14 @@ void DTreesImpl::writeTrainingParams(FileStorage& fs) const
 
 void DTreesImpl::writeParams(FileStorage& fs) const
 {
-    fs << "is_classifier" << _isClassifier;
+    fs << "is_classifier" << isClassifier();
     fs << "var_all" << (int)varType.size();
     fs << "var_count" << getVarCount();
 
     int ord_var_count = 0, cat_var_count = 0;
     int i, n = (int)varType.size();
     for( i = 0; i < n; i++ )
-        if( varType[i] < 0 )
+        if( varType[i] == VAR_ORDERED )
             ord_var_count++;
         else
             cat_var_count++;
@@ -1596,18 +1598,16 @@ void DTreesImpl::writeParams(FileStorage& fs) const
     if( !varIdx.empty() )
         fs << "var_idx" << varIdx;
 
-    fs << "var_type" << "[:";
-
-    n = (int)varType.size();
-    for( i = 0; i < n; i++ )
-        fs << (int)(varType[i] >= 0);
-
-    fs << "]";
+    fs << "var_type" << varType;
 
     if( !catOfs.empty() )
         fs << "cat_ofs" << catOfs;
     if( !catMap.empty() )
         fs << "cat_map" << catMap;
+    if( !classLabels.empty() )
+        fs << "class_labels" << classLabels;
+    if( !missingSubst.empty() )
+        fs << "missing_subst" << missingSubst;
 }
 
 void DTreesImpl::writeSplit( FileStorage& fs, int splitidx ) const
@@ -1725,15 +1725,8 @@ void DTreesImpl::readParams( const FileNode& fn )
     if( !tparams_node.empty() ) // training parameters are not necessary
     {
         params0.useSurrogates = (int)tparams_node["use_surrogates"] != 0;
-
-        if( _isClassifier )
-        {
-            params0.maxCategories = (int)tparams_node["max_categories"];
-        }
-        else
-        {
-            params0.regressionAccuracy = (float)tparams_node["regression_accuracy"];
-        }
+        params0.maxCategories = (int)tparams_node["max_categories"];
+        params0.regressionAccuracy = (float)tparams_node["regression_accuracy"];
 
         params0.maxDepth = (int)tparams_node["max_depth"];
         params0.minSampleCount = (int)tparams_node["min_sample_count"];
@@ -1752,6 +1745,8 @@ void DTreesImpl::readParams( const FileNode& fn )
 
     fn["cat_ofs"] >> catOfs;
     fn["cat_map"] >> catMap;
+    fn["missing_subst"] >> missingSubst;
+    fn["class_labels"] >> classLabels;
 
     initCompVarIdx();
     setDParams(params0);
@@ -1763,9 +1758,9 @@ int DTreesImpl::readSplit( const FileNode& fn )
 
     int vi = (int)fn["var"];
     CV_Assert( 0 <= vi && vi <= (int)varType.size() );
+    split.varIdx = vi;
 
-    int ci = varType[vi];
-    if( ci >= 0 ) // split on categorical var
+    if( varType[vi] == VAR_CATEGORICAL ) // split on categorical var
     {
         int i, val, ssize = getSubsetSize(vi);
         split.subsetOfs = (int)subsets.size();
@@ -1798,13 +1793,16 @@ int DTreesImpl::readSplit( const FileNode& fn )
         // for categorical splits we do not use inversed splits,
         // instead we inverse the variable set in the split
         if( split.inversed )
+        {
             for( i = 0; i < ssize; i++ )
                 subset[i] ^= -1;
+            split.inversed = false;
+        }
     }
     else
     {
         FileNode cmpNode = fn["le"];
-        if( !cmpNode.empty() )
+        if( cmpNode.empty() )
         {
             cmpNode = fn["gt"];
             split.inversed = true;
@@ -1878,6 +1876,7 @@ int DTreesImpl::readTree( const FileNode& fn )
                 pidx = nodes[pidx].parent;
         }
     }
+    roots.push_back(root);
     return root;
 }
 
@@ -1888,8 +1887,7 @@ void DTreesImpl::read( const FileNode& fn )
 
     FileNode fnodes = fn["nodes"];
     CV_Assert( !fnodes.empty() );
-    int root = readTree(fnodes);
-    roots.push_back(root);
+    readTree(fnodes);
 }
 
 Ptr<DTrees> DTrees::create(const DTrees::Params& params)

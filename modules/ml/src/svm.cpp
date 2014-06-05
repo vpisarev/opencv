@@ -1468,7 +1468,7 @@ public:
                         if( std::abs(_alpha[k]) > 0 )
                         {
                             int idx = k < ci ? si+k : sj+k-ci;
-                            sv_tab[idx] = 1;
+                            sv_tab[sidx_all[idx]] = 1;
                             df_index.push_back(sidx_all[idx]);
                             df_alpha.push_back(_alpha[k]);
                         }
@@ -1496,7 +1496,10 @@ public:
             // set sv pointers
             int n = (int)df_index.size();
             for( i = 0; i < n; i++ )
+            {
+                CV_Assert( sv_tab[df_index[i]] > 0 );
                 df_index[i] = sv_tab[df_index[i]] - 1;
+            }
         }
 
         optimize_linear_svm();
@@ -1560,7 +1563,6 @@ public:
 
         int svmType = params.svmType;
         Mat samples = data->getTrainSamples();
-        Mat trainSampleIdx = data->getTrainSampleIdx();
         Mat responses;
 
         if( svmType == C_SVC || svmType == NU_SVC )

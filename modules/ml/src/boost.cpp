@@ -86,6 +86,8 @@ public:
     DTreesImplForBoost() {}
     virtual ~DTreesImplForBoost() {}
 
+    bool isClassifier() const { return true; }
+
     void setBParams(const Boost::Params& p)
     {
         bparams = p;
@@ -124,7 +126,30 @@ public:
                 w->ord_responses[i] = w->cat_responses[i] > 0 ? b : a;
         }
 
-        normalize(w->sample_weights, w->sample_weights, 1, 0, NORM_L1);
+        normalizeWeights();
+    }
+
+    void normalizeWeights()
+    {
+        int i, n = (int)w->sidx.size();
+        double sumw = 0, a, b;
+        for( i = 0; i < n; i++ )
+            sumw += w->sample_weights[w->sidx[i]];
+        if( sumw > DBL_EPSILON )
+        {
+            a = 1./sumw;
+            b = 0;
+        }
+        else
+        {
+            a = 0;
+            b = 1;
+        }
+        for( i = 0; i < n; i++ )
+        {
+            double& wval = w->sample_weights[w->sidx[i]];
+            wval = wval*a + b;
+        }
     }
 
     void endTraining()
@@ -165,9 +190,13 @@ public:
     void calcValue( int nidx, const vector<int>& _sidx )
     {
         DTreesImpl::calcValue(nidx, _sidx);
-        if( bparams.boostType == Boost::REAL )
+        WNode* node = &w->wnodes[nidx];
+        if( bparams.boostType == Boost::DISCRETE )
         {
-            WNode* node = &w->wnodes[nidx];
+            node->value = node->class_idx == 0 ? -1 : 1;
+        }
+        else if( bparams.boostType == Boost::REAL )
+        {
             double p = node->value;
             node->value = 0.5*log_ratio(p);
         }
@@ -304,9 +333,7 @@ public:
         
         // renormalize weights
         if( sumw > FLT_EPSILON )
-        {
-            normalize(w->sample_weights, w->sample_weights, 1, 0, NORM_L1);
-        }
+            normalizeWeights();
 
         if( bparams.weightTrimRate <= 0. || bparams.weightTrimRate >= 1. )
             return;
@@ -402,6 +429,7 @@ public:
                              bts == "RealAdaboost" ? Boost::REAL :
                              bts == "LogitBoost" ? Boost::LOGIT :
                              bts == "GentleAdaboost" ? Boost::GENTLE : -1);
+        _isClassifier = bparams.boostType == Boost::DISCRETE;
         bparams.weightTrimRate = (double)tparams_node["weight_trimming_rate"];
     }
 

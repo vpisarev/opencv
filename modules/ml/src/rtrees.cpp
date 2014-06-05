@@ -153,14 +153,14 @@ public:
         vector<float> samplebuf(nallvars);
         Mat samples = w->data->getSamples();
         float* psamples = samples.ptr<float>();
-        size_t sstep0 = samples.step/sizeof(psamples[0]), sstep1 = 1;
+        size_t sstep0 = samples.step1(), sstep1 = 1;
         Mat sample0, sample(nallvars, 1, CV_32F, &samplebuf[0]);
         int predictFlags = _isClassifier ? (PREDICT_MAX_VOTE + RAW_OUTPUT) : PREDICT_SUM;
 
         bool calcOOBError = eps > 0 || rparams.calcVarImportance;
         double max_response = 0.;
 
-        if( w->data->getLayout() == ROW_SAMPLE )
+        if( w->data->getLayout() == COL_SAMPLE )
             std::swap(sstep0, sstep1);
 
         if( !_isClassifier )
@@ -177,6 +177,7 @@ public:
 
         for( treeidx = 0; treeidx < ntrees; treeidx++ )
         {
+            putchar('.'); fflush(stdout);
             for( i = 0; i < n; i++ )
                 oobmask[i] = (uchar)1;
 
@@ -192,6 +193,7 @@ public:
 
             if( calcOOBError )
             {
+                oobidx.clear();
                 for( i = 0; i < n; i++ )
                 {
                     if( !oobmask[i] )
@@ -279,7 +281,8 @@ public:
             if( calcOOBError && oobError < eps )
                 break;
         }
-        
+        printf("done!\n");
+
         if( rparams.calcVarImportance )
         {
             for( vi_ = 0; vi_ < nallvars; vi_++ )

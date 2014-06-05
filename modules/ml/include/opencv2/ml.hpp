@@ -140,6 +140,7 @@ public:
     
     virtual void setTrainTestSplit(int count, bool shuffle=true) = 0;
     virtual void setTrainTestSplitRatio(float ratio, bool shuffle=true) = 0;
+    virtual void shuffleTrainTest() = 0;
 
     static Mat getSubVector(const Mat& vec, const Mat& idx);
     static Ptr<TrainData> loadFromCSV(const String& filename,
@@ -169,7 +170,7 @@ public:
 
     virtual bool train( const Ptr<TrainData>& trainData, int flags=0 ) = 0;
     virtual float calcError( const Ptr<TrainData>& data, bool test, OutputArray resp ) const;
-    virtual float predict( InputArray samples, OutputArray results, int flags=0 ) const = 0;
+    virtual float predict( InputArray samples, OutputArray results=noArray(), int flags=0 ) const = 0;
 
     template<typename _Tp> static Ptr<_Tp> load(const String& filename)
     {

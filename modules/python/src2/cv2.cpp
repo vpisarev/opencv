@@ -23,6 +23,7 @@
 #include "opencv2/highgui.hpp"
 
 #include "opencv2/ml.hpp"
+#include "opencv2/core/types_c.h"
 
 #include "opencv2/opencv_modules.hpp"
 #ifdef HAVE_OPENCV_NONFREE
@@ -1139,14 +1140,6 @@ bool pyopencv_to(PyObject* obj, CvSlice& r, const char* name)
         return true;
     }
     return PyArg_ParseTuple(obj, "ii", &r.start_index, &r.end_index) > 0;
-}
-
-template<>
-PyObject* pyopencv_from(CvDTreeNode* const & node)
-{
-    double value = node->value;
-    int ivalue = cvRound(value);
-    return value == ivalue ? PyInt_FromLong(ivalue) : PyFloat_FromDouble(value);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

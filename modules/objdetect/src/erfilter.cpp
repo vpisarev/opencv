@@ -41,6 +41,7 @@
 //M*/
 
 #include "precomp.hpp"
+#include "opencv2/core/types_c.h"
 #include <fstream>
 
 #if defined _MSC_VER && _MSC_VER == 1500
@@ -56,6 +57,8 @@ using namespace std;
 
 namespace cv
 {
+
+using namespace ml;
 
 ERStat::ERStat(int init_level, int init_pixel, int init_x, int init_y) : pixel(init_pixel),
                level(init_level), area(0), perimeter(0), euler(0), probability(1.0),
@@ -152,7 +155,7 @@ public:
     double eval(const ERStat& stat);
 
 private:
-    CvBoost boost;
+    Ptr<Boost> boost;
 };
 
 // default 2nd stage classifier
@@ -168,7 +171,7 @@ public:
     double eval(const ERStat& stat);
 
 private:
-    CvBoost boost;
+    Ptr<Boost> boost;
 };
 
 
@@ -294,7 +297,7 @@ void ERFilterNM::er_tree_extract( InputArray image )
         push_new_component = false;
 
         // explore the (remaining) edges to the neighbors to the current pixel
-        for (current_edge = current_edge; current_edge < 4; current_edge++)
+        for (; current_edge < 4; current_edge++)
         {
 
             int neighbour_pixel = current_pixel;
@@ -990,7 +993,7 @@ ERClassifierNM1::ERClassifierNM1(const std::string& filename)
 {
 
     if (ifstream(filename.c_str()))
-        boost.load( filename.c_str(), "boost" );
+        boost = StatModel::load<Boost>( filename.c_str() );
     else
         CV_Error(CV_StsBadArg, "Default classifier file not found!");
 }
@@ -1005,7 +1008,7 @@ double ERClassifierNM1::eval(const ERStat& stat)
 
     vector<float> sample (arr, arr + sizeof(arr) / sizeof(arr[0]) );
 
-    float votes = boost.predict( Mat(sample), Mat(), Range::all(), false, true );
+    float votes = boost->predict( Mat(sample), noArray(), StatModel::RAW_OUTPUT );
 
     // Logistic Correction returns a probability value (in the range(0,1))
     return (double)1-(double)1/(1+exp(-2*votes));
@@ -1016,7 +1019,7 @@ double ERClassifierNM1::eval(const ERStat& stat)
 ERClassifierNM2::ERClassifierNM2(const std::string& filename)
 {
     if (ifstream(filename.c_str()))
-        boost.load( filename.c_str(), "boost" );
+        boost = StatModel::load<Boost>( filename.c_str() );
     else
         CV_Error(CV_StsBadArg, "Default classifier file not found!");
 }
@@ -1032,7 +1035,7 @@ double ERClassifierNM2::eval(const ERStat& stat)
 
     vector<float> sample (arr, arr + sizeof(arr) / sizeof(arr[0]) );
 
-    float votes = boost.predict( Mat(sample), Mat(), Range::all(), false, true );
+    float votes = boost->predict( Mat(sample), noArray(), StatModel::RAW_OUTPUT );
 
     // Logistic Correction returns a probability value (in the range(0,1))
     return (double)1-(double)1/(1+exp(-2*votes));
@@ -2092,7 +2095,7 @@ static int linkage(double *D, int N, double * Z)
     } // try
     catch (const std::bad_alloc&)
     {
-        CV_Error(CV_StsNoMem, "Not enough Memory for erGrouping hierarchical clustering structures!");
+        CV_Error(Error::StsNoMem, "Not enough Memory for erGrouping hierarchical clustering structures!");
     }
     catch(const std::exception&)
     {
@@ -2757,14 +2760,15 @@ static bool find_vertex(vector<Point> &vertex, Point &p)
     \param  minProbability The minimum probability for accepting a group
     \param  groups         The output of the algorithm are stored in this parameter as list of rectangles.
 */
-void erGrouping(InputArrayOfArrays _src, vector<vector<ERStat> > &regions, const std::string& filename, float minProbability, std::vector<Rect > &text_boxes)
+void erGrouping(InputArrayOfArrays _src, vector<vector<ERStat> > &regions,
+                const std::string& filename, float minProbability, std::vector<Rect > &text_boxes)
 {
 
     // TODO assert correct vector<Mat>
 
-    CvBoost group_boost;
+    Ptr<Boost> group_boost;
     if (ifstream(filename.c_str()))
-        group_boost.load( filename.c_str(), "boost" );
+        group_boost = StatModel::load<Boost>( filename.c_str() );
     else
         CV_Error(CV_StsBadArg, "erGrouping: Default classifier file not found!");
 
@@ -3121,7 +3125,7 @@ void erGrouping(InputArrayOfArrays _src, vector<vector<ERStat> > &regions, const
             if (data_arrays.at(i).at(0) > 2)
             {
                 data_arrays.at(i).insert(data_arrays.at(i).begin(),0.f);
-                float votes = group_boost.predict( Mat(data_arrays.at(i)), Mat(), Range::all(), false, true );
+                float votes = group_boost->predict( Mat(data_arrays.at(i)), noArray(), StatModel::RAW_OUTPUT );
                 // Logistic Correction returns a probability value (in the range(0,1))
                 double probability = (double)1-(double)1/(1+exp(-2*votes));
 

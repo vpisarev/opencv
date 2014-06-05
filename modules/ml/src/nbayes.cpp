@@ -202,7 +202,7 @@ public:
             vidx = &_vidx;
             cls_labels = &_cls_labels;
             results = &_results;
-            results_prob = &_results_prob;
+            results_prob = _results_prob.data ? &_results_prob : 0;
             rawOutput = _rawOutput;
         }
 

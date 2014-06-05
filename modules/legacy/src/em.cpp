@@ -41,6 +41,7 @@
 
 #include "precomp.hpp"
 
+#if 0
 using namespace cv;
 
 CvEMParams::CvEMParams() : nclusters(10), cov_mat_type(CvEM::COV_MAT_DIAGONAL),
@@ -263,6 +264,6 @@ Mat CvEM::getProbs() const
 {
     return probs;
 }
-
+#endif
 
 /* End of file. */

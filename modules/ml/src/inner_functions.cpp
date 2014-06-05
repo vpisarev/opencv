@@ -61,9 +61,50 @@ bool StatModel::train( const Ptr<TrainData>&, int )
     return false;
 }
 
-float StatModel::calcError( const Ptr<TrainData>&, bool, OutputArray ) const
+float StatModel::calcError( const Ptr<TrainData>& data, bool testerr, OutputArray _resp ) const
 {
-    return FLT_MAX;
+    Mat samples = data->getSamples();
+    int layout = data->getLayout();
+    Mat sidx = testerr ? data->getTestSampleIdx() : data->getTrainSampleIdx();
+    const int* sidx_ptr = sidx.ptr<int>();
+    int i, n = (int)sidx.total();
+    bool isclassifier = isClassifier();
+    Mat responses = data->getResponses();
+
+    if( n == 0 )
+        n = data->getNSamples();
+
+    if( n == 0 )
+        return -FLT_MAX;
+
+    Mat resp;
+    if( _resp.needed() )
+        resp.create(n, 1, CV_32F);
+
+    double err = 0;
+    for( i = 0; i < n; i++ )
+    {
+        int si = sidx_ptr ? sidx_ptr[i] : i;
+        Mat sample = layout == ROW_SAMPLE ? samples.row(si) : samples.col(si);
+        float val = predict(sample);
+        float val0 = responses.at<float>(si);
+
+        if( isclassifier )
+            err += fabs(val - val0) > FLT_EPSILON;
+        else
+            err += (val - val0)*(val - val0);
+        if( resp.data )
+            resp.at<float>(i) = val;
+        /*if( i < 100 )
+        {
+            printf("%d. ref %.1f vs pred %.1f\n", i, val0, val);
+        }*/
+    }
+
+    if( _resp.needed() )
+        resp.copyTo(_resp);
+
+    return err / n * (isclassifier ? 100 : 1);
 }
 
 void StatModel::save(const String& filename) const

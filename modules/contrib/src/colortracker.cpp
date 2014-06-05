@@ -71,7 +71,7 @@ void CvMeanShiftTracker::newTrackingWindow(Mat image, Rect selection)
     int ch[] = {0, 1};
     int chsize[] = {32, 32};
     calcHist(&roi, 1, ch, mskroi, hist, 1, chsize, ranges);
-    normalize(hist, hist, 0, 255, CV_MINMAX);
+    normalize(hist, hist, 0, 255, NORM_MINMAX);
 
     prev_trackwindow = selection;
 }

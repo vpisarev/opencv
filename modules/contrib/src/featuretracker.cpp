@@ -114,7 +114,7 @@ Rect CvFeatureTracker::updateTrackingWindowWithSIFT(Mat image)
     Rect window = prev_trackwindow;
     Mat mask = Mat::zeros(image.size(), CV_8UC1);
     rectangle(mask, Point(window.x, window.y), Point(window.x + window.width,
-            window.y + window.height), Scalar(255), CV_FILLED);
+            window.y + window.height), Scalar(255), FILLED);
 
     dd->operator()(prev_image, mask, prev_keypoints, prev_desc);
 
@@ -123,7 +123,7 @@ Rect CvFeatureTracker::updateTrackingWindowWithSIFT(Mat image)
     window.width += params.window_size;
     window.height += params.window_size;
     rectangle(mask, Point(window.x, window.y), Point(window.x + window.width,
-            window.y + window.height), Scalar(255), CV_FILLED);
+            window.y + window.height), Scalar(255), FILLED);
 
     dd->operator()(image, mask, curr_keypoints, curr_desc);
 
@@ -169,7 +169,7 @@ Rect CvFeatureTracker::updateTrackingWindowWithFlow(Mat image)
         Mat mask = Mat::zeros(image.size(), CV_8UC1);
         rectangle(mask, Point(prev_trackwindow.x, prev_trackwindow.y), Point(
                 prev_trackwindow.x + prev_trackwindow.width, prev_trackwindow.y
-                        + prev_trackwindow.height), Scalar(255), CV_FILLED);
+                        + prev_trackwindow.height), Scalar(255), FILLED);
         goodFeaturesToTrack(image_bw, features[1], 500, 0.01, 20, mask, 3, 0, 0.04);
         cornerSubPix(image_bw, features[1], subPixWinSize, Size(-1, -1), termcrit);
     }

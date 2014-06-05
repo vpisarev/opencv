@@ -53,7 +53,6 @@ int CV_AMLTest::run_test_case( int testCaseIdx )
 {
     int code = cvtest::TS::OK;
     code = prepare_test_case( testCaseIdx );
-    int ntrainSamples = data->getNTrainSamples();
 
     if (code == cvtest::TS::OK)
     {
@@ -66,7 +65,7 @@ int CV_AMLTest::run_test_case( int testCaseIdx )
         for (int k = 0; k < icount; k++)
         {
 #endif
-            data->setTrainTestSplit(ntrainSamples, true);
+            data->shuffleTrainTest();
             code = train( testCaseIdx );
 #ifdef GET_STAT
             float case_result = get_error();
@@ -102,9 +101,10 @@ int CV_AMLTest::validate_test_results( int testCaseIdx )
     {
         resultNode["mean"] >> mean;
         resultNode["sigma"] >> sigma;
+        model->save(format("/Users/vp/tmp/dtree/testcase_%02d.cur.yml", testCaseIdx));
         float curErr = get_test_error( testCaseIdx );
         const int coeff = 4;
-        ts->printf( cvtest::TS::LOG, "Test case = %d; test error = %f; mean error = %f (diff=%f), %d*sigma = %f",
+        ts->printf( cvtest::TS::LOG, "Test case = %d; test error = %f; mean error = %f (diff=%f), %d*sigma = %f\n",
                                 testCaseIdx, curErr, mean, abs( curErr - mean), coeff, coeff*sigma );
         if ( abs( curErr - mean) > coeff*sigma )
         {

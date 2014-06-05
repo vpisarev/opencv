@@ -222,7 +222,6 @@ public:
         classCounters.release();
         catMap.release();
         catOfs.release();
-        rng = RNG(-1);
         nameMap = MapType();
         layout = ROW_SAMPLE;
     }
@@ -321,7 +320,7 @@ public:
         }
 
         catOfs = Mat::zeros(1, nvars, CV_32SC2);
-        missingSubst.create(1, nvars, CV_32F);
+        missingSubst = Mat::zeros(1, nvars, CV_32F);
 
         vector<int> labels, counters, sortbuf, tempCatMap;
         vector<Vec2i> tempCatOfs;
@@ -383,9 +382,10 @@ public:
             else if( haveMissing )
             {
                 tempCatOfs.push_back(Vec2i(0, 0));
-                Mat missing_i = layout == ROW_SAMPLE ? missing.col(i) : missing.row(i);
+                /*Mat missing_i = layout == ROW_SAMPLE ? missing.col(i) : missing.row(i);
                 compare(missing_i, Scalar::all(0), non_missing, CMP_EQ);
-                missingSubst.at<float>(i) = (float)(mean(values_i, non_missing)[0]);
+                missingSubst.at<float>(i) = (float)(mean(values_i, non_missing)[0]);*/
+                missingSubst.at<float>(i) = 0.f;
             }
         }
 
@@ -400,11 +400,6 @@ public:
             preprocessCategorical(responses, &normCatResponses, labels, &counters, sortbuf);
             Mat(labels).copyTo(classLabels);
             Mat(counters).copyTo(classCounters);
-        }
-
-        if( !missing.empty() )
-        {
-            CV_Assert( missing.size() == samples.size() && missing.type() == CV_8U );
         }
     }
 
@@ -437,7 +432,7 @@ public:
         {
             normdata->create(data.size(), CV_32S);
             odata = normdata->ptr<int>();
-            ostep = (int)(normdata->step/sizeof(int));
+            ostep = normdata->isContinuous() ? 1 : (int)normdata->step1();
         }
 
         int i, n = data.cols + data.rows - 1;
@@ -494,7 +489,7 @@ public:
                 previdx = i;
             }
             if(odata)
-                odata[i*ostep] = clslabel;
+                odata[idx[i]*ostep] = clslabel;
         }
         if(counters)
             counters->at(clslabel) = i - previdx;
@@ -528,7 +523,7 @@ public:
 
         Mat tempSamples, tempMissing, tempResponses;
         MapType tempNameMap;
-        int catCounter = 0;
+        int catCounter = 1;
 
         // skip header lines
         int lineno = 0;
@@ -770,15 +765,6 @@ public:
             uchar* mptr = mask.data;
             for( i = 0; i < nsamples; i++ )
                 mptr[i] = (uchar)(i < count);
-            if( shuffle )
-            {
-                for( i = 0; i < nsamples; i++)
-                {
-                    int a = rng.uniform(0, nsamples);
-                    int b = rng.uniform(0, nsamples);
-                    std::swap(mptr[a], mptr[b]);
-                }
-            }
             trainSampleIdx.create(1, count, CV_32S);
             testSampleIdx.create(1, nsamples - count, CV_32S);
             int j0 = 0, j1 = 0;
@@ -792,6 +778,40 @@ public:
                     trainptr[j0++] = idx;
                 else
                     testptr[j1++] = idx;
+            }
+            if( shuffle )
+                shuffleTrainTest();
+        }
+    }
+
+    void shuffleTrainTest()
+    {
+        if( !trainSampleIdx.empty() && !testSampleIdx.empty() )
+        {
+            int i, nsamples = getNSamples(), ntrain = getNTrainSamples(), ntest = getNTestSamples();
+            int* trainIdx = trainSampleIdx.ptr<int>();
+            int* testIdx = testSampleIdx.ptr<int>();
+            RNG& rng = theRNG();
+
+            for( i = 0; i < nsamples; i++)
+            {
+                int a = rng.uniform(0, nsamples);
+                int b = rng.uniform(0, nsamples);
+                int* ptra = trainIdx;
+                int* ptrb = trainIdx;
+                if( a >= ntrain )
+                {
+                    ptra = testIdx;
+                    a -= ntrain;
+                    CV_Assert( a < ntest );
+                }
+                if( b >= ntrain )
+                {
+                    ptrb = testIdx;
+                    b -= ntrain;
+                    CV_Assert( b < ntest );
+                }
+                std::swap(ptra[a], ptrb[b]);
             }
         }
     }
@@ -948,7 +968,6 @@ public:
     Mat sampleWeights, catMap, catOfs;
     Mat normCatResponses, classLabels, classCounters;
     MapType nameMap;
-    RNG rng;
 };
 
 Ptr<TrainData> TrainData::loadFromCSV(const String& filename,

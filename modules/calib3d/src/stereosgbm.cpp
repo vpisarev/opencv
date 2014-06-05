@@ -144,10 +144,13 @@ static void calcPixelCostBT( const Mat& img1, const Mat& img2, int y,
 
     if( cn == 1 )
     {
-        for( x = 1; x < width-1; x++ )
+        for( x = 0; x < width; x++ )
         {
-            prow1[x] = tab[(row1[x+1] - row1[x-1])*2 + row1[x+n1+1] - row1[x+n1-1] + row1[x+s1+1] - row1[x+s1-1]];
-            prow2[width-1-x] = tab[(row2[x+1] - row2[x-1])*2 + row2[x+n2+1] - row2[x+n2-1] + row2[x+s2+1] - row2[x+s2-1]];
+            if( 0 < x && x < width-1 )
+            {
+                prow1[x] = tab[(row1[x+1] - row1[x-1])*2 + row1[x+n1+1] - row1[x+n1-1] + row1[x+s1+1] - row1[x+s1-1]];
+                prow2[width-1-x] = tab[(row2[x+1] - row2[x-1])*2 + row2[x+n2+1] - row2[x+n2-1] + row2[x+s2+1] - row2[x+s2-1]];
+            }
 
             prow1[x+width] = row1[x];
             prow2[width-1-x+width] = row2[x];
@@ -239,9 +242,11 @@ static void calcPixelCostBT( const Mat& img1, const Mat& img2, int y,
             {
                 for( int d = minD; d < maxD; d++ )
                 {
-                    int v = prow2[width-x-1 + d];
-                    int v0 = buffer[width-x-1 + d];
-                    int v1 = buffer[width-x-1 + d + width2];
+                    int x1 = width-x-1 + d;
+                    x1 = std::min(std::max(x1, 0), width-1);
+                    int v = prow2[x1];
+                    int v0 = buffer[x1];
+                    int v1 = buffer[x1 + width2];
                     int c0 = std::max(0, u - v1); c0 = std::max(c0, v0 - u);
                     int c1 = std::max(0, v - u1); c1 = std::max(c1, u0 - v);
 
