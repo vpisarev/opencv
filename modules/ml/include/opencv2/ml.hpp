@@ -53,10 +53,6 @@
 #include <map>
 #include <iostream>
 
-// Apple defines a check() macro somewhere in the debug headers
-// that interferes with a method definiton in this header
-#undef check
-
 namespace cv
 {
 

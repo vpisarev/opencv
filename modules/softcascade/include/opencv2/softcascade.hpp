@@ -91,7 +91,7 @@ public:
     virtual int size() const = 0;
     virtual float apply(int fi, int si, const Mat& channels) const = 0;
     virtual void write( cv::FileStorage& fs, int index) const = 0;
-    virtual ~FeaturePool();
+    virtual ~FeaturePool() {}
 
     static cv::Ptr<FeaturePool> create(const cv::Size& model, int nfeatures, int nchannels );
 };
@@ -206,7 +206,7 @@ public:
         HEURISTIC = 4
     };
 
-    virtual ~Octave();
+    virtual ~Octave() {}
     static cv::Ptr<Octave> create(cv::Rect boundingBox, int npositives, int nnegatives,
         int logScale, int shrinkage, cv::Ptr<ChannelFeatureBuilder> builder);
 

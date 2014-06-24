@@ -40,6 +40,7 @@
 //
 //M*/
 #include "precomp.hpp"
+
 #include "opencv2/contrib/hybridtracker.hpp"
 #include "opencv2/core/core_c.h"
 
@@ -183,7 +184,9 @@ void CvHybridTracker::updateTracker(Mat image) {
     fttracker->setTrackingWindow(prev_window);
 }
 
-void CvHybridTracker::updateTrackerWithEM(Mat image) {
+void CvHybridTracker::updateTrackerWithEM(Mat) {
+    CV_Error(CV_StsNotImplemented, "");
+#if 0
     Mat ms_backproj = mstracker->getHistogramProjection(CV_64F);
     Mat ms_distproj = getDistanceProjection(image, mstracker->getTrackingCenter());
     Mat ms_proj = ms_backproj.mul(ms_distproj);
@@ -220,6 +223,7 @@ void CvHybridTracker::updateTrackerWithEM(Mat image) {
     Mat em_means = em_model.get<Mat>("means");
     curr_center.x = (float)em_means.at<float>(0, 0);
     curr_center.y = (float)em_means.at<float>(0, 1);
+#endif
 }
 
 void CvHybridTracker::updateTrackerWithLowPassFilter(Mat) {
