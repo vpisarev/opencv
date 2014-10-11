@@ -94,12 +94,12 @@ public:
 /************************************ Base Classes ************************************/
 
 /*
- * Abstract base class for 2D image feature detectors.
+ * Abstract base class for 2D image feature detectors and descriptor extractors
  */
-class CV_EXPORTS_W FeatureDetector : public virtual Algorithm
+class CV_EXPORTS_W Feature2D : public virtual Algorithm
 {
 public:
-    virtual ~FeatureDetector();
+    virtual ~Feature2D();
 
     /*
      * Detect keypoints in an image.
@@ -108,47 +108,7 @@ public:
      * mask         Mask specifying where to look for keypoints (optional). Must be a char
      *              matrix with non-zero values in the region of interest.
      */
-    CV_WRAP void detect( InputArray image, CV_OUT std::vector<KeyPoint>& keypoints, InputArray mask=noArray() ) const;
-
-    /*
-     * Detect keypoints in an image set.
-     * images       Image collection.
-     * keypoints    Collection of keypoints detected in an input images. keypoints[i] is a set of keypoints detected in an images[i].
-     * masks        Masks for image set. masks[i] is a mask for images[i].
-     */
-    void detect( InputArrayOfArrays images, std::vector<std::vector<KeyPoint> >& keypoints, InputArrayOfArrays masks=noArray() ) const;
-
-    // Return true if detector object is empty
-    CV_WRAP virtual bool empty() const;
-
-    // Create feature detector by detector name.
-    CV_WRAP static Ptr<FeatureDetector> create( const String& detectorType );
-
-protected:
-    virtual void detectImpl( InputArray image, std::vector<KeyPoint>& keypoints, InputArray mask=noArray() ) const = 0;
-
-    /*
-     * Remove keypoints that are not in the mask.
-     * Helper function, useful when wrapping a library call for keypoint detection that
-     * does not support a mask argument.
-     */
-    static void removeInvalidPoints( const Mat & mask, std::vector<KeyPoint>& keypoints );
-};
-
-
-/*
- * Abstract base class for computing descriptors for image keypoints.
- *
- * In this interface we assume a keypoint descriptor can be represented as a
- * dense, fixed-dimensional vector of some basic type. Most descriptors used
- * in practice follow this pattern, as it makes it very easy to compute
- * distances between descriptors. Therefore we represent a collection of
- * descriptors as a Mat, where each row is one keypoint descriptor.
- */
-class CV_EXPORTS_W DescriptorExtractor : public virtual Algorithm
-{
-public:
-    virtual ~DescriptorExtractor();
+    CV_WRAP void detect( InputArray image, CV_OUT std::vector<KeyPoint>& keypoints, InputArray mask=noArray() );
 
     /*
      * Compute the descriptors for a set of keypoints in an image.
@@ -156,62 +116,24 @@ public:
      * keypoints    The input keypoints. Keypoints for which a descriptor cannot be computed are removed.
      * descriptors  Copmputed descriptors. Row i is the descriptor for keypoint i.
      */
-    CV_WRAP void compute( InputArray image, CV_OUT CV_IN_OUT std::vector<KeyPoint>& keypoints, OutputArray descriptors ) const;
+    CV_WRAP void compute( InputArray image, CV_OUT CV_IN_OUT std::vector<KeyPoint>& keypoints, OutputArray descriptors );
 
-    /*
-     * Compute the descriptors for a keypoints collection detected in image collection.
-     * images       Image collection.
-     * keypoints    Input keypoints collection. keypoints[i] is keypoints detected in images[i].
-     *              Keypoints for which a descriptor cannot be computed are removed.
-     * descriptors  Descriptor collection. descriptors[i] are descriptors computed for set keypoints[i].
-     */
-    void compute( InputArrayOfArrays images, std::vector<std::vector<KeyPoint> >& keypoints, OutputArrayOfArrays descriptors ) const;
+    /* Detects keypoints and computes the descriptors */
+    CV_WRAP void detectAndCompute( InputArray image, InputArray mask,
+                                   CV_OUT std::vector<KeyPoint>& keypoints,
+                                   OutputArray descriptors,
+                                   bool useProvidedKeypoints=false );
 
-    CV_WRAP virtual int descriptorSize() const = 0;
-    CV_WRAP virtual int descriptorType() const = 0;
-    CV_WRAP virtual int defaultNorm() const = 0;
+    CV_WRAP virtual int descriptorSize() const;
+    CV_WRAP virtual int descriptorType() const;
+    CV_WRAP virtual int defaultNorm() const;
 
+    // Return true if detector object is empty
     CV_WRAP virtual bool empty() const;
-
-    CV_WRAP static Ptr<DescriptorExtractor> create( const String& descriptorExtractorType );
-
-protected:
-    virtual void computeImpl( InputArray image, std::vector<KeyPoint>& keypoints, OutputArray descriptors ) const = 0;
-
-    /*
-     * Remove keypoints within borderPixels of an image edge.
-     */
-    static void removeBorderKeypoints( std::vector<KeyPoint>& keypoints,
-                                      Size imageSize, int borderSize );
 };
 
-
-
-/*
- * Abstract base class for simultaneous 2D feature detection descriptor extraction.
- */
-class CV_EXPORTS_W Feature2D : public FeatureDetector, public DescriptorExtractor
-{
-public:
-    /*
-     * Detect keypoints in an image.
-     * image        The image.
-     * keypoints    The detected keypoints.
-     * mask         Mask specifying where to look for keypoints (optional). Must be a char
-     *              matrix with non-zero values in the region of interest.
-     * useProvidedKeypoints If true, the method will skip the detection phase and will compute
-     *                      descriptors for the provided keypoints
-     */
-    CV_WRAP_AS(detectAndCompute) virtual void operator()( InputArray image, InputArray mask,
-                                     CV_OUT std::vector<KeyPoint>& keypoints,
-                                     OutputArray descriptors,
-                                     bool useProvidedKeypoints=false ) const = 0;
-
-    CV_WRAP void compute( InputArray image, CV_OUT CV_IN_OUT std::vector<KeyPoint>& keypoints, OutputArray descriptors ) const;
-
-    // Create feature detector and descriptor extractor by name.
-    CV_WRAP static Ptr<Feature2D> create( const String& name );
-};
+typedef Feature2D FeatureDetector;
+typedef Feature2D DescriptorExtractor;
 
 /*!
   BRISK implementation
@@ -219,93 +141,11 @@ public:
 class CV_EXPORTS_W BRISK : public Feature2D
 {
 public:
-    CV_WRAP explicit BRISK(int thresh=30, int octaves=3, float patternScale=1.0f);
-
-    virtual ~BRISK();
-
-    // returns the descriptor size in bytes
-    int descriptorSize() const;
-    // returns the descriptor type
-    int descriptorType() const;
-    // returns the default norm type
-    int defaultNorm() const;
-
-    // Compute the BRISK features on an image
-    void operator()(InputArray image, InputArray mask, std::vector<KeyPoint>& keypoints) const;
-
-    // Compute the BRISK features and descriptors on an image
-    void operator()( InputArray image, InputArray mask, std::vector<KeyPoint>& keypoints,
-                     OutputArray descriptors, bool useProvidedKeypoints=false ) const;
-
-    AlgorithmInfo* info() const;
-
+    CV_WRAP static Ptr<BRISK> create(int thresh=30, int octaves=3, float patternScale=1.0f);
     // custom setup
-    CV_WRAP explicit BRISK(std::vector<float> &radiusList, std::vector<int> &numberList,
-        float dMax=5.85f, float dMin=8.2f, std::vector<int> indexChange=std::vector<int>());
-
-    // call this to generate the kernel:
-    // circle of radius r (pixels), with n points;
-    // short pairings with dMax, long pairings with dMin
-    CV_WRAP void generateKernel(std::vector<float> &radiusList,
-        std::vector<int> &numberList, float dMax=5.85f, float dMin=8.2f,
-        std::vector<int> indexChange=std::vector<int>());
-
-protected:
-
-    void computeImpl( InputArray image, std::vector<KeyPoint>& keypoints, OutputArray descriptors ) const;
-    void detectImpl( InputArray image, std::vector<KeyPoint>& keypoints, InputArray mask=noArray() ) const;
-
-    void computeKeypointsNoOrientation(InputArray image, InputArray mask, std::vector<KeyPoint>& keypoints) const;
-    void computeDescriptorsAndOrOrientation(InputArray image, InputArray mask, std::vector<KeyPoint>& keypoints,
-                                       OutputArray descriptors, bool doDescriptors, bool doOrientation,
-                                       bool useProvidedKeypoints) const;
-
-    // Feature parameters
-    CV_PROP_RW int threshold;
-    CV_PROP_RW int octaves;
-
-    // some helper structures for the Brisk pattern representation
-    struct BriskPatternPoint{
-        float x;         // x coordinate relative to center
-        float y;         // x coordinate relative to center
-        float sigma;     // Gaussian smoothing sigma
-    };
-    struct BriskShortPair{
-        unsigned int i;  // index of the first pattern point
-        unsigned int j;  // index of other pattern point
-    };
-    struct BriskLongPair{
-        unsigned int i;  // index of the first pattern point
-        unsigned int j;  // index of other pattern point
-        int weighted_dx; // 1024.0/dx
-        int weighted_dy; // 1024.0/dy
-    };
-    inline int smoothedIntensity(const cv::Mat& image,
-                const cv::Mat& integral,const float key_x,
-                const float key_y, const unsigned int scale,
-                const unsigned int rot, const unsigned int point) const;
-    // pattern properties
-    BriskPatternPoint* patternPoints_;     //[i][rotation][scale]
-    unsigned int points_;                 // total number of collocation points
-    float* scaleList_;                     // lists the scaling per scale index [scale]
-    unsigned int* sizeList_;             // lists the total pattern size per scale index [scale]
-    static const unsigned int scales_;    // scales discretization
-    static const float scalerange_;     // span of sizes 40->4 Octaves - else, this needs to be adjusted...
-    static const unsigned int n_rot_;    // discretization of the rotation look-up
-
-    // pairs
-    int strings_;                        // number of uchars the descriptor consists of
-    float dMax_;                         // short pair maximum distance
-    float dMin_;                         // long pair maximum distance
-    BriskShortPair* shortPairs_;         // d<_dMax
-    BriskLongPair* longPairs_;             // d>_dMin
-    unsigned int noShortPairs_;         // number of shortParis
-    unsigned int noLongPairs_;             // number of longParis
-
-    // general
-    static const float basicSize_;
+    CV_WRAP static Ptr<BRISK> create(const std::vector<float> &radiusList, const std::vector<int> &numberList,
+        float dMax=5.85f, float dMin=8.2f, const std::vector<int> indexChange=std::vector<int>());
 };
-
 
 /*!
  ORB implementation.
@@ -316,42 +156,9 @@ public:
     // the size of the signature in bytes
     enum { kBytes = 32, HARRIS_SCORE=0, FAST_SCORE=1 };
 
-    CV_WRAP explicit ORB(int nfeatures = 500, float scaleFactor = 1.2f, int nlevels = 8, int edgeThreshold = 31,
+    Ptr<ORB> create( int nfeatures = 500, float scaleFactor = 1.2f, int nlevels = 8, int edgeThreshold = 31,
         int firstLevel = 0, int WTA_K=2, int scoreType=ORB::HARRIS_SCORE, int patchSize=31 );
-
-    // returns the descriptor size in bytes
-    int descriptorSize() const;
-    // returns the descriptor type
-    int descriptorType() const;
-    // returns the default norm type
-    int defaultNorm() const;
-
-    // Compute the ORB features and descriptors on an image
-    void operator()(InputArray image, InputArray mask, std::vector<KeyPoint>& keypoints) const;
-
-    // Compute the ORB features and descriptors on an image
-    void operator()( InputArray image, InputArray mask, std::vector<KeyPoint>& keypoints,
-                     OutputArray descriptors, bool useProvidedKeypoints=false ) const;
-
-    AlgorithmInfo* info() const;
-
-protected:
-
-    void computeImpl( InputArray image, std::vector<KeyPoint>& keypoints, OutputArray descriptors ) const;
-    void detectImpl( InputArray image, std::vector<KeyPoint>& keypoints, InputArray mask=noArray() ) const;
-
-    CV_PROP_RW int nfeatures;
-    CV_PROP_RW double scaleFactor;
-    CV_PROP_RW int nlevels;
-    CV_PROP_RW int edgeThreshold;
-    CV_PROP_RW int firstLevel;
-    CV_PROP_RW int WTA_K;
-    CV_PROP_RW int scoreType;
-    CV_PROP_RW int patchSize;
 };
-
-typedef ORB OrbFeatureDetector;
-typedef ORB OrbDescriptorExtractor;
 
 /*!
  Maximal Stable Extremal Regions class.
@@ -399,48 +206,27 @@ CV_EXPORTS void FAST( InputArray image, CV_OUT std::vector<KeyPoint>& keypoints,
 CV_EXPORTS void FAST( InputArray image, CV_OUT std::vector<KeyPoint>& keypoints,
                       int threshold, bool nonmaxSuppression, int type );
 
-class CV_EXPORTS_W FastFeatureDetector : public FeatureDetector
+class CV_EXPORTS_W FastFeatureDetector : public Feature2D
 {
 public:
     enum Type
     {
-      TYPE_5_8 = 0, TYPE_7_12 = 1, TYPE_9_16 = 2
+        TYPE_5_8 = 0, TYPE_7_12 = 1, TYPE_9_16 = 2
     };
 
-    CV_WRAP FastFeatureDetector( int threshold=10, bool nonmaxSuppression=true);
-    CV_WRAP FastFeatureDetector( int threshold, bool nonmaxSuppression, int type);
-    AlgorithmInfo* info() const;
-
-protected:
-    virtual void detectImpl( InputArray image, std::vector<KeyPoint>& keypoints, InputArray mask=noArray() ) const;
-
-    int threshold;
-    bool nonmaxSuppression;
-    int type;
+    Ptr<Feature2D> create( int threshold=10, bool nonmaxSuppression=true, int type=TYPE_9_16 );
 };
 
 
-class CV_EXPORTS_W GFTTDetector : public FeatureDetector
+class CV_EXPORTS_W GFTTDetector : public Feature2D
 {
 public:
-    CV_WRAP GFTTDetector( int maxCorners=1000, double qualityLevel=0.01, double minDistance=1,
-                          int blockSize=3, bool useHarrisDetector=false, double k=0.04 );
-    AlgorithmInfo* info() const;
-
-protected:
-    virtual void detectImpl( InputArray image, std::vector<KeyPoint>& keypoints, InputArray mask=noArray() ) const;
-
-    int nfeatures;
-    double qualityLevel;
-    double minDistance;
-    int blockSize;
-    bool useHarrisDetector;
-    double k;
+    Ptr<GFTTDetector> create( int maxCorners=1000, double qualityLevel=0.01, double minDistance=1,
+                              int blockSize=3, bool useHarrisDetector=false, double k=0.04 );
 };
 
-typedef GFTTDetector GoodFeaturesToTrackDetector;
 
-class CV_EXPORTS_W SimpleBlobDetector : public FeatureDetector
+class CV_EXPORTS_W SimpleBlobDetector : public Feature2D
 {
 public:
   struct CV_EXPORTS_W_SIMPLE Params
@@ -471,29 +257,13 @@ public:
       void write( FileStorage& fs ) const;
   };
 
-  CV_WRAP SimpleBlobDetector(const SimpleBlobDetector::Params &parameters = SimpleBlobDetector::Params());
-
-  virtual void read( const FileNode& fn );
-  virtual void write( FileStorage& fs ) const;
-
-protected:
-  struct CV_EXPORTS Center
-  {
-      Point2d location;
-      double radius;
-      double confidence;
-  };
-
-  virtual void detectImpl( InputArray image, std::vector<KeyPoint>& keypoints, InputArray mask=noArray() ) const;
-  virtual void findBlobs(InputArray image, InputArray binaryImage, std::vector<Center> &centers) const;
-
-  Params params;
-  AlgorithmInfo* info() const;
+  Ptr<SimpleBlobDetector> create(const SimpleBlobDetector::Params &parameters = SimpleBlobDetector::Params());
 };
 
 
 // KAZE/AKAZE diffusivity
-enum {
+enum
+{
     DIFF_PM_G1 = 0,
     DIFF_PM_G2 = 1,
     DIFF_WEICKERT = 2,
@@ -501,7 +271,8 @@ enum {
 };
 
 // AKAZE descriptor type
-enum {
+enum
+{
     DESCRIPTOR_KAZE_UPRIGHT = 2, ///< Upright descriptors, not invariant to rotation
     DESCRIPTOR_KAZE = 3,
     DESCRIPTOR_MLDB_UPRIGHT = 4, ///< Upright descriptors, not invariant to rotation

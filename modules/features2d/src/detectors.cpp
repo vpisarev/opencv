@@ -117,6 +117,22 @@ Ptr<FeatureDetector> FeatureDetector::create( const String& detectorType )
 }
 
 
+class GFTTDetectorImpl : public GFTTDetector
+{
+public:
+    explicit GFTTDetector( int maxCorners=1000, double qualityLevel=0.01, double minDistance=1,
+                           int blockSize=3, bool useHarrisDetector=false, double k=0.04 );
+protected:
+    virtual void detectImpl( InputArray image, std::vector<KeyPoint>& keypoints, InputArray mask=noArray() ) const;
+
+    int nfeatures;
+    double qualityLevel;
+    double minDistance;
+    int blockSize;
+    bool useHarrisDetector;
+    double k;
+};
+
 GFTTDetector::GFTTDetector( int _nfeatures, double _qualityLevel,
                             double _minDistance, int _blockSize,
                             bool _useHarrisDetector, double _k )
