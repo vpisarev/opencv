@@ -1025,9 +1025,10 @@ template<typename R> struct TheTest
         return *this;
     }
 
+#if 0
     TheTest & test_loadstore_fp16()
     {
-#if CV_FP16 && CV_SIMD
+#if CV_SIMD
         AlignedData<R> data;
         AlignedData<R> out;
 
@@ -1050,15 +1051,6 @@ template<typename R> struct TheTest
         v_store(out.a.d, r1);
         EXPECT_EQ(data.a, out.a);
 
-        return *this;
-#endif
-    }
-
-    TheTest & test_float_cvt_fp16()
-    {
-#if CV_FP16 && CV_SIMD
-        AlignedData<v_float32> data;
-
         // check conversion
         v_float32 r1 = vx_load(data.a.d);
         v_float16 r2 = v_cvt_f16(r1, vx_setzero_f32());
@@ -1069,7 +1061,7 @@ template<typename R> struct TheTest
         return *this;
 #endif
     }
-
+#endif
 };
 
 #endif

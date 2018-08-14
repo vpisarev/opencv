@@ -4,6 +4,8 @@
 #include "test_precomp.hpp"
 #include "test_intrin_utils.hpp"
 
+#if 0
+
 namespace opencv_test { namespace hal {
 CV_CPU_OPTIMIZATION_NAMESPACE_BEGIN
 
@@ -17,3 +19,5 @@ void test_hal_intrin_float16()
 
 CV_CPU_OPTIMIZATION_NAMESPACE_END
 }} // namespace
+#endif
+

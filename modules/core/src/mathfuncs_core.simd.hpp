@@ -64,16 +64,16 @@ struct v_atan_f32
 {
     explicit v_atan_f32(const float& scale)
     {
-        eps = vx_setall_f32((float)DBL_EPSILON);
+        eps = vx_setall((float)DBL_EPSILON);
         z = vx_setzero_f32();
-        p7 = vx_setall_f32(atan2_p7);
-        p5 = vx_setall_f32(atan2_p5);
-        p3 = vx_setall_f32(atan2_p3);
-        p1 = vx_setall_f32(atan2_p1);
-        val90 = vx_setall_f32(90.f);
-        val180 = vx_setall_f32(180.f);
-        val360 = vx_setall_f32(360.f);
-        s = vx_setall_f32(scale);
+        p7 = vx_setall(atan2_p7);
+        p5 = vx_setall(atan2_p5);
+        p3 = vx_setall(atan2_p3);
+        p1 = vx_setall(atan2_p1);
+        val90 = vx_setall(90.f);
+        val180 = vx_setall(180.f);
+        val360 = vx_setall(360.f);
+        s = vx_setall(scale);
     }
 
     v_float32 compute(const v_float32& y, const v_float32& x)
@@ -515,17 +515,17 @@ void exp32f( const float *_x, float *y, int n )
 
 #if CV_SIMD
     const int VECSZ = v_float32::nlanes;
-    const v_float32 vprescale = vx_setall_f32((float)exp_prescale);
-    const v_float32 vpostscale = vx_setall_f32((float)exp_postscale);
-    const v_float32 vminval = vx_setall_f32(minval);
-    const v_float32 vmaxval = vx_setall_f32(maxval);
+    const v_float32 vprescale = vx_setall((float)exp_prescale);
+    const v_float32 vpostscale = vx_setall((float)exp_postscale);
+    const v_float32 vminval = vx_setall(minval);
+    const v_float32 vmaxval = vx_setall(maxval);
 
-    const v_float32 vA1 = vx_setall_f32((float)A1);
-    const v_float32 vA2 = vx_setall_f32((float)A2);
-    const v_float32 vA3 = vx_setall_f32((float)A3);
-    const v_float32 vA4 = vx_setall_f32((float)A4);
+    const v_float32 vA1 = vx_setall((float)A1);
+    const v_float32 vA2 = vx_setall((float)A2);
+    const v_float32 vA3 = vx_setall((float)A3);
+    const v_float32 vA4 = vx_setall((float)A4);
 
-    const v_int32 vidxmask = vx_setall_s32(EXPTAB_MASK);
+    const v_int32 vidxmask = vx_setall(EXPTAB_MASK);
     bool y_aligned = (size_t)(void*)y % 32 == 0;
 
     for( ; i < n; i += VECSZ*2 )
@@ -554,7 +554,7 @@ void exp32f( const float *_x, float *y, int n )
         v_float32 yf0 = v_lut(expTab_f, xi0 & vidxmask);
         v_float32 yf1 = v_lut(expTab_f, xi1 & vidxmask);
 
-        v_int32 v0 = vx_setzero_s32(), v127 = vx_setall_s32(127), v255 = vx_setall_s32(255);
+        v_int32 v0 = vx_setzero_s32(), v127 = vx_setall(127), v255 = vx_setall(255);
         xi0 = v_min(v_max(v_shr<EXPTAB_SCALE>(xi0) + v127, v0), v255);
         xi1 = v_min(v_max(v_shr<EXPTAB_SCALE>(xi1) + v127, v0), v255);
 
@@ -627,18 +627,18 @@ void exp64f( const double *_x, double *y, int n )
 
 #if CV_SIMD_64F
     const int VECSZ = v_float64::nlanes;
-    const v_float64 vprescale = vx_setall_f64(exp_prescale);
-    const v_float64 vpostscale = vx_setall_f64(exp_postscale);
-    const v_float64 vminval = vx_setall_f64(minval);
-    const v_float64 vmaxval = vx_setall_f64(maxval);
+    const v_float64 vprescale = vx_setall(exp_prescale);
+    const v_float64 vpostscale = vx_setall(exp_postscale);
+    const v_float64 vminval = vx_setall(minval);
+    const v_float64 vmaxval = vx_setall(maxval);
 
-    const v_float64 vA1 = vx_setall_f64(A1);
-    const v_float64 vA2 = vx_setall_f64(A2);
-    const v_float64 vA3 = vx_setall_f64(A3);
-    const v_float64 vA4 = vx_setall_f64(A4);
-    const v_float64 vA5 = vx_setall_f64(A5);
+    const v_float64 vA1 = vx_setall(A1);
+    const v_float64 vA2 = vx_setall(A2);
+    const v_float64 vA3 = vx_setall(A3);
+    const v_float64 vA4 = vx_setall(A4);
+    const v_float64 vA5 = vx_setall(A5);
 
-    const v_int32 vidxmask = vx_setall_s32(EXPTAB_MASK);
+    const v_int32 vidxmask = vx_setall(EXPTAB_MASK);
     bool y_aligned = (size_t)(void*)y % 32 == 0;
 
     for( ; i < n; i += VECSZ*2 )
@@ -667,7 +667,7 @@ void exp64f( const double *_x, double *y, int n )
         v_float64 yf0 = v_lut(expTab, xi0 & vidxmask);
         v_float64 yf1 = v_lut(expTab, xi1 & vidxmask);
 
-        v_int32 v0 = vx_setzero_s32(), v1023 = vx_setall_s32(1023), v2047 = vx_setall_s32(2047);
+        v_int32 v0 = vx_setzero_s32(), v1023 = vx_setall(1023), v2047 = vx_setall(2047);
         xi0 = v_min(v_max(v_shr<EXPTAB_SCALE>(xi0) + v1023, v0), v2047);
         xi1 = v_min(v_max(v_shr<EXPTAB_SCALE>(xi1) + v1023, v0), v2047);
 
@@ -1024,13 +1024,13 @@ void log32f( const float *_x, float *y, int n )
 
 #if CV_SIMD
     const int VECSZ = v_float32::nlanes;
-    const v_float32 vln2 = vx_setall_f32((float)ln_2);
-    const v_float32 v1 = vx_setall_f32(1.f);
-    const v_float32 vshift = vx_setall_f32(-1.f/512);
+    const v_float32 vln2 = vx_setall((float)ln_2);
+    const v_float32 v1 = vx_setall(1.f);
+    const v_float32 vshift = vx_setall(-1.f/512);
 
-    const v_float32 vA0 = vx_setall_f32(A0);
-    const v_float32 vA1 = vx_setall_f32(A1);
-    const v_float32 vA2 = vx_setall_f32(A2);
+    const v_float32 vA0 = vx_setall(A0);
+    const v_float32 vA1 = vx_setall(A1);
+    const v_float32 vA2 = vx_setall(A2);
 
     for( ; i < n; i += VECSZ )
     {
@@ -1042,17 +1042,17 @@ void log32f( const float *_x, float *y, int n )
         }
 
         v_int32 h0 = vx_load(x + i);
-        v_int32 yi0 = (v_shr<23>(h0) & vx_setall_s32(255)) - vx_setall_s32(127);
-        v_int32 xi0 = (h0 & vx_setall_s32(LOGTAB_MASK2_32F)) | vx_setall_s32(127 << 23);
+        v_int32 yi0 = (v_shr<23>(h0) & vx_setall(255)) - vx_setall(127);
+        v_int32 xi0 = (h0 & vx_setall(LOGTAB_MASK2_32F)) | vx_setall(127 << 23);
 
-        h0 = v_shr<23 - LOGTAB_SCALE - 1>(h0) & vx_setall_s32(LOGTAB_MASK*2);
+        h0 = v_shr<23 - LOGTAB_SCALE - 1>(h0) & vx_setall(LOGTAB_MASK*2);
         v_float32 yf0, xf0;
 
         v_lut_deinterleave(logTab_f, h0, yf0, xf0);
 
         yf0 = v_fma(v_cvt_f32(yi0), vln2, yf0);
 
-        v_float32 delta = v_reinterpret_as_f32(h0 == vx_setall_s32(510)) & vshift;
+        v_float32 delta = v_reinterpret_as_f32(h0 == vx_setall(510)) & vshift;
         xf0 = v_fma((v_reinterpret_as_f32(xi0) - v1), xf0, delta);
 
         v_float32 zf0 = v_fma(xf0, vA0, vA1);
@@ -1097,13 +1097,13 @@ void log64f( const double *x, double *y, int n )
 
 #if CV_SIMD_64F
     const int VECSZ = v_float64::nlanes;
-    const v_float64 vln2 = vx_setall_f64(ln_2);
+    const v_float64 vln2 = vx_setall(ln_2);
 
     const v_float64
-        vA0 = vx_setall_f64(A0), vA1 = vx_setall_f64(A1),
-        vA2 = vx_setall_f64(A2), vA3 = vx_setall_f64(A3),
-        vA4 = vx_setall_f64(A4), vA5 = vx_setall_f64(A5),
-        vA6 = vx_setall_f64(A6), vA7 = vx_setall_f64(A7);
+        vA0 = vx_setall(A0), vA1 = vx_setall(A1),
+        vA2 = vx_setall(A2), vA3 = vx_setall(A3),
+        vA4 = vx_setall(A4), vA5 = vx_setall(A5),
+        vA6 = vx_setall(A6), vA7 = vx_setall(A7);
 
     for( ; i < n; i += VECSZ )
     {
@@ -1116,18 +1116,18 @@ void log64f( const double *x, double *y, int n )
 
         v_int64 h0 = vx_load((const int64*)x + i);
         v_int32 yi0 = v_pack(v_shr<52>(h0), vx_setzero_s64());
-        yi0 = (yi0 & vx_setall_s32(0x7ff)) - vx_setall_s32(1023);
+        yi0 = (yi0 & vx_setall(0x7ff)) - vx_setall(1023);
 
-        v_int64 xi0 = (h0 & vx_setall_s64(LOGTAB_MASK2_64F)) | vx_setall_s64((int64)1023 << 52);
+        v_int64 xi0 = (h0 & vx_setall(LOGTAB_MASK2_64F)) | vx_setall((int64)1023 << 52);
         h0 = v_shr<52 - LOGTAB_SCALE - 1>(h0);
-        v_int32 idx = v_pack(h0, h0) & vx_setall_s32(LOGTAB_MASK*2);
+        v_int32 idx = v_pack(h0, h0) & vx_setall(LOGTAB_MASK*2);
 
         v_float64 xf0, yf0;
         v_lut_deinterleave(logTab, idx, yf0, xf0);
 
         yf0 = v_fma(v_cvt_f64(yi0), vln2, yf0);
-        v_float64 delta = v_cvt_f64(idx == vx_setall_s32(510))*vx_setall_f64(1./512);
-        xf0 = v_fma(v_reinterpret_as_f64(xi0) - vx_setall_f64(1.), xf0, delta);
+        v_float64 delta = v_cvt_f64(idx == vx_setall(510))*vx_setall(1./512);
+        xf0 = v_fma(v_reinterpret_as_f64(xi0) - vx_setall(1.), xf0, delta);
 
         v_float64 xq = xf0*xf0;
         v_float64 zf0 = v_fma(xq, vA0, vA2);

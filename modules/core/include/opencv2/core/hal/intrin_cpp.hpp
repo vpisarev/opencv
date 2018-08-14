@@ -1226,6 +1226,18 @@ v_load_expand(const _Tp* ptr)
     return c;
 }
 
+template<>
+inline v_reg<float, V_TypeTraits<float>::nlanes128>
+v_load_expand(const float16_t* ptr)
+{
+    v_reg<float, V_TypeTraits<float>::nlanes128> c;
+    for( int i = 0; i < c.nlanes; i++ )
+    {
+        c.s[i] = ptr[i];
+    }
+    return c;
+}
+
 /** @brief Load register contents from memory with quad expand
 
 Same as cv::v_load_expand, but result type is 4 times wider than source.

@@ -77,6 +77,7 @@ namespace cv
         void valueToStr32s() { sprintf(buf, "%d", mtx.ptr<int>(row, col)[cn]); }
         void valueToStr32f() { sprintf(buf, floatFormat, mtx.ptr<float>(row, col)[cn]); }
         void valueToStr64f() { sprintf(buf, floatFormat, mtx.ptr<double>(row, col)[cn]); }
+        void valueToStr16f() { sprintf(buf, floatFormat, (float)mtx.ptr<float16_t>(row, col)[cn]); }
         void valueToStrOther() { buf[0] = 0; }
 
     public:
@@ -115,6 +116,7 @@ namespace cv
                 case CV_32S: valueToStr = &FormattedImpl::valueToStr32s; break;
                 case CV_32F: valueToStr = &FormattedImpl::valueToStr32f; break;
                 case CV_64F: valueToStr = &FormattedImpl::valueToStr64f; break;
+                case CV_16F: valueToStr = &FormattedImpl::valueToStr16f; break;
                 default:     valueToStr = &FormattedImpl::valueToStrOther; break;
             }
         }
@@ -325,7 +327,7 @@ namespace cv
         {
             static const char* numpyTypes[] =
             {
-                "uint8", "int8", "uint16", "int16", "int32", "float32", "float64", "uint64"
+                "uint8", "int8", "uint16", "int16", "int32", "float32", "float64", "float16"
             };
             char braces[5] = {'[', ']', ',', '[', ']'};
             if (mtx.cols == 1)
