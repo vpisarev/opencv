@@ -13,6 +13,8 @@ ocv_add_dispatched_file_force_all("layers/layers_common" AVX AVX2 AVX512_SKX)
 ocv_add_module(dnn opencv_core opencv_imgproc WRAP python java js)
 
 ocv_option(OPENCV_DNN_OPENCL "Build with OpenCL support" HAVE_OPENCL AND NOT APPLE)
+# TODO add limit condition, only build for arm platform
+ocv_option(OPENCV_DNN_TENGINE "Build with Tengine support" HAVE_TENGINE)
 
 if(OPENCV_DNN_OPENCL AND HAVE_OPENCL)
   add_definitions(-DCV_OCL4DNN=1)
@@ -90,6 +92,11 @@ else()
   set(sources_options EXCLUDE_OPENCL)
 endif()
 
+if(OPENCV_DNN_TENGINE AND HAVE_TENGINE)
+  list(APPEND include_dirs ${TENGINE_INCLUDE_DIRS})
+  list(APPEND libs ${TENGINE_LIBRARIES})
+endif()
+
 if(OPENCV_DNN_CUDA AND HAVE_CUDA AND HAVE_CUBLAS AND HAVE_CUDNN)
   list(APPEND include_dirs ${CUDA_TOOLKIT_INCLUDE} ${CUDNN_INCLUDE_DIRS})
   set(CC_LIST ${CUDA_ARCH_BIN})
@@ -105,6 +112,7 @@ else()
 endif()
 
 ocv_module_include_directories(${include_dirs})
+
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   ocv_append_source_files_cxx_compiler_options(fw_srcs "-Wno-suggest-override")  # GCC
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
