@@ -58,11 +58,17 @@
 using namespace cv::dnn::ocl4dnn;
 #endif
 
+#ifdef HAVE_TENGINE
+#include "../tengine4dnn/include/tengine_c_api.h"
+#include "../tengine4dnn/include/tengine_graph_convolution.hpp"
+#endif
+
 #ifdef HAVE_CUDA
 #include "../cuda4dnn/primitives/convolution.hpp"
 #include "../cuda4dnn/primitives/transpose_convolution.hpp"
 using namespace cv::dnn::cuda4dnn;
 #endif
+
 
 namespace cv
 {
@@ -866,7 +872,7 @@ public:
             p.reluslope_ = &reluslope;
             p.activ_ = p.reluslope_->empty() ? activ : 0;
 
-            parallel_for_(Range(0, nstripes), p, nstripes);
+            parallel_for_(Range(0, nstripes), p, nstripes);	
         }
 
         virtual void operator ()(const Range &r0) const CV_OVERRIDE
@@ -1395,10 +1401,11 @@ public:
         inputs_arr.getMatVector(inputs);
         outputs_arr.getMatVector(outputs);
 
-        /*printf("conv %s: input (%d x %d x %d x %d), kernel (%d x %d), pad (%d x %d), stride (%d x %d), dilation (%d x %d)\n",
-               name.c_str(), inputs[0].size[0], inputs[0].size[1], inputs[0].size[2], inputs[0].size[3],
-               kernel.width, kernel.height, pad.width, pad.height,
-               stride.width, stride.height, dilation.width, dilation.height);*/
+        // printf("conv %s: input (%d x %d x %d x %d), kernel (%d x %d), stride (%d x %d), dilation (%d x %d), pad (%d x %d), \n",
+        //        name.c_str(), inputs[0].size[0], inputs[0].size[1], inputs[0].size[2], inputs[0].size[3],
+        //        kernel.width, kernel.height, 
+        //        stride.width, stride.height, dilation.width, dilation.height, pad.width, pad.height);
+
         CV_Assert_N(inputs.size() == (size_t)1, inputs[0].size[1] % blobs[0].size[1] == 0,
                     outputs.size() == 1, inputs[0].data != outputs[0].data);
 
@@ -1427,10 +1434,112 @@ public:
             }
         }
 
+#ifdef HAVE_TENGINE
+        int inch = inputs[0].size[1]; 		// inch
+        int in_h = inputs[0].size[2]; 		// in_h
+        int in_w = inputs[0].size[3]; 		// in_w
+
+        int out_b = outputs[0].size[0];     // out batch size
+        int outch = outputs[0].size[1]; 	// outch
+        int out_h = outputs[0].size[2]; 	// out_h
+        int out_w = outputs[0].size[3]; 	// out_w
+        int out_cstep = out_h * out_w;	    // out_cstep
+
+        int pad_h = pad.height;
+        int pad_w = pad.width;
+
+        int group      = ngroups;
+        int dilation_h = dilation.height;
+        int dilation_w = dilation.width;
+        int stride_h   = stride.height;
+        int stride_w   = stride.width;
+
+        int kernel_h = kernel.height;
+        int kernel_w = kernel.width;
+        int kernel_inwh = (inch / group) * kernel_w * kernel_h;
+        size_t wstep = weightsMat.step1();
+
+        if (kernel_size.size() == 2 && kernel.height == kernel.width && pad.height == pad.width
+                                    && dilation.height == dilation.width && stride.height == stride.width
+                                    && out_b == 1 && pad.height < 10) // just for Conv2D
+        {
+            graph_t graph = NULL;
+            float *teg_weight = NULL;
+            float *teg_bias = NULL;
+
+            float *input_  = inputs[0].ptr<float>();
+            float *output_ = outputs[0].ptr<float>();
+            float *kernel_ = weightsMat.ptr<float>();            
+
+            // Default not using the winograd algorithm.
+            setenv("NO_WINO","1",1);
+
+            // Do not using the activation fuse mode, just convolution only.
+            int activation = -1; 
+            
+            // weight
+            if (kernel_inwh != wstep)
+            {
+                teg_weight = (float *)malloc(kernel_inwh * outch * sizeof(float));
+                for (int i=0; i<outch; i++)
+                {
+                    memcpy(teg_weight+i*kernel_inwh, kernel_+i*wstep, kernel_inwh*FLOAT_TO_REALSIZE);
+                }
+            }
+            else
+            {
+                teg_weight = kernel_;
+            }
+
+            // bias
+            teg_bias = &biasvec[0];
+
+            /* initial the resoruce of tengine */
+            init_tengine();
+
+            /* create the convolution graph */
+            graph = create_conv_graph( input_, inch, group, in_h, in_w,
+                                        output_, outch, out_h, out_w,
+                                        kernel_h, kernel_w, stride_h,stride_w,
+                                        pad_h, pad_w, dilation_h, dilation_w, activation,
+                                        teg_weight , teg_bias , padMode);
+
+            /* prerun */
+            if(prerun_graph(graph) < 0)
+            {
+                std::cerr << "prerun_graph failed: ERRNO: " << get_tengine_errno() << "\n";
+            }
+
+            /* run */
+            if(run_graph(graph, 1) < 0)
+            {
+                std::cerr << "run_graph failed \n";
+            }
+
+            /* activation */
+            if( activ )
+            {
+                ActivationLayer* activ_ = activ.get();
+                activ_->forwardSlice(output_, output_, out_cstep, out_cstep, 0, outch);
+            }
+
+            /* release the resource */
+            postrun_graph(graph);
+            destroy_graph(graph);
+        }
+        else
+        {
+            int nstripes = std::max(getNumThreads(), 1);
+
+            ParallelConv::run(inputs[0], outputs[0], weightsMat, biasvec, reluslope,
+                            kernel_size, strides, pads_begin, pads_end, dilations, activ.get(), ngroups, nstripes);
+        }
+#else
         int nstripes = std::max(getNumThreads(), 1);
 
         ParallelConv::run(inputs[0], outputs[0], weightsMat, biasvec, reluslope,
                           kernel_size, strides, pads_begin, pads_end, dilations, activ.get(), ngroups, nstripes);
+#endif
     }
 
 #ifdef HAVE_CUDA
