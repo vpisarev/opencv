@@ -302,14 +302,14 @@ bool tengine_forward(float *input_, int inch, int group, int in_h, int in_w,
         }
 
         /* release the resource */
-        // if(teg_weight)
-        //     free(teg_weight);
+        if(teg_weight && (teg_weight != kernel_))
+            free(teg_weight);
         postrun_graph(graph);
         destroy_graph(graph);
     }
     else     
     {
- //       printf("Not Support by tengine .\n");
+    //    printf("Not Support by tengine .\n");
         return false ;
     }
     return true ;
