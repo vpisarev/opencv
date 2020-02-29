@@ -1432,58 +1432,42 @@ public:
         }
 
 #ifdef HAVE_TENGINE
+        int inch = inputs[0].size[1]; 		// inch
+        int in_h = inputs[0].size[2]; 		// in_h
+        int in_w = inputs[0].size[3]; 		// in_w
 
         int out_b = outputs[0].size[0];     // out batch size
-
-        if (kernel_size.size() == 2 && kernel.height == kernel.width && pad.height == pad.width
-                                    && dilation.height == dilation.width && stride.height == stride.width
-                                    && out_b == 1 && pad.height < 10) // just for Conv2D
+        int outch = outputs[0].size[1]; 	// outch
+        int out_h = outputs[0].size[2]; 	// out_h
+        int out_w = outputs[0].size[3]; 	// out_w
+            
+        float *input_  = inputs[0].ptr<float>();
+        float *output_ = outputs[0].ptr<float>();
+        float *kernel_ = weightsMat.ptr<float>(); 
+        float *teg_bias = &biasvec[0];
+        
+        bool tengine_ret = tengine_forward(input_, inch, ngroups, in_h, in_w,
+                                    output_, out_b, outch, out_h, out_w,
+                                    kernel_, kernel_size.size(), kernel.height, kernel.width, 
+                                    teg_bias, stride.height, stride.width,
+                                    pad.height,  pad.width, dilation.height, dilation.width,
+                                    weightsMat.step1(), padMode);
+        /* activation */
+        if((true == tengine_ret) && activ )
         {
-            int inch = inputs[0].size[1]; 		// inch
-            int in_h = inputs[0].size[2]; 		// in_h
-            int in_w = inputs[0].size[3]; 		// in_w
-
-            int outch = outputs[0].size[1]; 	// outch
-            int out_h = outputs[0].size[2]; 	// out_h
-            int out_w = outputs[0].size[3]; 	// out_w
-                
-            float *input_  = inputs[0].ptr<float>();
-            float *output_ = outputs[0].ptr<float>();
-            float *kernel_ = weightsMat.ptr<float>(); 
-            float *teg_bias = &biasvec[0];
-               
-            bool tengine_ret = tengine_forward(input_, inch, ngroups, in_h, in_w,
-                                        output_, outch, out_h, out_w,
-                                        kernel_, kernel.height, kernel.width, 
-                                        teg_bias, stride.height, stride.width,
-                                        pad.height,  pad.width, dilation.height, dilation.width,
-                                        weightsMat.step1(), padMode);
-            if(tengine_ret)
-            {
-                std::cerr << "Tengine forward failed \n";
-            }
-            /* activation */
-            if( activ )
-            {
-                int out_cstep = out_h * out_w;	    // out_cstep
-               
-                ActivationLayer* activ_ = activ.get();
-                activ_->forwardSlice(output_, output_, out_cstep, out_cstep, 0, outch);
-            }
+            int out_cstep = out_h * out_w;	    // out_cstep
+            
+            ActivationLayer* activ_ = activ.get();
+            activ_->forwardSlice(output_, output_, out_cstep, out_cstep, 0, outch);
         }
-        else
+        if(false == tengine_ret)
+#endif
         {
             int nstripes = std::max(getNumThreads(), 1);
 
             ParallelConv::run(inputs[0], outputs[0], weightsMat, biasvec, reluslope,
                             kernel_size, strides, pads_begin, pads_end, dilations, activ.get(), ngroups, nstripes);
         }
-#else
-        int nstripes = std::max(getNumThreads(), 1);
-
-        ParallelConv::run(inputs[0], outputs[0], weightsMat, biasvec, reluslope,
-                          kernel_size, strides, pads_begin, pads_end, dilations, activ.get(), ngroups, nstripes);
-#endif
     }
 
 #ifdef HAVE_CUDA
