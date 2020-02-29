@@ -14,6 +14,8 @@ ocv_add_module(dnn opencv_core opencv_imgproc WRAP python java js)
 
 ocv_option(OPENCV_DNN_OPENCL "Build with OpenCL support" HAVE_OPENCL AND NOT APPLE)
 
+ocv_option(OPENCV_DNN_TENGINE "Build with Tengine support" HAVE_TENGINE)
+
 if(OPENCV_DNN_OPENCL AND HAVE_OPENCL)
   add_definitions(-DCV_OCL4DNN=1)
 endif()
@@ -88,6 +90,11 @@ if(OPENCV_DNN_OPENCL AND HAVE_OPENCL)
   list(APPEND include_dirs ${OPENCL_INCLUDE_DIRS})
 else()
   set(sources_options EXCLUDE_OPENCL)
+endif()
+
+if(OPENCV_DNN_TENGINE AND HAVE_TENGINE)
+  list(APPEND include_dirs ${TENGINE_INCLUDE_DIRS})
+  list(APPEND libs ${TENGINE_LIBRARIES})
 endif()
 
 if(OPENCV_DNN_CUDA AND HAVE_CUDA AND HAVE_CUBLAS AND HAVE_CUDNN)
