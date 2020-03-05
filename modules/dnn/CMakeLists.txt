@@ -13,6 +13,9 @@ ocv_add_dispatched_file_force_all("layers/layers_common" AVX AVX2 AVX512_SKX)
 ocv_add_module(dnn opencv_core opencv_imgproc WRAP python java js)
 
 ocv_option(OPENCV_DNN_OPENCL "Build with OpenCL support" HAVE_OPENCL AND NOT APPLE)
+if(HAVE_TENGINE)
+  add_definitions(-DHAVE_TENGINE=1)
+endif()
 
 if(OPENCV_DNN_OPENCL AND HAVE_OPENCL)
   add_definitions(-DCV_OCL4DNN=1)
@@ -83,6 +86,10 @@ else()
   set(sources_options EXCLUDE_OPENCL)
 endif()
 
+if(HAVE_TENGINE)
+  list(APPEND include_dirs ${TENGINE_INCLUDE_DIRS})
+  list(APPEND libs ${TENGINE_LIBRARIES})
+endif()
 ocv_module_include_directories(${include_dirs})
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   ocv_append_source_files_cxx_compiler_options(fw_srcs "-Wno-suggest-override")  # GCC
