@@ -44,6 +44,8 @@
 #include "rho.h"
 #include <iostream>
 
+#include "usac.hpp"
+
 namespace cv
 {
 
@@ -352,6 +354,9 @@ cv::Mat cv::findHomography( InputArray _points1, InputArray _points2,
                             const int maxIters, const double confidence)
 {
     CV_INSTRUMENT_REGION();
+
+    if (method == 100)
+        return usac::findHomography(_points1, _points2, method, ransacReprojThreshold, _mask, maxIters, confidence);
 
     const double defaultRANSACReprojThreshold = 3;
     bool result = false;
