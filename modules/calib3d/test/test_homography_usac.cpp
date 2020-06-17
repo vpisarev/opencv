@@ -36,7 +36,7 @@ namespace opencv_test {
         cv::Mat mask;
         const double thr = 2.;
         cv::Mat H = cv::findHomography(pts_mat.colRange(0,2), pts_mat.colRange(2,4),
-                100 /* usac flag */, thr, mask, 500, 0.99);
+                cv::USAC, thr, mask, 500, 0.99);
         CV_Assert(!H.empty());
 
         int num_inliers = cv::countNonZero(mask);

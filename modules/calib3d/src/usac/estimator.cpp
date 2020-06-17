@@ -2,8 +2,8 @@
 // It is subject to the license terms in the LICENSE file found in the top-level directory
 // of this distribution and at http://opencv.org/license.html.
 
-#include "precomp.hpp"
-#include "usac.hpp"
+#include "../precomp.hpp"
+#include "../usac.hpp"
 
 namespace cv { namespace usac {
 class HomographyEstimatorImpl : public HomographyEstimator {
@@ -56,7 +56,7 @@ Ptr<HomographyEstimator> HomographyEstimator::create (const Ptr<MinimalSolver> &
 }
 
 
-/////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////// ERROR /////////////////////////////////////////
 
 // Symmetric Reprojected Error
 class ReprojectedErrorSymmetricImpl : public ReprojectedErrorSymmetric {
@@ -135,8 +135,7 @@ ReprojectedErrorForward::create(const Mat &points) {
     return makePtr<ReprojectedErrorForwardImpl>(points);
 }
 
-
-
+////////////////////////////////////// NORMALIZING TRANSFORMATION /////////////////////////
 class NormTransformImpl : public NormTransform {
 private:
     const double * const points;
@@ -147,7 +146,7 @@ public:
      * Compute normalized points and transformation matrices.
      */
     void getNormTransformation (Mat& norm_points, const std::vector<int>& sample,
-                int sample_size, Mat &T1, Mat &T2) const override {
+                                int sample_size, Mat &T1, Mat &T2) const override {
         double mean_pts1_x = 0, mean_pts1_y = 0, mean_pts2_x = 0, mean_pts2_y = 0;
 
         // find average of each coordinate of points.
@@ -219,6 +218,4 @@ public:
 Ptr<NormTransform> NormTransform::create (const Mat &points) {
     return makePtr<NormTransformImpl>(points);
 }
-
-
 }}

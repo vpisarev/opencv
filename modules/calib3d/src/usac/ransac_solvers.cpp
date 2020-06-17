@@ -2,12 +2,10 @@
 // It is subject to the license terms in the LICENSE file found in the top-level directory
 // of this distribution and at http://opencv.org/license.html.
 
-#include "precomp.hpp"
-#include "usac.hpp"
-#include <iostream>
+#include "../precomp.hpp"
+#include "../usac.hpp"
 
 namespace cv { namespace usac {
-#define DEBUG 0
 
 class RansacOutputImpl : public RansacOutput {
 private:
@@ -78,17 +76,6 @@ public:
     int getNumberOfEstimatedModels () const override { return number_estimated_models; }
     const Time &getTime() const override { return time; }
     const Mat &getModel() const override { return model; }
-
-    void print() override {
-        std::cout << "\ttime: " << time.seconds << " secs " << time.milliseconds << " ms " <<
-                  time.microseconds << " mcs\n"
-                  << "\tNumber of inliers: " << number_inliers << "\n"
-                  << "\tNumber of iterations in main loop: " << number_iterations << "\n"
-                  << "\tNumber of iterations in LO: " << number_lo_iterations << "\n"
-                  // << "\tNumber of estimated models: " << out.number_estimated_models << "\n"
-                  // << "\tNumber of good models: " << out.number_good_models << "\n"
-                  << "\tBest model = ...\n" << getModel() << "\n";
-    }
 };
 
 Ptr<RansacOutput> RansacOutput::create(const Mat &model_,
@@ -137,10 +124,6 @@ public:
             params (params_), estimator (estimator_), quality (quality_), sampler (sampler_), termination_criteria (termination_criteria_),
             local_optimization (local_optimization_), model_verifier (model_verifier_), degeneracy (degeneracy_), model_polisher (model_polisher_)
     {
-        // reset random number generator
-        if (params.resetRandomGenerator())
-            srand (time(NULL));
-
         points_size = points_size_;
 
         // do some asserts
@@ -160,7 +143,6 @@ public:
 
     bool run(Ptr<RansacOutput> &ransac_output) {
         if (points_size < params.getSampleSize()) {
-            std::cout << "ransac.hpp: Number of points is less than sample size!\n";
             return false;
         }
 
@@ -174,7 +156,7 @@ public:
         std::vector<int> sample (estimator.getMinimalSampleSize());
 
         // check if LO
-        bool LO = params.getLO() != LocOpt ::NullLO;
+        const bool LO = params.getLO() != LocalOptimMethod ::NullLO;
 
         // only for test
         int number_of_estimated_models = 0, number_of_good_models = 0;
@@ -191,14 +173,8 @@ public:
         int iters = 0;
 
         while (!termination_criteria.terminate(++iters)) {
-#if DEBUG
-            std::cout << iters << ": generate sample\n";
-#endif
             sampler.generateSample(sample);
 
-#if DEBUG
-            std::cout << iters << ": estimate minimal model\n";
-#endif
             auto number_of_models = estimator.estimateModels(sample, models);
 
             // test
@@ -209,9 +185,6 @@ public:
                 // test
                 number_of_estimated_models++;
 
-#if DEBUG
-                std::cout << iters << ": verify model\n";
-#endif
                 bool is_good_model = model_verifier.isModelGood(models[i]);
 
                 if (!is_good_model && iters > params.getMaxNumHypothesisToTestBeforeRejection()) {
@@ -221,19 +194,10 @@ public:
                 // test
                 number_of_good_models++;
 
-#if DEBUG
-                std::cout << iters << ": get score\n";
-#endif
                 if (! model_verifier.getScore(current_score))
                     current_score = quality.getScore(models[i]);
-#if DEBUG
-                std::cout << "iteration " << iters << " inlier number " << current_score.inlier_number << " ratio " << (double)current_score.inlier_number /points_size << "\n";
-#endif
 
                 if (current_score.better(best_score)) {
-#if DEBUG
-                    std::cout << "Save so far the best model.\nRun test on degeneracy\n";
-#endif
                     // if number of non degenerate models is zero then input model is good
                     int num_non_degenerate_models = degeneracy.recoverIfDegenerate(sample, models[i]);
 
@@ -271,9 +235,6 @@ public:
                         break;
 
                     if (LO) {
-#if DEBUG
-                        std::cout << "run Local optimization\n";
-#endif
                         // update model by Local optimizaion
                         Mat lo_model;
                         if (local_optimization->refineModel(best_model, best_score, lo_model, lo_score)) {
@@ -290,20 +251,12 @@ public:
             } // end loop of number of models
         } // end main while loop
 
-#if DEBUG
-        std::cout << "main RANSAC inlier number " << best_score.inlier_number << "\n";
-#endif
-
         // if best model has 0 inliers then return fail
         if (best_score.inlier_number == 0)
             return false;
 
-#if DEBUG
-        std::cout << "run final polisher\n";
-#endif
-
         // polish final model
-        if (params.getFinalPolisher() != FINAL_POLISHER::NonePolisher) {
+        if (params.getFinalPolisher() != PolishingMethod::NonePolisher) {
             Mat polished_model;
             Score polisher_score;
             if (model_polisher.polishSoFarTheBestModel (best_model, best_score, polished_model, polisher_score)) {
@@ -335,8 +288,8 @@ public:
     }
 };
 
-Mat findHomography (InputArray srcPoints, InputArray dstPoints,
-    int method, double ransacReprojThreshold,
+
+Mat findHomography (InputArray srcPoints, InputArray dstPoints, int method, double thr,
     OutputArray mask, const int maxIters, const double confidence) {
 
     Mat points;
@@ -344,30 +297,30 @@ Mat findHomography (InputArray srcPoints, InputArray dstPoints,
     points.convertTo(points, CV_64F); // convert to double
     int points_size = points.rows;
 
-    Ptr<Model> params = Model::create
-            (ransacReprojThreshold, ESTIMATOR ::Homography, SAMPLER::Uniform, confidence,
-                    maxIters, SCORE::MSAC);
+    Ptr<Model> params = Model::create(thr, EstimationMethod ::Homography,
+                                      SamplingMethod::Uniform, confidence, maxIters, ScoreMethod::MSAC);
 
     params->setTrace(mask.needed());
-    params->setLocalOptimization(usac::LocOpt ::InLORsc);
-    params->setPolisher(usac::FINAL_POLISHER ::LSQPolisher);
-    params->setVerifier(MODEL_VERIFIER ::NullVerifier);
+    params->setLocalOptimization(usac::LocalOptimMethod ::InLORsc);
+    params->setPolisher(usac::PolishingMethod ::LSQPolisher);
+    params->setVerifier(VerificationMethod ::SprtVerifier);
 
+    RNG rng;
     Ptr<Error> error = ReprojectedErrorForward::create(points);
     Ptr<Degeneracy> degeneracy = HomographyDegeneracy::create(points, params->getSampleSize());
     Ptr<MinimalSolver> h_min = HomographyMinimalSolver4ptsGEM::create(points);
     Ptr<NonMinimalSolver> h_non_min = HomographyNonMinimalSolver::create(points);
     Ptr<Estimator> estimator = HomographyEstimator::create(h_min, h_non_min, degeneracy);
     Ptr<Quality> quality = MsacQuality::create(points_size, params->getThreshold(), error);
-    Ptr<ModelVerifier> verifier = SPRTmsac::create(error, points_size, params->getSampleSize(),
-                                              params->getThreshold(), params->getSPRTepsilon(), params->getSPRTdelta(),
-                                              params->getTimeForModelEstimation(), params->getSPRTavgNumModels());
+    Ptr<ModelVerifier> verifier = SPRTmsac::create(rng, error, points_size, params->getSampleSize(),
+                  params->getThreshold(), params->getSPRTepsilon(), params->getSPRTdelta(),
+                  params->getTimeForModelEstimation(), params->getSPRTavgNumModels());
     Ptr<FinalModelPolisher> polisher = LeastSquaresPolishing::create(estimator, quality, degeneracy, points_size);
-    Ptr<Sampler> sampler = UniformSampler::create(params->getSampleSize(), points_size);
+    Ptr<Sampler> sampler = UniformSampler::create(rng, params->getSampleSize(), points_size);
     Ptr<TerminationCriteria> termination = StandardTerminationCriteria::create(
             params->getConfidence(), points_size, params->getSampleSize(), params->getMaxIters(), params->isTimeLimit());
 
-    Ptr<Sampler> lo_sampler = UniformSampler::create(params->getMaxSampleSizeLO(), points_size);
+    Ptr<Sampler> lo_sampler = UniformSampler::create(rng, params->getMaxSampleSizeLO(), points_size);
     Ptr<LocalOptimization> inner_lo_rsc = InnerLocalOptimization::create(estimator, quality, lo_sampler, degeneracy, points_size);
 
     Ransac<Estimator, Quality, Sampler, TerminationCriteria, ModelVerifier,
@@ -392,12 +345,11 @@ class ModelImpl : public Model {
 private:
     // main parameters:
     double threshold, confidence;
-
     int sample_size, max_iterations;
 
-    ESTIMATOR estimator;
-    SAMPLER sampler;
-    SCORE score;
+    EstimationMethod estimator;
+    SamplingMethod sampler;
+    ScoreMethod score;
 
     // optional default parameters:
 
@@ -417,10 +369,10 @@ private:
     int cell_size = 25; // pixels, for grid neighbors searching
     double radius = 15; // pixels, for radius-search neighborhood graph
     int flann_search_params = 32;
-    NeighborsSearch neighborsType = NeighborsSearch::Grid;
+    NeighborSearchMethod neighborsType = NeighborSearchMethod::Grid;
 
     // Local Optimization parameters
-    LocOpt lo = LocOpt ::NullLO;
+    LocalOptimMethod lo = LocalOptimMethod ::NullLO;
     int lo_sample_size=14, lo_inner_iterations=15, lo_iterative_iterations=5,
             lo_threshold_multiplier=4, lo_iter_sample_size = 30;
     bool sample_size_limit = true; // parameter for Iterative LO-RANSAC
@@ -430,10 +382,10 @@ private:
     const double spatial_coherence_term = 0.1;
 
     // apply polisher for final RANSAC model
-    FINAL_POLISHER polisher = FINAL_POLISHER ::LSQPolisher;
+    PolishingMethod polisher = PolishingMethod ::LSQPolisher;
 
     // preemptive verification test
-    MODEL_VERIFIER verifier = MODEL_VERIFIER ::NullVerifier;
+    VerificationMethod verifier = VerificationMethod ::NullVerifier;
     const int max_hypothesis_test_before_verification = 5;
 
     // number of points to be verified for Tdd test
@@ -461,7 +413,7 @@ private:
     bool density_sort = false;
 
     // estimator error
-    EST_ERROR est_error;
+    ErrorMetric est_error;
 
     // fill with zeros (if is not known)
     int img1_width = 0, img1_height = 0, img2_width = 2, img2_height = 0;
@@ -478,22 +430,22 @@ private:
     int trace = 2;
     Mat descriptor;
 public:
-    ModelImpl (double threshold_, ESTIMATOR estimator_, SAMPLER sampler_, double confidence_=0.95,
-               int max_iterations_=5000, SCORE score_ =SCORE::RANSAC) {
+    ModelImpl (double threshold_, EstimationMethod estimator_, SamplingMethod sampler_, double confidence_=0.95,
+               int max_iterations_=5000, ScoreMethod score_ =ScoreMethod::RANSAC) {
         estimator = estimator_;
         switch (estimator_) {
-            case (ESTIMATOR::Line2d): sample_size = 2; est_error = EST_ERROR ::DIST_TO_LINE; break;
-            case (ESTIMATOR::Similarity): sample_size = 2; est_error = EST_ERROR ::FORW_REPR_ERR; break;
-            case (ESTIMATOR::Affine): sample_size = 3; est_error = EST_ERROR ::FORW_REPR_ERR; break;
-            case (ESTIMATOR::Homography): sample_size = 4; est_error = EST_ERROR ::FORW_REPR_ERR;
+            case (EstimationMethod::Line2d): sample_size = 2; est_error = ErrorMetric ::DIST_TO_LINE; break;
+            case (EstimationMethod::Similarity): sample_size = 2; est_error = ErrorMetric ::FORW_REPR_ERR; break;
+            case (EstimationMethod::Affine): sample_size = 3; est_error = ErrorMetric ::FORW_REPR_ERR; break;
+            case (EstimationMethod::Homography): sample_size = 4; est_error = ErrorMetric ::FORW_REPR_ERR;
                 // time_for_model_est = 1.03;
                 break;
-            case (ESTIMATOR::HomographyQR): sample_size = 4; est_error = EST_ERROR ::FORW_REPR_ERR;
+            case (EstimationMethod::HomographyQR): sample_size = 4; est_error = ErrorMetric ::FORW_REPR_ERR;
                 // time_for_model_est = 5.5099;
                 break;
-            case (ESTIMATOR::Fundamental): sample_size = 7; est_error = EST_ERROR ::SAMPSON_ERR; break;
-            case (ESTIMATOR::Fundamental8): sample_size = 8; est_error = EST_ERROR ::SAMPSON_ERR; break;
-            case (ESTIMATOR::Essential): sample_size = 5; est_error = EST_ERROR ::SGD_ERR; break;
+            case (EstimationMethod::Fundamental): sample_size = 7; est_error = ErrorMetric ::SAMPSON_ERR; break;
+            case (EstimationMethod::Fundamental8): sample_size = 8; est_error = ErrorMetric ::SAMPSON_ERR; break;
+            case (EstimationMethod::Essential): sample_size = 5; est_error = ErrorMetric ::SGD_ERR; break;
             default: assert(0 && "Estimator has not implemented yet!");
         }
 
@@ -523,7 +475,7 @@ public:
          * so threshold must be squared.
          */
         threshold = threshold_;
-        if (est_error == EST_ERROR::FORW_REPR_ERR || est_error == EST_ERROR::SYMM_REPR_ERR)
+        if (est_error == ErrorMetric::FORW_REPR_ERR || est_error == ErrorMetric::SYMM_REPR_ERR)
             threshold *= threshold_;
 
         sampler = sampler_;
@@ -531,22 +483,22 @@ public:
         max_iterations = max_iterations_;
         score = score_;
     }
-    void setVerifier (MODEL_VERIFIER verifier_) override {
+    void setVerifier (VerificationMethod verifier_) override {
         verifier = verifier_;
     }
-    void setPolisher (FINAL_POLISHER polisher_) override {
+    void setPolisher (PolishingMethod polisher_) override {
         polisher = polisher_;
     }
-    void setError (EST_ERROR error_) override {
+    void setError (ErrorMetric error_) override {
         est_error = error_;
     }
-    void setLocalOptimization (LocOpt lo_) override {
+    void setLocalOptimization (LocalOptimMethod lo_) override {
         lo = lo_;
     }
     void setKNearestNeighhbors (int knn_) override {
         k_nearest_neighbors = knn_;
     }
-    void setNeighborsType (NeighborsSearch neighbors) override {
+    void setNeighborsType (NeighborSearchMethod neighbors) override {
         neighborsType = neighbors;
     }
     void setCellSize (int cell_size_) override {
@@ -567,16 +519,16 @@ public:
         img1_width = img1_width_, img1_height = img1_height_,
         img2_width = img2_width_, img2_height = img2_height_;
     }
-    NeighborsSearch getNeighborsSearch () const override {
+    NeighborSearchMethod getNeighborsSearch () const override {
         return neighborsType;
     }
     int getKNN () const override {
         return k_nearest_neighbors;
     }
-    EST_ERROR getError () const override {
+    ErrorMetric getError () const override {
         return est_error;
     }
-    ESTIMATOR getEstimator () const override {
+    EstimationMethod getEstimator () const override {
         return estimator;
     }
     inline void setDescriptor(const Mat &desc) override {
@@ -600,7 +552,7 @@ public:
     int getMaxNumHypothesisToTestBeforeRejection() const override {
         return max_hypothesis_test_before_verification;
     }
-    FINAL_POLISHER getFinalPolisher () const override {
+    PolishingMethod getFinalPolisher () const override {
         return polisher;
     }
     int getLOThresholdMultiplier() const override {
@@ -627,10 +579,10 @@ public:
     int getLOInnerMaxIters() const override {
         return lo_inner_iterations;
     }
-    LocOpt getLO () const override {
+    LocalOptimMethod getLO () const override {
         return lo;
     }
-    SCORE getScore () const override {
+    ScoreMethod getScore () const override {
         return score;
     }
     int getMaxIters () const override {
@@ -645,10 +597,10 @@ public:
     double getThreshold () const override {
         return threshold;
     }
-    MODEL_VERIFIER getVerifier () const override {
+    VerificationMethod getVerifier () const override {
         return verifier;
     }
-    SAMPLER getSampler () const override {
+    SamplingMethod getSampler () const override {
         return sampler;
     }
     int getMaxSampleSizeLO () const override {
@@ -682,19 +634,19 @@ public:
         return grid_cell_number;
     }
     bool isFundamental () const override {
-        return estimator == ESTIMATOR ::Fundamental ||
-               estimator == ESTIMATOR ::Fundamental8;
+        return estimator == EstimationMethod ::Fundamental ||
+               estimator == EstimationMethod ::Fundamental8;
     }
     bool isHomography () const override {
-        return estimator == ESTIMATOR ::Homography || estimator == ESTIMATOR ::HomographyQR;
+        return estimator == EstimationMethod ::Homography || estimator == EstimationMethod ::HomographyQR;
     }
     bool isEssential () const override {
-        return estimator == ESTIMATOR ::Essential;
+        return estimator == EstimationMethod ::Essential;
     }
 };
 
-Ptr<Model> Model::create(double threshold_, ESTIMATOR estimator_, SAMPLER sampler_,
-                         double confidence_, int max_iterations_, SCORE score_) {
+Ptr<Model> Model::create(double threshold_, EstimationMethod estimator_, SamplingMethod sampler_,
+                         double confidence_, int max_iterations_, ScoreMethod score_) {
     return makePtr<ModelImpl>(threshold_, estimator_, sampler_, confidence_,
                               max_iterations_, score_);
 }

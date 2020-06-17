@@ -2,8 +2,8 @@
 // It is subject to the license terms in the LICENSE file found in the top-level directory
 // of this distribution and at http://opencv.org/license.html.
 
-#include "precomp.hpp"
-#include "usac.hpp"
+#include "../precomp.hpp"
+#include "../usac.hpp"
 
 namespace cv { namespace usac {
 
@@ -15,11 +15,11 @@ namespace cv { namespace usac {
 class UniformSamplerImpl : public UniformSampler {
 private:
     std::vector<int> points_random_pool;
-    int random_pool_size, points_size = 0;
-    int sample_size;
+    int sample_size, random_pool_size, points_size = 0;
+    RNG &rng;
 public:
 
-    UniformSamplerImpl (int sample_size_, int points_size_) {
+    UniformSamplerImpl (RNG &rng_, int sample_size_, int points_size_) : rng(rng_) {
         assert(sample_size_ <= points_size_);
         sample_size = sample_size_;
         setNewPointsSize (points_size_);
@@ -54,7 +54,7 @@ public:
         random_pool_size = points_size; // random points of entire range
         for (int i = 0; i < sample_size; i++) {
             // get random point index
-            int array_random_index = random () % random_pool_size;
+            int array_random_index = rng.uniform(0, random_pool_size);
             // get point by random index
             int random_point = points_random_pool[array_random_index];
             // swap random point with the end of random pool
@@ -74,16 +74,13 @@ public:
     void generateSample (std::vector<int>& sample, int points_size_) override {
         assert(sample_size <= points_size_);
 
-        int num;
-        int j;
-        sample[0] = random() % points_size_;
+        int num, j;
+        sample[0] = rng.uniform(0, points_size_);
         for (int i = 1; i < sample_size;) {
-            num = random() % points_size_;
-            for (j = i - 1; j >= 0; j--) {
-                if (num == sample[j]) {
+            num = rng.uniform(0, points_size_);
+            for (j = i - 1; j >= 0; j--)
+                if (num == sample[j])
                     break;
-                }
-            }
             if (j == -1) sample[i++] = num;
         }
     }
@@ -99,7 +96,7 @@ public:
     void reset () override {}
 };
 
-Ptr<UniformSampler> UniformSampler::create(int sample_size_, int points_size_) {
-    return makePtr<UniformSamplerImpl>(sample_size_, points_size_);
+Ptr<UniformSampler> UniformSampler::create(RNG &rng, int sample_size_, int points_size_) {
+    return Ptr<UniformSamplerImpl>(new UniformSamplerImpl(rng, sample_size_, points_size_));
 }
-}};
+}}

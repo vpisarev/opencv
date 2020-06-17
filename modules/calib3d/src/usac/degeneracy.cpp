@@ -2,14 +2,14 @@
 // It is subject to the license terms in the LICENSE file found in the top-level directory
 // of this distribution and at http://opencv.org/license.html.
 
-#include "precomp.hpp"
-#include "usac.hpp"
-
-namespace cv { namespace usac {
-
 /*
 * Abstract class for handling degeneracies in RANSAC.
 */
+#include "../precomp.hpp"
+#include "../usac.hpp"
+
+namespace cv { namespace usac {
+
 class HomographyDegeneracyImpl : public HomographyDegeneracy {
 private:
     const Mat &points_mat;
@@ -21,6 +21,10 @@ public:
 
     inline bool isSampleGood (const std::vector<int>& sample) const override {
         return testSample(sample);
+        // if (!testSample(sample))
+        //    return false;
+        // check if 3 out of sample size points are collinear
+        // return ! Math::haveCollinearPoints(points_mat, sample, sample_size);
     }
 
     bool satisfyRankConstraint (const Mat &model) const override {

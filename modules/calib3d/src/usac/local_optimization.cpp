@@ -2,11 +2,10 @@
 // It is subject to the license terms in the LICENSE file found in the top-level directory
 // of this distribution and at http://opencv.org/license.html.
 
-#include "precomp.hpp"
-#include "usac.hpp"
+#include "../precomp.hpp"
+#include "../usac.hpp"
 
 namespace cv { namespace usac {
-
 /*
 * Reference:
 * http://cmp.felk.cvut.cz/~matas/papers/chum-dagm03.pdf
@@ -129,6 +128,7 @@ Ptr<InnerLocalOptimization> InnerLocalOptimization::create
 }
 
 
+
 /////////////////////////////////////////// FINAL MODEL POLISHER ////////////////////////
 class LeastSquaresPolishingImpl : public LeastSquaresPolishing {
 private:
@@ -230,5 +230,4 @@ Ptr<LeastSquaresPolishing> LeastSquaresPolishing::create (const Ptr<Estimator> &
                                                           int lsq_iterations_) {
     return makePtr<LeastSquaresPolishingImpl>(estimator_, quality_, degeneracy_, points_size, lsq_iterations_);
 }
-
 }}

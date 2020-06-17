@@ -2,8 +2,8 @@
 // It is subject to the license terms in the LICENSE file found in the top-level directory
 // of this distribution and at http://opencv.org/license.html.
 
-#include "precomp.hpp"
-#include "usac.hpp"
+#include "../precomp.hpp"
+#include "../usac.hpp"
 
 namespace cv { namespace usac {
 
@@ -23,6 +23,7 @@ public:
     /*
      * calculating number of inliers of current model.
      */
+    // use inline
     Score getScore (const Mat& model, double threshold, bool get_inliers, std::vector<int>& inliers) const override {
 
         error->setModelParameters(model);
@@ -174,69 +175,14 @@ Ptr<MsacQuality> MsacQuality::create(int points_size_, double threshold_, const 
 }
 
 
-///////////////////////////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-/*
-* Chum, Ondrej, and Jiri Matas. "Randomized RANSAC with Td, d test." Proc. British Machine Vision Conference. Vol. 2. 2002.
-*/
-class TddImpl : public Tdd {
-private:
-    const Ptr<Quality> &quality;
-    std::vector<int> random_pool;
-    int points_size;
-    int d_points_to_test;
-public:
-
-    TddImpl (int points_size_, const Ptr<Quality> &quality_, int d_points_to_test_) : quality (quality_) {
-        assert (d_points_to_test_ <= points_size_);
-
-        points_size = points_size_;
-        d_points_to_test = d_points_to_test_;
-
-        random_pool = std::vector<int>(points_size);
-        // fill random_pool with values from 0 to points_size-1
-        std::iota(random_pool.begin(), random_pool.end(), 0);
-        // shuffle random pool
-        Utils::random_shuffle(random_pool);
-    }
-
-    /*
-     * Model is good whether d random points out d are inliers.
-     */
-    inline bool isModelGood (const Mat &model) override {
-        // set model to quality to call isInlier() function
-        quality->setModel (model);
-
-        // generate random pool index.
-        int random_pool_index = random () % points_size;
-        for (int i = 0; i < d_points_to_test; i++) {
-
-            // if point is not inlier then model is bad.
-            if (!quality->isInlier(random_pool[random_pool_index++])) {
-                return false;
-            }
-
-            // reset overflow of random pool index
-            if (random_pool_index >= points_size)
-                random_pool_index = 0;
-        }
-
-        // all d random points are inliers => model is good
-        return true;
-    }
-};
-
-Ptr<Tdd> Tdd::create(int points_size_, const Ptr<Quality> &quality_, int d_points_to_test_) {
-    return Ptr<TddImpl> (new TddImpl(points_size_, quality_, d_points_to_test_));
-}
-
+//////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////// MODEL VERIFIER /////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////
 
 /*
 * Matas, Jiri, and Ondrej Chum. "Randomized RANSAC with sequential probability ratio test."
 * Tenth IEEE International Conference on Computer Vision (ICCV'05) Volume 1. Vol. 2. IEEE, 2005.
 */
-
 class SPRTImpl : public SPRT {
 public:
     double current_epsilon, current_delta, current_A, delta_to_epsilon, complement_delta_to_complement_epsilon;
@@ -247,12 +193,11 @@ public:
     int points_size, random_pool_idx, highest_inlier_number;
     int sample_size, current_sprt_idx; // i
     std::vector<SPRT_history> sprt_histories;
-
     std::vector<int> points_random_pool;
 public:
 
-    SPRTImpl (int points_size_, int sample_size_, double prob_pt_of_good_model,
-          double prob_pt_of_bad_model, double time_sample, double avg_num_models)
+    SPRTImpl (RNG &rng, int points_size_, int sample_size_, double prob_pt_of_good_model,
+              double prob_pt_of_bad_model, double time_sample, double avg_num_models)
             : t_M (time_sample), m_S (avg_num_models), prob_pt_good_m (prob_pt_of_good_model),
               prob_pt_bad_m(prob_pt_of_bad_model) {
 
@@ -263,7 +208,7 @@ public:
         points_random_pool = std::vector<int> (points_size_);
         // fill values from 0 to points_size-1
         std::iota(points_random_pool.begin(), points_random_pool.end(), 0);
-        Utils::random_shuffle (points_random_pool);
+        Utils::random_shuffle (rng, points_random_pool);
         ///////////////////////////////
 
         // reserve (approximately) some space for sprt vector.
@@ -294,7 +239,6 @@ public:
      * @current_hypothesis: current RANSAC iteration
      * Return: true if model is good, false - otherwise.
      */
-//    virtual bool isModelGood (const Mat &model) override = 0;
 
     /*
      * Return constant reference of vector of SPRT histories for SPRT termination.
@@ -354,17 +298,15 @@ public:
                          delta * (log(delta / epsilon));
         // K = K1/K2 + 1 = (t_M / P_g) / (m_S / (C * P_g)) + 1 = (t_M * S)/m_S + 1
         const double K = (t_M * C) / m_S + 1;
-        double An_1 = K;
+        double An, An_1 = K;
         // compute A using a recursive relation
         // A* = lim(n->inf)(An), the series typically converges within 4 iterations
-        double An;
         for (int i = 0; i < 10; i++) {
             An = K + log(An_1);
             if (fabs(An - An_1) < FLT_EPSILON)
                 break;
             An_1 = An;
         }
-
         return An;
     }
 };
@@ -375,13 +317,13 @@ class SPRTverifierImpl : public SPRTverifier {
 private:
     SPRTImpl sprt;
     const Ptr<Quality> &quality;
+    RNG &rng;
 public:
 
-    SPRTverifierImpl (const Ptr<Quality> &quality_, int points_size_, int sample_size_,
-          double prob_pt_of_good_model, double prob_pt_of_bad_model,
-          double time_sample, double avg_num_models) : sprt (points_size_, sample_size_,
-            prob_pt_of_good_model, prob_pt_of_bad_model, time_sample, avg_num_models),
-                                               quality(quality_) {}
+    SPRTverifierImpl (RNG &rng_, const Ptr<Quality> &quality_, int points_size_, int sample_size_,
+          double prob_pt_of_good_model, double prob_pt_of_bad_model, double time_sample,
+          double avg_num_models) : rng(rng_), sprt (rng, points_size_, sample_size_, prob_pt_of_good_model,
+          prob_pt_of_bad_model, time_sample, avg_num_models), quality(quality_) {}
 
     inline bool isModelGood (const Mat &model) override {
         // set model in estimator inside model to run isInlier()
@@ -389,7 +331,7 @@ public:
 
         double lambda = 1;
         bool good_model = true;
-        sprt.random_pool_idx = random() % sprt.points_size;
+        sprt.random_pool_idx = rng.uniform(0, sprt.points_size);
 
         int tested_point, tested_inliers = 0;
         for (tested_point = 0; tested_point < sprt.points_size; tested_point++) {
@@ -450,11 +392,11 @@ public:
     }
 };
 
-Ptr<SPRTverifier> SPRTverifier::create (const Ptr<Quality> &quality_, int points_size_, int sample_size_,
-                                 double prob_pt_of_good_model, double prob_pt_of_bad_model,
-                                 double time_sample, double avg_num_models) {
-    return makePtr<SPRTverifierImpl>(quality_, points_size_, sample_size_, prob_pt_of_good_model,
-                             prob_pt_of_bad_model, time_sample, avg_num_models);
+Ptr<SPRTverifier> SPRTverifier::create (RNG &rng, const Ptr<Quality> &quality_, int points_size_,
+        int sample_size_, double prob_pt_of_good_model, double prob_pt_of_bad_model,
+        double time_sample, double avg_num_models) {
+    return Ptr<SPRTverifierImpl> (new SPRTverifierImpl(rng, quality_, points_size_, sample_size_,
+            prob_pt_of_good_model, prob_pt_of_bad_model, time_sample, avg_num_models));
 }
 
 ///////////////////////////////////// SPRT VERIFIER MSAC //////////////////////////////////////////
@@ -467,25 +409,22 @@ private:
     const double inlier_threshold;
     Score score;
     bool last_model_is_good;
+    RNG &rng;
 public:
 
-    SPRTmsacImpl(const Ptr<Error>&err_, int points_size_, int sample_size_,
-      double inlier_threshold_, double prob_pt_of_good_model, double prob_pt_of_bad_model,
-      double time_sample, double avg_num_models) : sprt (points_size_, sample_size_,
-      prob_pt_of_good_model, prob_pt_of_bad_model, time_sample, avg_num_models),
-                           err(err_), inlier_threshold (inlier_threshold_) {}
+    SPRTmsacImpl (RNG &rng_, const Ptr<Error>&err_, int points_size_, int sample_size_,
+         double inlier_threshold_, double prob_pt_of_good_model, double prob_pt_of_bad_model,
+         double time_sample, double avg_num_models) : rng(rng_), sprt (rng_, points_size_,
+         sample_size_, prob_pt_of_good_model, prob_pt_of_bad_model, time_sample, avg_num_models),
+         err(err_), inlier_threshold (inlier_threshold_) {}
 
     inline bool isModelGood (const Mat &model) override {
         // set model in estimator inside model to run isInlier()
         err->setModelParameters(model);
 
-        double lambda = 1;
-
+        double lambda = 1, sum_errors = 0;
         bool good_model = true;
-
-        sprt.random_pool_idx = random() % sprt.points_size;
-
-        double sum_errors = 0;
+        sprt.random_pool_idx = rng.uniform(0, sprt.points_size);
 
         int tested_point, tested_inliers = 0;
         for (tested_point = 0; tested_point < sprt.points_size; tested_point++) {
@@ -544,11 +483,11 @@ public:
         return true;
     }
 };
-Ptr<SPRTmsac> SPRTmsac::create (const Ptr<Error> &err_, int points_size_, int sample_size_,
-                             double inlier_threshold_, double prob_pt_of_good_model, double prob_pt_of_bad_model,
-                             double time_sample, double avg_num_models) {
-    return makePtr<SPRTmsacImpl>(err_, points_size_, sample_size_, inlier_threshold_,
-            prob_pt_of_good_model, prob_pt_of_bad_model, time_sample, avg_num_models);
+Ptr<SPRTmsac> SPRTmsac::create (RNG &rng, const Ptr<Error> &err_, int points_size_, int sample_size_,
+      double inlier_threshold_, double prob_pt_of_good_model, double prob_pt_of_bad_model,
+      double time_sample, double avg_num_models) {
+    return Ptr<SPRTmsacImpl>(new SPRTmsacImpl (rng, err_, points_size_, sample_size_,
+    inlier_threshold_, prob_pt_of_good_model, prob_pt_of_bad_model, time_sample, avg_num_models));
 }
 
 //////////////////////////////////// SPRT VERIFIER RANSAC /////////////////////////////////////////
@@ -559,27 +498,23 @@ private:
     const Ptr<Quality> &quality;
     Score score;
     bool last_model_is_good;
+    RNG &rng;
 public:
 
-    SPRTransacImpl (const Ptr<Quality> &quality_, int points_size_, int sample_size_,
-                double prob_pt_of_good_model, double prob_pt_of_bad_model,
-                double time_sample, double avg_num_models) : sprt (points_size_, sample_size_,
-           prob_pt_of_good_model, prob_pt_of_bad_model, time_sample, avg_num_models),
-     quality(quality_) {}
+    SPRTransacImpl (RNG &rng_, const Ptr<Quality> &quality_, int points_size_, int sample_size_,
+        double prob_pt_of_good_model, double prob_pt_of_bad_model,
+        double time_sample, double avg_num_models) : rng (rng_), sprt (rng_, points_size_, sample_size_,
+        prob_pt_of_good_model, prob_pt_of_bad_model, time_sample, avg_num_models),
+        quality(quality_) {}
 
     inline bool isModelGood (const Mat &model) override {
         // set model in estimator inside model to run isInlier()
         quality->setModel(model);
-
         double lambda = 1;
-
         bool good_model = true;
-
-        sprt.random_pool_idx = random() % sprt.points_size;
-
+        sprt.random_pool_idx = rng.uniform(0, sprt.points_size);
         int tested_point, tested_inliers = 0;
         for (tested_point = 0; tested_point < sprt.points_size; tested_point++) {
-
             // reset pool index if it overflows
             if (sprt.random_pool_idx >= sprt.points_size)
                 sprt.random_pool_idx = 0;
@@ -631,10 +566,10 @@ public:
         return true;
     }
 };
-Ptr<SPRTransac> SPRTransac::create(const Ptr<Quality> &quality_, int points_size_, int sample_size_,
-      double prob_pt_of_good_model, double prob_pt_of_bad_model,
-      double time_sample, double avg_num_models) {
-    return makePtr<SPRTransacImpl>(quality_, points_size_, sample_size_, prob_pt_of_good_model,
-            prob_pt_of_bad_model, time_sample, avg_num_models);
+Ptr<SPRTransac> SPRTransac::create(RNG &rng, const Ptr<Quality> &quality_, int points_size_,
+        int sample_size_, double prob_pt_of_good_model, double prob_pt_of_bad_model,
+        double time_sample, double avg_num_models) {
+    return Ptr<SPRTransacImpl>(new SPRTransacImpl(rng, quality_, points_size_,
+        sample_size_, prob_pt_of_good_model, prob_pt_of_bad_model, time_sample, avg_num_models));
 }
 }}

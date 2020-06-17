@@ -2,8 +2,8 @@
 // It is subject to the license terms in the LICENSE file found in the top-level directory
 // of this distribution and at http://opencv.org/license.html.
 
-#include "usac.hpp"
-// #include "../include_3d/Eigen/QR"
+#include "../precomp.hpp"
+#include "../usac.hpp"
 #include <Eigen/QR>
 
 namespace cv { namespace usac {

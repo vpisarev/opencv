@@ -2,153 +2,100 @@
 // It is subject to the license terms in the LICENSE file found in the top-level directory
 // of this distribution and at http://opencv.org/license.html.
 
-#ifndef OPENCV_USAC_HPP
-#define OPENCV_USAC_HPP
-
-#include <opencv2/core.hpp>
+#ifndef OPENCV_USAC_USAC_HPP
+#define OPENCV_USAC_USAC_HPP
 
 namespace cv { namespace usac {
+// Abstract Error class
+class Error : public Algorithm {
+public:
+    virtual void setModelParameters (const Mat &model) = 0;
+    virtual double getError (int point_idx) const = 0;
+};
+
+// Symmetric Reprojected Error
+class ReprojectedErrorSymmetric : public Error {
+public:
+    static Ptr<ReprojectedErrorSymmetric> create(const Mat &points);
+};
+
+// Forward Reprojected Error
+class ReprojectedErrorForward : public Error {
+public:
+    static Ptr<ReprojectedErrorForward> create(const Mat &points);
+};
+
 /*
- * Homography - 4 points
- * Fundamental - 7, 8 points
- * Essential - 5 points, Stewenius solver
- */
-enum ESTIMATOR  { Line2d, Homography, HomographyQR, Fundamental, Fundamental8,
-        Essential, Affine, PnP, Similarity };
-enum SAMPLER  { Uniform, ProgressiveNAPSAC, Napsac, Prosac, Evsac };
-enum NeighborsSearch {Flann, Grid, RadiusSearch};
-enum LocOpt {NullLO, InLORsc, ItLORsc, ItFLORsc, InItLORsc, InItFLORsc, GC, SIGMA};
-enum SCORE {RANSAC, MSAC, LMS, MLESAC, MAGSAC};
-enum MODEL_VERIFIER { NullVerifier, SprtVerifier, TddVerifier };
-enum FINAL_POLISHER { NonePolisher, LSQPolisher, GCPolisher };
-enum EST_ERROR {DIST_TO_LINE, SAMPSON_ERR, SGD_ERR, SYMM_REPR_ERR, FORW_REPR_ERR};
-
-// todo: add parameter to calibrate points (or calibration matrices)
-class Model : public Algorithm {
+* Class for normalizing transformations of points.
+*/
+class NormTransform : public Algorithm {
 public:
-    virtual bool isFundamental () const = 0;
-    virtual bool isHomography () const = 0;
-    virtual bool isEssential () const = 0;
-
-    // getters
-    virtual int getSampleSize () const = 0;
-    virtual bool resetRandomGenerator () const = 0;
-    virtual int getMaxNumHypothesisToTestBeforeRejection() const = 0;
-    virtual FINAL_POLISHER getFinalPolisher () const = 0;
-    virtual LocOpt getLO () const = 0;
-    virtual const Mat& getDescriptor () const = 0;
-    virtual Mat& getRefDescriptor () = 0;
-
-    virtual EST_ERROR getError () const = 0;
-    virtual ESTIMATOR getEstimator () const = 0;
-    virtual SCORE getScore () const = 0;
-    virtual int getMaxIters () const = 0;
-    virtual double getConfidence () const = 0;
-    virtual bool isTimeLimit () const = 0;
-    virtual double getThreshold () const = 0;
-    virtual MODEL_VERIFIER getVerifier () const = 0;
-    virtual SAMPLER getSampler () const = 0;
-    virtual int getMaxSampleSizeLO () const = 0;
-    virtual double getTimeForModelEstimation () const = 0;
-    virtual double getSPRTdelta () const = 0;
-    virtual double getSPRTepsilon () const = 0;
-    virtual double getSPRTavgNumModels () const = 0;
-    virtual NeighborsSearch getNeighborsSearch () const = 0;
-    virtual int getKNN () const = 0;
-    virtual int getCellSize () const = 0;
-    virtual bool isSampleLimit () const = 0;
-    virtual double getRelaxCoef () const = 0;
-    virtual int getMaxTimeMcs() const = 0;
-
-    virtual int getLOThresholdMultiplier() const = 0;
-    virtual int getLOIterativeSampleSize() const = 0;
-    virtual int getLOIterativeMaxIters() const = 0;
-    virtual int getLOInnerMaxIters() const = 0;
-    virtual int getMaxSampleSizeLOiterative () const = 0;
-
-    virtual const std::vector<int> &getGridCellNumber () const = 0;
-    virtual int getImage1Width () const = 0;
-    virtual int getImage1Height () const = 0;
-    virtual int getImage2Width () const = 0;
-    virtual int getImage2Height () const = 0;
-
-    // setters
-    virtual void setLocalOptimization (LocOpt lo_) = 0;
-    virtual void setKNearestNeighhbors (int knn_) = 0;
-    virtual void setNeighborsType (NeighborsSearch neighbors) = 0;
-    virtual void setCellSize (int cell_size_) = 0;
-    virtual void setResetRandomGenerator (bool reset) = 0;
-
-    virtual void setVerifier (MODEL_VERIFIER verifier_) = 0;
-    virtual void setPolisher (FINAL_POLISHER polisher_) = 0;
-    virtual void setError (EST_ERROR error_) = 0;
-
-    // 0 - no trace, 1 - inlier mask, 2 - full trace (e.g., time, num iters etc)
-    virtual void setTrace (int trace) = 0;
-    virtual int getTrace () const = 0;
-
-    virtual void setDescriptor(const Mat &desc) = 0;
-    virtual void setSPRT (double sprt_eps_ = 0.005, double sprt_delta_ = 0.0025,
-            double avg_num_models_ = 1, double time_for_model_est_ = 5e2) = 0;
-    virtual void setImageSize (int img1_width_, int img1_height_,
-            int img2_width_, int img2_height_) = 0;
-
-    static Ptr<Model> create(double threshold_, ESTIMATOR estimator_, SAMPLER sampler_,
-        double confidence_=0.95, int max_iterations_=5000, SCORE score_ =SCORE::RANSAC);
+    virtual void getNormTransformation (Mat& norm_points, const std::vector<int>& sample,
+                                        int sample_number, Mat &T1, Mat &T2) const = 0;
+    static Ptr<NormTransform> create (const Mat &points);
 };
 
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-class Time {
+/////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////// SOLVER ///////////////////////////////////////////
+class MinimalSolver : public Algorithm {
 public:
-    int minutes, seconds, milliseconds, microseconds;
-    // void print (const Time &time) {
-    //     std::cout << time.seconds << " secs " << time.milliseconds << " ms " <<
-    //                   time.microseconds << " mcs\n";
-    // }
-};
-
-class Utils : public Algorithm {
-public:
-    static void random_shuffle (std::vector<int>& array);
-};
-
-class Math {
-public:
-    static int rank3x3 (const Mat &A_);
-    static void eliminateUpperTriangluar (double * a, int m, int n);
-};
-
-///////////////////////////////////////// RANDOM GENERATOR /////////////////////////////////////
-
-class RandomGenerator : public Algorithm {
-public:
-    virtual ~RandomGenerator() override = default;
     /*
-     * interval is closed.
+     * Estimate models from minimal sample
+     * models.size() == output
      */
-    virtual void resetGenerator (int min_range, int max_range) = 0;
-    virtual void generateUniqueRandomSet (std::vector<int>& sample) = 0;
-    virtual void setSubsetSize (int subset_sz) = 0;
-    virtual int getRandomNumber () = 0;
-    virtual bool isInitialized () = 0;
+    virtual int estimate (const std::vector<int>& sample, std::vector<Mat> &models) = 0;
+
+    /*
+     * Get minimal sample size required for estimation.
+     */
+    virtual int getSampleSize() const = 0;
+
+    /*
+     * Get maximum number of possible solutions.
+     */
+    virtual int getMaxNumberOfSolutions () const = 0;
 };
 
-class UniformRandomGenerator : public RandomGenerator {
+//-------------------------- HOMOGRAPHY MATRIX -----------------------
+class HomographyMinimalSolver4ptsQR : public MinimalSolver {
 public:
-    static Ptr<UniformRandomGenerator> create ();
-    static Ptr<UniformRandomGenerator> create (int min_range, int max_range, int subset_size_);
-    static void generateUniqueRandomSet (std::vector<int>& sample, int subset_size, int max_range);
-    virtual void generateUniqueRandomSet (std::vector<int>& sample, int max_range) = 0;
+    static Ptr<HomographyMinimalSolver4ptsQR> create(const Mat &points_);
+};
+
+class HomographyMinimalSolver4ptsGEM : public MinimalSolver {
+public:
+    static Ptr<HomographyMinimalSolver4ptsGEM> create(const Mat &points_);
+};
+
+//////////////////////////////////////// NON MINIMAL SOLVER ///////////////////////////////////////
+class NonMinimalSolver : public Algorithm {
+public:
+    /*
+     * Estimate models from non minimal sample
+     * models.size() == output
+     */
+    virtual int estimate (const std::vector<int>& sample, int sample_size,
+                          std::vector<Mat>& models, const std::vector<double>& weights) = 0;
+
+    /*
+     * Get minimal sample size required for non-minimal estimation.
+     */
+    virtual int getMinimumRequiredSampleSize() const = 0;
+
+    /*
+     * Get maximum number of possible solutions.
+     */
+    virtual int getMaxNumberOfSolutions () const = 0;
+};
+
+class HomographyNonMinimalSolver : public NonMinimalSolver {
+public:
+    static Ptr<HomographyNonMinimalSolver> create(const Mat &points_);
 };
 
 
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-/*
- * Abstract class for handling degeneracies in RANSAC.
- */
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////// DEGENERACY //////////////////////////////////
 class Degeneracy : public Algorithm {
 private:
     std::vector<Mat> recovered_models;
@@ -227,102 +174,8 @@ public:
     static Ptr<HomographyDegeneracy> create(const Mat &points_, int sample_size_);
 };
 
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-// Abstract Error class
-class Error : public Algorithm {
-public:
-    virtual void setModelParameters (const Mat &model) = 0;
-    virtual double getError (int point_idx) const = 0;
-};
-
-// Symmetric Reprojected Error
-class ReprojectedErrorSymmetric : public Error {
-public:
-    static Ptr<ReprojectedErrorSymmetric> create(const Mat &points);
-};
-
-// Forward Reprojected Error
-class ReprojectedErrorForward : public Error {
-public:
-    static Ptr<ReprojectedErrorForward> create(const Mat &points);
-};
-
-/*
- * Class for normalizing transformations of points.
- */
-class NormTransform : public Algorithm {
-public:
-    virtual void getNormTransformation (Mat& norm_points, const std::vector<int>& sample,
-                                int sample_number, Mat &T1, Mat &T2) const = 0;
-    static Ptr<NormTransform> create (const Mat &points);
-};
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-/*
- * Abstract class for Minimal and Non-Minimal solvers.
- */
-class MinimalSolver : public Algorithm {
-public:
-    /*
-     * Estimate models from minimal sample
-     * models.size() == output
-     */
-    virtual int estimate (const std::vector<int>& sample, std::vector<Mat> &models) = 0;
-
-    /*
-     * Get minimal sample size required for estimation.
-     */
-    virtual int getSampleSize() const = 0;
-
-    /*
-     * Get maximum number of possible solutions.
-     */
-    virtual int getMaxNumberOfSolutions () const = 0;
-};
-
-//-------------------------- HOMOGRAPHY MATRIX -----------------------
-
-class HomographyMinimalSolver4ptsQR : public MinimalSolver {
-public:
-    static Ptr<HomographyMinimalSolver4ptsQR> create(const Mat &points_);
-};
-class HomographyMinimalSolver4ptsGEM : public MinimalSolver {
-public:
-    static Ptr<HomographyMinimalSolver4ptsGEM> create(const Mat &points_);
-};
-
-//////////////////////////////////////// NON MINIMAL SOLVER ///////////////////////////////////////
-
-class NonMinimalSolver : public Algorithm {
-public:
-    /*
-     * Estimate models from non minimal sample
-     * models.size() == output
-     */
-    virtual int estimate (const std::vector<int>& sample, int sample_size,
-            std::vector<Mat>& models, const std::vector<double>& weights) = 0;
-
-    /*
-     * Get minimal sample size required for non-minimal estimation.
-     */
-    virtual int getMinimumRequiredSampleSize() const = 0;
-
-    /*
-     * Get maximum number of possible solutions.
-     */
-    virtual int getMaxNumberOfSolutions () const = 0;
-};
-
-class HomographyNonMinimalSolver : public NonMinimalSolver {
-public:
-    static Ptr<HomographyNonMinimalSolver> create(const Mat &points_);
-};
-
-
-////////////////////////////////////////// ESTIMATOR ////////////////////////////////
-
+/////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////// ESTIMATOR //////////////////////////////////
 class Estimator : public Algorithm{
 public:
     /*
@@ -367,122 +220,14 @@ public:
     virtual int getMaxNumSolutionsNonMinimal () const = 0;
 };
 
-
 class HomographyEstimator : public Estimator {
 public:
-    static Ptr<HomographyEstimator> create (const Ptr<MinimalSolver> &min_solver_, const Ptr<NonMinimalSolver> &non_min_solver_,
-                                            const Ptr<Degeneracy>& degeneracy_);
+    static Ptr<HomographyEstimator> create (const Ptr<MinimalSolver> &min_solver_,
+            const Ptr<NonMinimalSolver> &non_min_solver_, const Ptr<Degeneracy>& degeneracy_);
 };
 
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-/*
- * Abstract class for Sampler
- */
-class Sampler : public Algorithm {
-public:
-    virtual ~Sampler() override = default;
-
-    // set new sample size
-    virtual void setNewSampleSize (int sample_size) = 0;
-
-    // set new points size
-    virtual void setNewPointsSize (int points_size) = 0;
-
-    // set new sample size and points size
-    virtual void setNew (int sample_size, int points_size) = 0;
-
-    /*
-     * Generate sample. Fill @sample with indices of points.
-     */
-    virtual void generateSample (std::vector<int> &sample) = 0;
-
-    /*
-     * Generate sample for given points size
-     */
-    virtual void generateSample (std::vector<int> &sample, int points_size) = 0;
-
-    /*
-     * Generate sample for given sample size and points size.
-     */
-    virtual void generateSample (std::vector<int> &sample, int sample_size, int points_size) = 0;
-
-    virtual int getSampleSize () const = 0;
-
-    /*
-     * Reset Sampler to initial state. Assume that parameters of Sampler (e.g., sample size) are not changed.
-     * Sampler as Uniform or NAPSAC does not require reset() because sampling is independent.
-     * However, PROSAC and P-NAPSAC requires.
-     */
-    virtual void reset () = 0;
-};
-
-////////////////////////////////////// UNIFORM SAMPLER ////////////////////////////////////////////
-
-/*
- * Uniform Sampler:
- * Choose uniformly m (sample size) points from N (points size).
- * Uses Fisher-Yates shuffle.
- */
-class UniformSampler : public Sampler {
-public:
-    static Ptr<UniformSampler> create(int sample_size_, int points_size_);
-};
-
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-class RansacOutput : public Algorithm {
-public:
-    virtual ~RansacOutput() override = default;
-    static Ptr<RansacOutput> create(const Mat &model_,
-             const std::vector<int> &inliers_,
-             const std::vector<bool> &inliers_mask_,
-             const std::vector<double> &errors_,
-             int time_mcs_,
-             double score_,
-             int number_inliers_,
-             int number_iterations_,
-             int number_lo_iterations_,
-             int number_estimated_models_,
-             int number_good_models_);
-
-    /*
-     * Return inliers' indices.
-     * size of vector = number of inliers
-     */
-    virtual const std::vector<int > &getInliers() const = 0;
-    /*
-     * Return inliers mask. Vector of points size. 1-inlier, 0-outlier.
-     */
-    virtual const std::vector<bool> &getInliersMask() const = 0;
-
-    /*
-     * Return inliers' errors. Vector of points size.
-     */
-    virtual const std::vector<double> &getInliersErrors() const = 0;
-    virtual int getTimeMicroSeconds() const = 0;
-    virtual int getNumberOfInliers() const = 0;
-    virtual int getNumberOfMainIterations() const = 0;
-    virtual int getNumberOfLOIterations() const = 0;
-    virtual int getNumberOfGoodModels () const = 0;
-    virtual int getNumberOfEstimatedModels () const = 0;
-    virtual const Time &getTime() const = 0;
-    virtual const Mat &getModel() const = 0;
-
-    virtual void print () = 0;
-};
-
-
-Mat findHomography(InputArray srcPoints, InputArray dstPoints,
-                          int method = 0, double ransacReprojThreshold = 3,
-                          OutputArray mask = noArray(), const int maxIters = 2000,
-                          const double confidence = 0.995);
-
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
+//////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////// SCORE ///////////////////////////////////////////
 class Score {
 public:
     int inlier_number;
@@ -503,6 +248,7 @@ public:
     }
 };
 
+////////////////////////////////////////// QUALITY ///////////////////////////////////////////
 // todo: avoid such number of virtual classes. Put Error template into parent Quality class.
 class Quality : public Algorithm {
 public:
@@ -553,12 +299,8 @@ public:
     static Ptr<MsacQuality> create(int points_size_, double threshold_, const Ptr<Error> &error_);
 };
 
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////////////////////////
-/*
- * Abstract class for Model Verification.
- */
+//////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////// MODEL VERIFIER ////////////////////////////////////
 class ModelVerifier : public Algorithm {
 public:
     virtual ~ModelVerifier() override = default;
@@ -590,14 +332,14 @@ public:
 //    virtual double * getComputedErrors () const = 0;
 };
 
-
 /*
- * Chum, Ondrej, and Jiri Matas. "Randomized RANSAC with Td, d test."
- * Proc. British Machine Vision Conference. Vol. 2. 2002.
- */
+* Chum, Ondrej, and Jiri Matas. "Randomized RANSAC with Td, d test."
+* Proc. British Machine Vision Conference. Vol. 2. 2002.
+*/
 class Tdd : public ModelVerifier {
 public:
-    static Ptr<Tdd> create(int points_size_, const Ptr<Quality> &quality_, int d_points_to_test_ = 1);
+    static Ptr<Tdd> create(RNG &rng, int points_size_, const Ptr<Quality> &quality_,
+            int d_points_to_test_ = 1);
 };
 
 class SPRT_history {
@@ -621,7 +363,6 @@ public:
     /*
      * A is the decision threshold, the only parameter of the Adapted SPRT
      */
-
     double epsilon, delta, A;
     // number of samples processed by test
     int tested_samples; // k
@@ -631,10 +372,9 @@ public:
 };
 
 /*
- * Matas, Jiri, and Ondrej Chum. "Randomized RANSAC with sequential probability ratio test."
- * Tenth IEEE International Conference on Computer Vision (ICCV'05) Volume 1. Vol. 2. IEEE, 2005.
- */
-
+* Matas, Jiri, and Ondrej Chum. "Randomized RANSAC with sequential probability ratio test."
+* Tenth IEEE International Conference on Computer Vision (ICCV'05) Volume 1. Vol. 2. IEEE, 2005.
+*/
 class SPRT : public ModelVerifier {
 public:
     /*
@@ -644,40 +384,31 @@ public:
 };
 
 ///////////////////////////////// SPRT VERIFIER UNIVERSAL /////////////////////////////////////////
-
 class SPRTverifier : public SPRT {
 public:
-    static Ptr<SPRTverifier> create (const Ptr<Quality> &quality_, int points_size_,
-        int sample_size_, double prob_pt_of_good_model, double prob_pt_of_bad_model,
-        double time_sample, double avg_num_models);
+    static Ptr<SPRTverifier> create (RNG &rng, const Ptr<Quality> &quality_, int points_size_,
+         int sample_size_, double prob_pt_of_good_model, double prob_pt_of_bad_model,
+         double time_sample, double avg_num_models);
 };
 
 ///////////////////////////////////// SPRT VERIFIER MSAC //////////////////////////////////////////
-
 class SPRTmsac : public SPRT {
 public:
-    static Ptr<SPRTmsac> create (const Ptr<Error> &err_, int points_size_, int sample_size_,
-     double inlier_threshold_, double prob_pt_of_good_model, double prob_pt_of_bad_model,
-     double time_sample, double avg_num_models);
+    static Ptr<SPRTmsac> create (RNG &rng, const Ptr<Error> &err_, int points_size_, int sample_size_,
+         double inlier_threshold_, double prob_pt_of_good_model, double prob_pt_of_bad_model,
+         double time_sample, double avg_num_models);
 };
-
 
 //////////////////////////////////// SPRT VERIFIER RANSAC /////////////////////////////////////////
-
 class SPRTransac : public SPRT {
 public:
-    static Ptr<SPRTransac> create(const Ptr<Quality> &quality_, int points_size_, int sample_size_,
-          double prob_pt_of_good_model, double prob_pt_of_bad_model,
-          double time_sample, double avg_num_models);
+    static Ptr<SPRTransac> create(RNG &rng, const Ptr<Quality> &quality_, int points_size_, int sample_size_,
+                                  double prob_pt_of_good_model, double prob_pt_of_bad_model,
+                                  double time_sample, double avg_num_models);
 };
 
-///////////////////////////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-/*
- * Abstract class for RANSAC termination.
- */
+/////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////// TERMINATION ///////////////////////////////////////////
 class TerminationCriteria : public Algorithm {
 public:
     virtual bool terminate(int current_iteration) const = 0;
@@ -706,28 +437,120 @@ public:
 };
 
 //////////////////////////////// STANDARD TERMINATION ///////////////////////////////////////////
-
 class StandardTerminationCriteria : public TerminationCriteria {
 public:
     static Ptr<StandardTerminationCriteria> create(double confidence, int points_size_,
-           int sample_size_, int max_iterations_, bool is_time_limit_,
-           int max_time_mcs_ = std::numeric_limits<int>::max());
+                                                   int sample_size_, int max_iterations_, bool is_time_limit_,
+                                                   int max_time_mcs_ = std::numeric_limits<int>::max());
 };
 
-///////////////////////////////////// SPRT TERMINATION //////////////////////////////////////////
-
-class SPRTTermination : public usac::TerminationCriteria {
+//////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////// UTILS ////////////////////////////////////////////////
+class Time {
 public:
-    static Ptr<SPRTTermination> create(const std::vector<SPRT_history> &sprt_histories_,
-        double confidence, int points_size_, int sample_size_, int max_iterations_,
-       bool is_time_limit_, int max_time_mcs_ = std::numeric_limits<int>::max());
+    int minutes, seconds, milliseconds, microseconds;
+    // void print (const Time &time) {
+    //     std::cout << time.seconds << " secs " << time.milliseconds << " ms " <<
+    //               time.microseconds << " mcs\n";
+    // }
+};
+
+class Utils : public Algorithm {
+public:
+    static void random_shuffle (RNG &rng, std::vector<int>& array);
+};
+
+class Math {
+public:
+    /*
+     * @points Nx4 array: x1 y1 x2 y2
+     * @sample Mx1 array
+     */
+    static bool haveCollinearPoints(const Mat &points, const std::vector<int>& sample,
+                                    double threshold=1);
+
+    static Mat getSkewSymmetric(const Mat &v_);
+    static Mat cross(const Mat &a_, const Mat &b_);
+
+    static double getMedianNaive (const std::vector<double> &v);
+    static double getMean (const std::vector<double> &array);
+    static double getStandardDeviation (const std::vector<double> &array);
+    static int rank3x3 (const Mat &A_);
+    static void eliminateUpperTriangluar (double * a, int m, int n);
+};
+
+///////////////////////////////////////// RANDOM GENERATOR /////////////////////////////////////
+class RandomGenerator : public Algorithm {
+public:
+    virtual ~RandomGenerator() override = default;
+    // interval is <0, max_range);
+    virtual void resetGenerator (int max_range) = 0;
+    virtual void generateUniqueRandomSet (std::vector<int>& sample) = 0;
+    virtual void setSubsetSize (int subset_sz) = 0;
+    virtual int getRandomNumber () = 0;
+};
+
+class UniformRandomGenerator : public RandomGenerator {
+public:
+    static Ptr<UniformRandomGenerator> create (RNG &rng);
+    static Ptr<UniformRandomGenerator> create (RNG &rng, int max_range, int subset_size_);
+    virtual void generateUniqueRandomSet (std::vector<int>& sample, int subset_size, int max_range) = 0;
+    virtual void generateUniqueRandomSet (std::vector<int>& sample, int max_range) = 0;
+};
+
+//////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////// SAMPLER ///////////////////////////////////////
+class Sampler : public Algorithm {
+public:
+    virtual ~Sampler() override = default;
+
+    // set new sample size
+    virtual void setNewSampleSize (int sample_size) = 0;
+
+    // set new points size
+    virtual void setNewPointsSize (int points_size) = 0;
+
+    // set new sample size and points size
+    virtual void setNew (int sample_size, int points_size) = 0;
+
+    /*
+     * Generate sample. Fill @sample with indices of points.
+     */
+    virtual void generateSample (std::vector<int> &sample) = 0;
+
+    /*
+     * Generate sample for given points size
+     */
+    virtual void generateSample (std::vector<int> &sample, int points_size) = 0;
+
+    /*
+     * Generate sample for given sample size and points size.
+     */
+    virtual void generateSample (std::vector<int> &sample, int sample_size, int points_size) = 0;
+
+    virtual int getSampleSize () const = 0;
+
+    /*
+     * Reset Sampler to initial state. Assume that parameters of Sampler (e.g., sample size) are not changed.
+     * Sampler as Uniform or NAPSAC does not require reset() because sampling is independent.
+     * However, PROSAC and P-NAPSAC requires.
+     */
+    virtual void reset () = 0;
+};
+
+////////////////////////////////////// UNIFORM SAMPLER ////////////////////////////////////////////
+/*
+* Choose uniformly m (sample size) points from N (points size).
+* Uses Fisher-Yates shuffle.
+*/
+class UniformSampler : public Sampler {
+public:
+    static Ptr<UniformSampler> create(RNG &rng, int sample_size_, int points_size_);
 };
 
 
-
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
+////////////////////////////////////// LOCAL OPTIMIZATION ////////////////////////////////////////
 class LocalOptimization : public Algorithm {
 public:
     virtual ~LocalOptimization() override = default;
@@ -739,7 +562,7 @@ public:
      * Returns bool if model was refined successfully, false - otherwise
      */
     virtual bool refineModel (const Mat &best_model, const Score &best_model_score,
-                    Mat &new_model, Score &new_model_score) = 0;
+                              Mat &new_model, Score &new_model_score) = 0;
 
     /*
      * Returns total accumulated number of iterations in refineModel().
@@ -753,6 +576,8 @@ public:
     virtual void reset () {}
 };
 
+//////////////////////////////////// INNER LO ///////////////////////////////////////
+
 class InnerLocalOptimization : public LocalOptimization {
 public:
     static Ptr<InnerLocalOptimization>
@@ -761,6 +586,8 @@ public:
            int points_size, int lo_inner_iterations_=15);
 };
 
+///////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////// FINAL MODEL POLISHER //////////////////////////////////////
 class FinalModelPolisher : public Algorithm {
 public:
     virtual ~FinalModelPolisher() override = default;
@@ -771,20 +598,147 @@ public:
      * @new_score: socre of output model.
      * Return true if polishing was successful, false - otherwise.
      */
-    virtual bool polishSoFarTheBestModel (const Mat &model,
-                                          const Score &best_model_score, Mat &new_model, Score &new_model_score) {
+    virtual bool polishSoFarTheBestModel (const Mat &model, const Score &best_model_score,
+            Mat &new_model, Score &new_model_score) {
         return false;
     }
 };
 
 ///////////////////////////////////// LEAST SQUARES POLISHER //////////////////////////////////////
-
 class LeastSquaresPolishing : public FinalModelPolisher {
 public:
     static Ptr<LeastSquaresPolishing> create (const Ptr<Estimator> &estimator_,
         const Ptr<Quality> &quality_, const Ptr<Degeneracy> &degeneracy_,
         int points_size, int lsq_iterations_=2);
 };
+
+/////////////////////////////////// RANSAC OUTPUT ///////////////////////////////////
+class RansacOutput : public Algorithm {
+public:
+    virtual ~RansacOutput() override = default;
+    static Ptr<RansacOutput> create(const Mat &model_, const std::vector<int> &inliers_,
+        const std::vector<bool> &inliers_mask_, const std::vector<double> &errors_,
+        int time_mcs_, double score_, int number_inliers_, int number_iterations_,
+        int number_lo_iterations_, int number_estimated_models_, int number_good_models_);
+
+    /*
+     * Return inliers' indices.
+     * size of vector = number of inliers
+     */
+    virtual const std::vector<int > &getInliers() const = 0;
+    /*
+     * Return inliers mask. Vector of points size. 1-inlier, 0-outlier.
+     */
+    virtual const std::vector<bool> &getInliersMask() const = 0;
+
+    /*
+     * Return inliers' errors. Vector of points size.
+     */
+    virtual const std::vector<double> &getInliersErrors() const = 0;
+    virtual int getTimeMicroSeconds() const = 0;
+    virtual int getNumberOfInliers() const = 0;
+    virtual int getNumberOfMainIterations() const = 0;
+    virtual int getNumberOfLOIterations() const = 0;
+    virtual int getNumberOfGoodModels () const = 0;
+    virtual int getNumberOfEstimatedModels () const = 0;
+    virtual const Time &getTime() const = 0;
+    virtual const Mat &getModel() const = 0;
+};
+
+////////////////////////////////////////////// MODEL /////////////////////////////////////////////
+/*
+* Homography - 4 points
+* Fundamental - 7 points
+* Essential - 5 points, Stewenius solver
+*/
+enum EstimationMethod  { Line2d, Homography, HomographyQR, Fundamental, Fundamental8,
+    Essential, Affine, PnP, Similarity };
+enum SamplingMethod  { Uniform, ProgressiveNAPSAC, Napsac, Prosac, Evsac };
+enum NeighborSearchMethod {Flann, Grid, RadiusSearch};
+enum LocalOptimMethod {NullLO, InLORsc, ItLORsc, ItFLORsc, InItLORsc, InItFLORsc, GC, SIGMA};
+enum ScoreMethod {RANSAC, MSAC, LMS, MLESAC, MAGSAC};
+enum VerificationMethod { NullVerifier, SprtVerifier, TddVerifier };
+enum PolishingMethod { NonePolisher, LSQPolisher, GCPolisher };
+enum ErrorMetric {DIST_TO_LINE, SAMPSON_ERR, SGD_ERR, SYMM_REPR_ERR, FORW_REPR_ERR};
+
+// todo: add parameter to calibrate points (or calibration matrices)
+class Model : public Algorithm {
+public:
+    virtual bool isFundamental () const = 0;
+    virtual bool isHomography () const = 0;
+    virtual bool isEssential () const = 0;
+
+    // getters
+    virtual int getSampleSize () const = 0;
+    virtual bool resetRandomGenerator () const = 0;
+    virtual int getMaxNumHypothesisToTestBeforeRejection() const = 0;
+    virtual PolishingMethod getFinalPolisher () const = 0;
+    virtual LocalOptimMethod getLO () const = 0;
+    virtual const Mat& getDescriptor () const = 0;
+    virtual Mat& getRefDescriptor () = 0;
+
+    virtual ErrorMetric getError () const = 0;
+    virtual EstimationMethod getEstimator () const = 0;
+    virtual ScoreMethod getScore () const = 0;
+    virtual int getMaxIters () const = 0;
+    virtual double getConfidence () const = 0;
+    virtual bool isTimeLimit () const = 0;
+    virtual double getThreshold () const = 0;
+    virtual VerificationMethod getVerifier () const = 0;
+    virtual SamplingMethod getSampler () const = 0;
+    virtual int getMaxSampleSizeLO () const = 0;
+    virtual double getTimeForModelEstimation () const = 0;
+    virtual double getSPRTdelta () const = 0;
+    virtual double getSPRTepsilon () const = 0;
+    virtual double getSPRTavgNumModels () const = 0;
+    virtual NeighborSearchMethod getNeighborsSearch () const = 0;
+    virtual int getKNN () const = 0;
+    virtual int getCellSize () const = 0;
+    virtual bool isSampleLimit () const = 0;
+    virtual double getRelaxCoef () const = 0;
+    virtual int getMaxTimeMcs() const = 0;
+
+    virtual int getLOThresholdMultiplier() const = 0;
+    virtual int getLOIterativeSampleSize() const = 0;
+    virtual int getLOIterativeMaxIters() const = 0;
+    virtual int getLOInnerMaxIters() const = 0;
+    virtual int getMaxSampleSizeLOiterative () const = 0;
+
+    virtual const std::vector<int> &getGridCellNumber () const = 0;
+    virtual int getImage1Width () const = 0;
+    virtual int getImage1Height () const = 0;
+    virtual int getImage2Width () const = 0;
+    virtual int getImage2Height () const = 0;
+
+    // setters
+    virtual void setLocalOptimization (LocalOptimMethod lo_) = 0;
+    virtual void setKNearestNeighhbors (int knn_) = 0;
+    virtual void setNeighborsType (NeighborSearchMethod neighbors) = 0;
+    virtual void setCellSize (int cell_size_) = 0;
+    virtual void setResetRandomGenerator (bool reset) = 0;
+
+    virtual void setVerifier (VerificationMethod verifier_) = 0;
+    virtual void setPolisher (PolishingMethod polisher_) = 0;
+    virtual void setError (ErrorMetric error_) = 0;
+
+    // 0 - no trace, 1 - inlier mask, 2 - full trace (e.g., time, num iters etc)
+    virtual void setTrace (int trace) = 0;
+    virtual int getTrace () const = 0;
+
+    virtual void setDescriptor(const Mat &desc) = 0;
+    virtual void setSPRT (double sprt_eps_ = 0.005, double sprt_delta_ = 0.0025,
+                          double avg_num_models_ = 1, double time_for_model_est_ = 5e2) = 0;
+    virtual void setImageSize (int img1_width_, int img1_height_,
+                               int img2_width_, int img2_height_) = 0;
+
+    static Ptr<Model> create(double threshold_, EstimationMethod estimator_, SamplingMethod sampler_,
+         double confidence_=0.95, int max_iterations_=5000, ScoreMethod score_ =ScoreMethod::RANSAC);
+};
+
+Mat findHomography(InputArray srcPoints, InputArray dstPoints, int method = 0,
+                   double ransacReprojThreshold = 3, OutputArray mask = noArray(),
+                   const int maxIters = 2000, const double confidence = 0.995);
+
 }}
 
-#endif // OPENCV_USAC_HPP
+#endif //OPENCV_USAC_USAC_HPP
