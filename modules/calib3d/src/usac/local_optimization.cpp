@@ -21,7 +21,7 @@ private:
     std::vector<Mat> lo_models;
     std::vector<int> inliers_of_best_model, lo_sample;
     std::vector<double> weights;
-    int lo_inner_iters, lo_inner_max_iterations, lo_sample_size;
+    int lo_inner_max_iterations, lo_sample_size;
 public:
 
     InnerLocalOptimizationImpl (const Ptr<Estimator> &estimator_,
@@ -38,9 +38,6 @@ public:
         lo_sample = std::vector<int>(lo_sample_size);
 
         lo_models = std::vector<Mat> (estimator->getMaxNumSolutionsNonMinimal());
-
-        // trace how many time lo has run
-        lo_inner_iters = 0;
     }
 
     /*
@@ -62,9 +59,8 @@ public:
                 // if there are many inliers take limited number at random.
                 lo_sampler->generateSample (lo_sample, num_inliers_of_best_model);
                 // get inliers from maximum inliers from lo
-                for (int smpl = 0; smpl < lo_sample_size; smpl++) {
+                for (int smpl = 0; smpl < lo_sample_size; smpl++)
                     lo_sample[smpl] = inliers_of_best_model[lo_sample[smpl]];
-                }
 
                 num_estimated_models = estimator->estimateModelNonMinimalSample
                         (lo_sample, lo_sample_size, lo_models, weights);
@@ -101,22 +97,12 @@ public:
                 num_inliers_of_best_model = quality->getInliers(new_model,
                                                                inliers_of_best_model);
             }
-
-            // only for test
-            lo_inner_iters++;
-            //
         }
 
         return true;
     }
 
-    void reset () override {
-        lo_inner_iters = 0;
-    }
-
-    int getNumberIterations () const override {
-        return lo_inner_iters;
-    }
+    void reset () override {}
 };
 
 Ptr<InnerLocalOptimization> InnerLocalOptimization::create
@@ -127,31 +113,23 @@ Ptr<InnerLocalOptimization> InnerLocalOptimization::create
             degeneracy_, points_size, lo_inner_iterations_);
 }
 
-
-
 /////////////////////////////////////////// FINAL MODEL POLISHER ////////////////////////
 class LeastSquaresPolishingImpl : public LeastSquaresPolishing {
 private:
     const Ptr<Quality> &quality;
     const Ptr<Estimator> &estimator;
     const Ptr<Degeneracy> &degeneracy;
-
     Score score;
     std::vector<int> inliers;
-
     int lsq_iterations;
-
     std::vector<Mat> models;
     std::vector<double> weights;
 public:
 
     LeastSquaresPolishingImpl(const Ptr<Estimator> &estimator_, const Ptr<Quality> &quality_,
-                              const Ptr<Degeneracy> &degeneracy_, int points_size,
-                              int lsq_iterations_ = 2) : estimator(estimator_), quality(quality_),
-                                                         degeneracy(degeneracy_) {
-
+                  const Ptr<Degeneracy> &degeneracy_, int points_size, int lsq_iterations_ = 2) :
+                  estimator(estimator_), quality(quality_), degeneracy(degeneracy_) {
         lsq_iterations = lsq_iterations_;
-
         // allocate memory for inliers array and models
         inliers = std::vector<int>(points_size);
         models = std::vector<Mat>(estimator->getMaxNumSolutionsNonMinimal());
@@ -164,9 +142,9 @@ public:
         if (inlier_number < estimator->getMinimalSampleSize())
             return false;
 
-        out_score = usac::Score(); // set the worst case
+        out_score = Score(); // set the worst case
 
-//        std::cout << "LSQ best: " << best_model_score;
+//        std::cout << "LSQ best: " << best_model_score.inlier_number << " " << best_model_score.score << "\n";
 
         // several all-inlier least-squares refines model better than only one but for
         // big amount of points may be too time-consuming.
@@ -181,11 +159,11 @@ public:
 
             // estimate non minimal models with all inliers
             int num_models = estimator->estimateModelNonMinimalSample(inliers,
-                                                                      inlier_number, models, weights);
+                                                      inlier_number, models, weights);
             for (int model_idx = 0; model_idx < num_models; model_idx++) {
                 score = quality->getScore(models[model_idx]);
 
-//                std::cout << "LSQ score: " << score;
+//                std::cout << "LSQ new score: " << score.inlier_number << " " << score.score << "\n";
 
                 if (best_model_score.better(score))
                     continue;
@@ -209,25 +187,22 @@ public:
 
             // if number of inliers doesn't increase more than 5% then break
             if (fabs(static_cast<double>(out_score.inlier_number) - static_cast<double>
-            (best_model_score.inlier_number)) / best_model_score.inlier_number < 0.05) {
+            (best_model_score.inlier_number)) / best_model_score.inlier_number < 0.05)
                 return true;
-            }
 
 //            std::cout << "LSQ best " << best_model_score ;
 //            std::cout << "LSQ new " << out_score;
 
-            if (norm != lsq_iterations - 1) {
+            if (norm != lsq_iterations - 1)
                 // if not the last LSQ normalization then get inliers for next normalization
                 inlier_number = quality->getInliers(new_model, inliers);
-            }
         }
-
         return true;
     }
 };
 Ptr<LeastSquaresPolishing> LeastSquaresPolishing::create (const Ptr<Estimator> &estimator_,
-                                                          const Ptr<Quality> &quality_, const Ptr<Degeneracy> &degeneracy_, int points_size,
-                                                          int lsq_iterations_) {
+         const Ptr<Quality> &quality_, const Ptr<Degeneracy> &degeneracy_, int points_size,
+         int lsq_iterations_) {
     return makePtr<LeastSquaresPolishingImpl>(estimator_, quality_, degeneracy_, points_size, lsq_iterations_);
 }
 }}

@@ -5,10 +5,6 @@
 #include "../precomp.hpp"
 #include "../usac.hpp"
 
-/*
-    Sort points by their density:
-    Find knn nearest neighbors. Compare by sum of the k closest points.
-*/
 namespace cv { namespace usac {
 // Performs Fisher-Yates shuffle
 void Utils::random_shuffle (RNG &rng, std::vector<int>& array) {
@@ -22,7 +18,6 @@ void Utils::random_shuffle (RNG &rng, std::vector<int>& array) {
 }
 
 ////////////////////////////////////////////////////////////////////////
-
 bool Math::haveCollinearPoints(const Mat &points_, const std::vector<int>& sample,
                                       double threshold) {
     const auto * const points = (double *) points_.data;
@@ -58,16 +53,6 @@ bool Math::haveCollinearPoints(const Mat &points_, const std::vector<int>& sampl
     return false;
 }
 
-double Math::getMedianNaive (const std::vector<double> &v) {
-    std::vector<double> work = v;
-    std::sort (work.begin(), work.end());
-    if (v.size () % 2 == 0)
-        return (work[work.size() / 2] + work[work.size() / 2-1]) / 2;
-    else
-        return work[work.size() / 2];
-
-}
-
 Mat Math::getSkewSymmetric(const Mat &v_) {
     const auto * const v = (double *) v_.data;
     return (Mat_<double>(3,3) << 0, -v[2], v[1],
@@ -81,23 +66,6 @@ Mat Math::cross(const Mat &a_, const Mat &b_) {
     return (Mat_<double>(3,1) << a[1] * b[2] - a[2] * b[1],
             a[2] * b[0] - a[0] * b[2],
             a[0] * b[1] - a[1] * b[0]);
-}
-
-double Math::getMean (const std::vector<double> &array) {
-    if (array.empty()) return 0;
-    double mean = 0;
-    for (double i : array)
-        mean += i;
-    return mean / array.size();
-}
-
-double Math::getStandardDeviation (const std::vector<double> &array) {
-    if (array.empty()) return 0;
-    double std_dev = 0;
-    double mean = getMean(array);
-    for (double i : array)
-        std_dev += std::pow(i - mean, 2);
-    return sqrt (std_dev / static_cast<double>(array.size() - 1));
 }
 
 /*
@@ -157,7 +125,6 @@ void Math::eliminateUpperTriangluar (double * a, int m, int n) {
 }
 
 //////////////////////////////////////// RANDOM GENERATOR /////////////////////////////
-
 class UniformRandomGeneratorImpl : public UniformRandomGenerator {
 private:
     int subset_size, max_range;

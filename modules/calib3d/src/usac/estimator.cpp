@@ -26,24 +26,19 @@ public:
         if (! degeneracy->isSampleGood(sample)) return 0;
         return min_solver->estimate (sample, models);
     }
-
     int estimateModelNonMinimalSample(const std::vector<int>& sample, int sample_size,
             std::vector<Mat>& models, const std::vector<double>& weights) const override {
         return non_min_solver->estimate (sample, sample_size, models, weights);
     };
-
     int getMaxNumSolutions () const override {
         return min_solver->getMaxNumberOfSolutions();
     }
-
     int getMaxNumSolutionsNonMinimal () const override {
         return non_min_solver->getMaxNumberOfSolutions();
     }
-
     int getMinimalSampleSize () const override {
         return min_solver->getSampleSize();
     }
-
     int getNonMinimalSampleSize () const override {
         return non_min_solver->getMinimumRequiredSampleSize();
     }
@@ -55,15 +50,13 @@ Ptr<HomographyEstimator> HomographyEstimator::create (const Ptr<MinimalSolver> &
     (new HomographyEstimatorImpl(min_solver_, non_min_solver_, degeneracy_));
 }
 
-
 ///////////////////////////////////////////// ERROR /////////////////////////////////////////
-
 // Symmetric Reprojected Error
 class ReprojectedErrorSymmetricImpl : public ReprojectedErrorSymmetric {
 private:
     const double * const points;
-    double m11, m12, m13, m21, m22, m23, m31, m32, m33;
-    double minv11, minv12, minv13, minv21, minv22, minv23, minv31, minv32, minv33;
+    float m11, m12, m13, m21, m22, m23, m31, m32, m33;
+    float minv11, minv12, minv13, minv21, minv22, minv23, minv31, minv32, minv33;
 public:
     explicit ReprojectedErrorSymmetricImpl (const Mat &points_) :
             points ((double *) points_.data) {}
@@ -74,25 +67,25 @@ public:
         m21 = m[3]; m22 = m[4]; m23 = m[5];
         m31 = m[6]; m32 = m[7]; m33 = m[8];
 
-        Mat model_inv = model.inv();
+        const Mat model_inv = model.inv();
         const auto * const minv = (double *) model_inv.data;
         minv11 = minv[0]; minv12 = minv[1]; minv13 = minv[2];
         minv21 = minv[3]; minv22 = minv[4]; minv23 = minv[5];
         minv31 = minv[6]; minv32 = minv[7]; minv33 = minv[8];
     }
 
-    inline double getError (int point_idx) const override {
+    inline float getError (int point_idx) const override {
         const int smpl = 4*point_idx;
-        const auto x1 = points[smpl], y1 = points[smpl+1],
-                x2 = points[smpl+2], y2 = points[smpl+3];
+        const float x1 = points[smpl  ], y1 = points[smpl+1],
+                    x2 = points[smpl+2], y2 = points[smpl+3];
 
-        const auto est_z2 =  m31 * x1 + m32 * y1 + m33,
-                est_x2 = (m11 * x1 + m12 * y1 + m13) / est_z2,
-                est_y2 = (m21 * x1 + m22 * y1 + m23) / est_z2;
+        const float est_z2 =  m31 * x1 + m32 * y1 + m33,
+                    est_x2 = (m11 * x1 + m12 * y1 + m13) / est_z2,
+                    est_y2 = (m21 * x1 + m22 * y1 + m23) / est_z2;
 
-        const auto est_z1 =  minv31 * x2 + minv32 * y2 + minv33,
-                est_x1 = (minv11 * x2 + minv12 * y2 + minv13) / est_z1,
-                est_y1 = (minv21 * x2 + minv22 * y2 + minv23) / est_z1;
+        const float est_z1 =  minv31 * x2 + minv32 * y2 + minv33,
+                    est_x1 = (minv11 * x2 + minv12 * y2 + minv13) / est_z1,
+                    est_y1 = (minv21 * x2 + minv22 * y2 + minv23) / est_z1;
 
         return ((x2 - est_x2) * (x2 - est_x2) + (y2 - est_y2) * (y2 - est_y2) +
                 (x1 - est_x1) * (x1 - est_x1) + (y1 - est_y1) * (y1 - est_y1)) / 2;
@@ -107,7 +100,7 @@ ReprojectedErrorSymmetric::create(const Mat &points) {
 class ReprojectedErrorForwardImpl : public ReprojectedErrorForward {
 private:
     const double * const points;
-    double m11, m12, m13, m21, m22, m23, m31, m32, m33;
+    float m11, m12, m13, m21, m22, m23, m31, m32, m33;
 public:
     explicit ReprojectedErrorForwardImpl (const Mat &points_)
             : points ((double *)points_.data) {}
@@ -119,13 +112,14 @@ public:
         m31 = m[6]; m32 = m[7]; m33 = m[8];
     }
 
-    inline double getError (int point_idx) const override {
+    inline float getError (int point_idx) const override {
         const int smpl = 4*point_idx;
-        const auto x1 = points[smpl], y1 = points[smpl+1], x2 = points[smpl+2], y2 = points[smpl+3];
+        const float x1 = points[smpl  ], y1 = points[smpl+1],
+                    x2 = points[smpl+2], y2 = points[smpl+3];
 
-        const auto est_z2 =  m31 * x1 + m32 * y1 + m33,
-                est_x2 = (m11 * x1 + m12 * y1 + m13) / est_z2,
-                est_y2 = (m21 * x1 + m22 * y1 + m23) / est_z2;
+        const float est_z2 =  m31 * x1 + m32 * y1 + m33,
+                    est_x2 = (m11 * x1 + m12 * y1 + m13) / est_z2,
+                    est_y2 = (m21 * x1 + m22 * y1 + m23) / est_z2;
 
         return (x2 - est_x2) * (x2 - est_x2) + (y2 - est_y2) * (y2 - est_y2);
     }
@@ -200,7 +194,6 @@ public:
                 0, 0, 1);
 
         norm_points = Mat_<double>(sample_size, 4);
-
         auto * norm_points_ptr = (double *) norm_points.data;
 
         // Normalize points: Npts = T*pts    3x3 * 3xN

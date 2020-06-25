@@ -6,52 +6,67 @@
 
 namespace opencv_test {
    TEST(usac_Homography, accuracy) {
-        const int num_pts = 22;
-        double pts [num_pts * 4] =
-                {91.5756, 439.012, 159.738, 388.957,
-                307.711, 611.892, 257.551, 590.321,
-                531.211, 499.496, 409.495, 516.323,
-                424.878, 221.616, 422.832, 253.312,
-                69.727, 353.533, 170.103, 298.957,
-                217.151, 353.236, 266.283, 330.142,
-                358.228, 295.223, 366.547, 305.375,
-                266.12, 308.995, 309.387, 300.048,
-                466.221, 477.328, 380.627, 487.531,
-                259.118, 226.169, 327.665, 219.816,
-                499.487, 193.696, 468.713, 244.616,
-                31.5425, 627.094, 70.3884, 567.573,
-                231.86, 571.773, 220.264, 541.758,
-                324.057, 395.71, 319.998, 391.036,
-                45.2243, 340.475, 157.284, 280.222,
-                386.941, 136.943, 107.162, 201.487,
-                103.157, 632.299, 118.421, 583.454,
-                37.3541, 503.456, 105.351, 444.065,
-                63.3359, 368.337, 161.435, 312.27,
-                422.551, 293.356, 403.436, 316.365,
-                102.968, 610.616, 124.512, 561.851,
-                258.133, 367.283, 287.451, 352.357};
+        cv::RNG rng;
+        cv::Vec3d vec;
+        rng.fill(vec, cv::RNG::UNIFORM, 0, 1);
+        vec = vec / cv::norm(vec) * rng.uniform(0.0f, float(2 * CV_PI));
+        cv::Mat R;
+        cv::Rodrigues(vec, R);
+        int inl_size = 100, out_size = 100;
+        int pts_size = inl_size + out_size;
+        cv::Mat inliers, outliers, points3d;
+        inliers.create(2, inl_size, CV_64F);
+        outliers.create(3, out_size, inliers.type());
+        rng.fill(inliers, cv::RNG::UNIFORM, 0, 1);
+        rng.fill(outliers, cv::RNG::UNIFORM, 0, 1);
+        // planar points
+        cv::vconcat(inliers, cv::Mat::ones(1, inl_size, inliers.type()), inliers);
+        cv::hconcat(inliers, outliers, points3d);
 
-        cv::Mat pts_mat (num_pts, 4, CV_64F, pts);
+        cv::Vec3d t = cv::Vec3d(rng.uniform(-0.5f, 0.5f), rng.uniform(-0.5f, 0.5f), rng.uniform(1.0f, 2.0f));
+        cv::Mat tvec = (cv::Mat_<double>(3,1) << t(0), t(1), t(2));
+        cv::Matx33d K = cv::Matx33d::zeros();
+        K(0, 0) = rng.uniform(100, 1000);
+        K(1, 1) = rng.uniform(100, 1000);
+        K(0, 2) = rng.uniform(-100, 100);
+        K(1, 2) = rng.uniform(-100, 100);
+        K(2, 2) = 1;
+
+        cv::Mat pts1 = K * points3d;
+        cv::Mat pts2 = K * (R * points3d + t * cv::Mat::ones(1, points3d.cols, points3d.type()));
+        cv::divide(pts1.row(0), pts1.row(2), pts1.row(0));
+        cv::divide(pts1.row(1), pts1.row(2), pts1.row(1));
+        cv::divide(pts2.row(0), pts2.row(2), pts2.row(0));
+        cv::divide(pts2.row(1), pts2.row(2), pts2.row(1));
 
         cv::Mat mask;
         const double thr = 2.;
-        cv::Mat H = cv::findHomography(pts_mat.colRange(0,2), pts_mat.colRange(2,4),
-                cv::USAC, thr, mask, 500, 0.99);
+        cv::Mat H = findHomography(pts1.rowRange(0,2).t(), pts2.rowRange(0,2).t(),
+                        cv::USAC, thr, mask, 1000, 0.99);
         CV_Assert(!H.empty());
 
         int num_inliers = cv::countNonZero(mask);
-        CV_Assert(num_inliers > 0);
+        CV_Assert(num_inliers >= .8 * inl_size);
 
-        cv::Mat pts1_3d;
-        cv::vconcat(pts_mat.colRange(0,2).t(), cv::Mat::ones(1, num_pts, pts_mat.type()), pts1_3d);
-        cv::Mat pts2_est = H * pts1_3d;
+        cv::Mat pts1_3d, pts2_3d;
+        cv::vconcat(pts1.rowRange(0,2), cv::Mat::ones(1, pts_size, pts1.type()), pts1_3d);
+        cv::vconcat(pts2.rowRange(0,2), cv::Mat::ones(1, pts_size, pts2.type()), pts2_3d);
+
+        cv::Mat pts2_est = H * pts1_3d, pts1_est = H.inv() * pts2_3d;
         cv::divide(pts2_est.row(0), pts2_est.row(2), pts2_est.row(0));
         cv::divide(pts2_est.row(1), pts2_est.row(2), pts2_est.row(1));
 
-        cv::Mat diff = pts_mat.colRange(2,4) - pts2_est.rowRange(0,2).t();
+        cv::divide(pts1_est.row(0), pts1_est.row(2), pts1_est.row(0));
+        cv::divide(pts1_est.row(1), pts1_est.row(2), pts1_est.row(1));
+
+        cv::Mat diff2 = pts2.rowRange(0, 2) - pts2_est.rowRange(0,2);
+        cv::Mat diff1 = pts1.rowRange(0, 2) - pts1_est.rowRange(0,2);
+
         const auto * const mask_ptr = mask.ptr<uchar>();
-        for (int i = 0; i < num_pts; i++)
-            if (mask_ptr[i])
-                CV_Assert(cv::norm(diff.row(i)) < thr);
+        for (int i = 0; i < pts_size; i++)
+            if (mask_ptr[i]) {
+                // CV_Assert(cv::norm(diff1.col(i)) < thr);
+                CV_Assert(cv::norm(diff2.col(i)) < thr);
+            }
     }
 }

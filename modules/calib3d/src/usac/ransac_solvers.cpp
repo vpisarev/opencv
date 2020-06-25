@@ -6,11 +6,10 @@
 #include "../usac.hpp"
 
 namespace cv { namespace usac {
-
 class RansacOutputImpl : public RansacOutput {
 private:
     Mat model;
-    Time time;
+    int seconds, milliseconds, microseconds;
     // vector of number_inliers size
     std::vector<int> inliers;
     // vector of points size, true if inlier, false-outlier
@@ -23,22 +22,21 @@ private:
 
     int time_mcs, number_inliers;
     int number_iterations; // number of iterations of main RANSAC
-    int number_lo_iterations;
     int number_estimated_models, number_good_models;
 public:
     RansacOutputImpl (const Mat &model_,
-        const std::vector<int> &inliers_,
         const std::vector<bool> &inliers_mask_,
-        const std::vector<double> &errors_,
         int time_mcs_, double score_,
         int number_inliers_, int number_iterations_,
-        int number_lo_iterations_, int number_estimated_models_,
+        int number_estimated_models_,
         int number_good_models_) {
 
         model = model_.clone();
 
-        inliers = std::vector<int >(inliers_.begin(), inliers_.begin()+number_inliers_);
-        errors = errors_;
+        inliers.reserve(number_inliers_);
+        for (int i = 0; i < inliers_mask_.size(); i++)
+            if (inliers_mask_[i])
+                inliers.emplace_back(i);
         inliers_mask = inliers_mask_;
 
         time_mcs = time_mcs_;
@@ -46,9 +44,12 @@ public:
         score = score_;
         number_inliers = number_inliers_;
         number_iterations = number_iterations_;
-        number_lo_iterations = number_lo_iterations_;
         number_estimated_models = number_estimated_models_;
         number_good_models = number_good_models_;
+
+        microseconds = time_mcs % 1000;
+        milliseconds = ((time_mcs - microseconds)/1000) % 1000;
+        seconds = ((time_mcs - 1000*milliseconds - microseconds)/(1000*1000)) % 60;
     }
 
     /*
@@ -67,63 +68,49 @@ public:
     /*
      * Return inliers' errors. Vector of points size.
      */
-    const std::vector<double> &getInliersErrors() const override { return errors; }
     int getTimeMicroSeconds() const override {return time_mcs; }
+    int getTimeMicroSeconds1() const override {return microseconds; }
+    int getTimeMilliSeconds2() const override {return milliseconds; }
+    int getTimeSeconds3() const override {return seconds; }
     int getNumberOfInliers() const override { return number_inliers; }
     int getNumberOfMainIterations() const override { return number_iterations; }
-    int getNumberOfLOIterations() const override { return number_lo_iterations; }
     int getNumberOfGoodModels () const override { return number_good_models; }
     int getNumberOfEstimatedModels () const override { return number_estimated_models; }
-    const Time &getTime() const override { return time; }
     const Mat &getModel() const override { return model; }
 };
 
 Ptr<RansacOutput> RansacOutput::create(const Mat &model_,
-           const std::vector<int> &inliers_, const std::vector<bool> &inliers_mask_,
-           const std::vector<double> &errors_, int time_mcs_, double score_,
-           int number_inliers_, int number_iterations_, int number_lo_iterations_,
+            const std::vector<bool> &inliers_mask_, int time_mcs_, double score_,
+           int number_inliers_, int number_iterations_,
            int number_estimated_models_, int number_good_models_) {
-    return makePtr<RansacOutputImpl>(model_, inliers_, inliers_mask_, errors_, time_mcs_,
-            score_, number_inliers_, number_iterations_, number_lo_iterations_,
+    return makePtr<RansacOutputImpl>(model_, inliers_mask_, time_mcs_,
+            score_, number_inliers_, number_iterations_,
             number_estimated_models_, number_good_models_);
 }
-
-/*
- * We can still use templates in cpp files if it's not connected to hpp.
- */
-
-template <
-        class _Estimator,
-        class _Quality,
-        class _MainSampler,
-        class _Termination,
-        class _PreemptiveVerificationTest,
-        class _Degeneracy,
-        class _LocalOptimization,
-        class _FinalModelPolisher>
 
 class Ransac {
 protected:
     const Model &params;
-    const _Estimator &estimator;
-    const _Quality &quality;
-    _MainSampler &sampler;
-    _Termination &termination_criteria;
-    _PreemptiveVerificationTest &model_verifier;
-    _Degeneracy &degeneracy;
-    _LocalOptimization * const local_optimization;
-    _FinalModelPolisher &model_polisher;
+    const Estimator &estimator;
+    Quality &quality;
+    Sampler &sampler;
+    TerminationCriteria &termination_criteria;
+    ModelVerifier &model_verifier;
+    Degeneracy &degeneracy;
+    LocalOptimization * const local_optimization;
+    FinalModelPolisher &model_polisher;
 
     int points_size;
 public:
 
-    Ransac (const Model &params_, int points_size_, const _Estimator &estimator_, const _Quality &quality_,
-            _MainSampler &sampler_, _Termination &termination_criteria_, _PreemptiveVerificationTest &model_verifier_,
-            _Degeneracy &degeneracy_, _LocalOptimization * const local_optimization_, _FinalModelPolisher &model_polisher_) :
+    Ransac (const Model &params_, int points_size_, const Estimator &estimator_, Quality &quality_,
+            Sampler &sampler_, TerminationCriteria &termination_criteria_,
+            ModelVerifier &model_verifier_, Degeneracy &degeneracy_,
+            LocalOptimization * const local_optimization_, FinalModelPolisher &model_polisher_) :
 
-            params (params_), estimator (estimator_), quality (quality_), sampler (sampler_), termination_criteria (termination_criteria_),
-            local_optimization (local_optimization_), model_verifier (model_verifier_), degeneracy (degeneracy_), model_polisher (model_polisher_)
-    {
+            params (params_), estimator (estimator_), quality (quality_), sampler (sampler_),
+            termination_criteria (termination_criteria_), local_optimization (local_optimization_),
+            model_verifier (model_verifier_), degeneracy (degeneracy_), model_polisher (model_polisher_) {
         points_size = points_size_;
 
         // do some asserts
@@ -142,9 +129,8 @@ public:
     }
 
     bool run(Ptr<RansacOutput> &ransac_output) {
-        if (points_size < params.getSampleSize()) {
+        if (points_size < params.getSampleSize())
             return false;
-        }
 
         auto begin_time = std::chrono::steady_clock::now();
 
@@ -157,7 +143,7 @@ public:
 
         // check if LO
         const bool LO = params.getLO() != LocalOptimMethod ::NullLO;
-
+        const bool is_magsac = params.getLO() == LocalOptimMethod::SIGMA;
         // only for test
         int number_of_estimated_models = 0, number_of_good_models = 0;
         double avg_num_models_per_sample = 0;
@@ -171,7 +157,6 @@ public:
 
         // number of iterations (number of tested samples)
         int iters = 0;
-
         while (!termination_criteria.terminate(++iters)) {
             sampler.generateSample(sample);
 
@@ -194,8 +179,14 @@ public:
                 // test
                 number_of_good_models++;
 
-                if (! model_verifier.getScore(current_score))
-                    current_score = quality.getScore(models[i]);
+                if (is_magsac) {
+                    if (iters == 1)
+                        models[i].copyTo(best_model);
+                    local_optimization->refineModel(best_model, best_score, models[i], current_score);
+                } else {
+                    if (! model_verifier.getScore(current_score))
+                        current_score = quality.getScore(models[i]);
+                }
 
                 if (current_score.better(best_score)) {
                     // if number of non degenerate models is zero then input model is good
@@ -227,6 +218,7 @@ public:
                         best_score = current_score;
                         // remember best model
                         models[i].copyTo(best_model);
+                        quality.setBestScore(best_score.score);
                     }
 
                     // update upper bound of iterations
@@ -234,13 +226,16 @@ public:
                     if (termination_criteria.terminate(iters))
                         break;
 
-                    if (LO) {
+                    if (LO && !is_magsac) {
                         // update model by Local optimizaion
                         Mat lo_model;
+//                        std::cout << "best score " << best_score.inlier_number << "\n";
                         if (local_optimization->refineModel(best_model, best_score, lo_model, lo_score)) {
+//                            std::cout << "lo score " << lo_score.inlier_number << "\n";
                             if (lo_score.better(best_score)) {
                                 best_score = lo_score;
                                 lo_model.copyTo(best_model);
+                                quality.setBestScore(best_score.score);
 
                                 // update termination again
                                 termination_criteria.update(best_model, best_score.inlier_number);
@@ -259,7 +254,8 @@ public:
         if (params.getFinalPolisher() != PolishingMethod::NonePolisher) {
             Mat polished_model;
             Score polisher_score;
-            if (model_polisher.polishSoFarTheBestModel (best_model, best_score, polished_model, polisher_score)) {
+            if (model_polisher.polishSoFarTheBestModel (best_model, best_score,
+                    polished_model, polisher_score)) {
                 if (polisher_score.better(best_score)) {
                     best_score = polisher_score;
                     polished_model.copyTo(best_model);
@@ -268,26 +264,20 @@ public:
         }
 
         // ================= here is ending ransac main implementation ===========================
-        const int trace = params.getTrace();
-        if (trace >= 1) {
+        if (params.getTrace() >= 1) {
             // get final inliers from the best model
-            std::vector<int> max_inliers (points_size);
-            std::vector<double> errors (points_size);
             std::vector<bool> inliers_mask (points_size);
-            int n_inliers = quality.getInliers(best_model, max_inliers, inliers_mask, errors);
-            int num_lo_iters = params.getLO() == NullLO ? 0 : local_optimization->getNumberIterations();
-
-            double total_time = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - begin_time).count();
+            int n_inliers = quality.getInliers(best_model, inliers_mask);
 
             // Store results
-            ransac_output = RansacOutput::create(best_model, max_inliers, inliers_mask, errors, total_time, best_score.score,
-                                                 best_score.inlier_number, iters, num_lo_iters, number_of_estimated_models,
-                                                 number_of_good_models);
+            ransac_output = RansacOutput::create(best_model, inliers_mask,
+                std::chrono::duration_cast<std::chrono::microseconds>
+                (std::chrono::steady_clock::now() - begin_time).count(), best_score.score,
+                best_score.inlier_number, iters, number_of_estimated_models, number_of_good_models);
         }
         return true;
     }
 };
-
 
 Mat findHomography (InputArray srcPoints, InputArray dstPoints, int method, double thr,
     OutputArray mask, const int maxIters, const double confidence) {
@@ -312,9 +302,9 @@ Mat findHomography (InputArray srcPoints, InputArray dstPoints, int method, doub
     Ptr<NonMinimalSolver> h_non_min = HomographyNonMinimalSolver::create(points);
     Ptr<Estimator> estimator = HomographyEstimator::create(h_min, h_non_min, degeneracy);
     Ptr<Quality> quality = MsacQuality::create(points_size, params->getThreshold(), error);
-    Ptr<ModelVerifier> verifier = SPRTmsac::create(rng, error, points_size, params->getSampleSize(),
+    Ptr<ModelVerifier> verifier = SPRTScore::create(rng, error, points_size, params->getSampleSize(),
                   params->getThreshold(), params->getSPRTepsilon(), params->getSPRTdelta(),
-                  params->getTimeForModelEstimation(), params->getSPRTavgNumModels());
+                  params->getTimeForModelEstimation(), params->getSPRTavgNumModels(), false);
     Ptr<FinalModelPolisher> polisher = LeastSquaresPolishing::create(estimator, quality, degeneracy, points_size);
     Ptr<Sampler> sampler = UniformSampler::create(rng, params->getSampleSize(), points_size);
     Ptr<TerminationCriteria> termination = StandardTerminationCriteria::create(
@@ -323,9 +313,7 @@ Mat findHomography (InputArray srcPoints, InputArray dstPoints, int method, doub
     Ptr<Sampler> lo_sampler = UniformSampler::create(rng, params->getMaxSampleSizeLO(), points_size);
     Ptr<LocalOptimization> inner_lo_rsc = InnerLocalOptimization::create(estimator, quality, lo_sampler, degeneracy, points_size);
 
-    Ransac<Estimator, Quality, Sampler, TerminationCriteria, ModelVerifier,
-            Degeneracy, LocalOptimization, FinalModelPolisher>
-            ransac (*params, points_size, *estimator, *quality, *sampler,
+    Ransac ransac (*params, points_size, *estimator, *quality, *sampler,
                     *termination, *verifier, *degeneracy, inner_lo_rsc, *polisher);
 
     Ptr<RansacOutput> ransac_output;
@@ -357,12 +345,6 @@ private:
     // -> time limit for RANSAC running
     bool time_limit = false;
     int max_time_mcs = std::numeric_limits<int>::max();
-
-    // MAGSAC parameters:
-    double std_dev_noise_max = 10.;
-    bool sigma_consensus = false;
-    int partition_size = 5;
-    double tentative_inlier_thr = 5.;
 
     // for neighborhood graph
     int k_nearest_neighbors = 8; // for FLANN
@@ -429,12 +411,15 @@ private:
 
     int trace = 2;
     Mat descriptor;
+
+    // magsac parameters for H, F, E
+    double DoF = 4, sigma_quantile = 3.64, upper_incomplete_of_sigma_quantile = 0.00365,
+    lower_incomplete_of_sigma_quantile = 1.30122, C = 0.25, maximum_thr = 10.;
 public:
     ModelImpl (double threshold_, EstimationMethod estimator_, SamplingMethod sampler_, double confidence_=0.95,
                int max_iterations_=5000, ScoreMethod score_ =ScoreMethod::RANSAC) {
         estimator = estimator_;
         switch (estimator_) {
-            case (EstimationMethod::Line2d): sample_size = 2; est_error = ErrorMetric ::DIST_TO_LINE; break;
             case (EstimationMethod::Similarity): sample_size = 2; est_error = ErrorMetric ::FORW_REPR_ERR; break;
             case (EstimationMethod::Affine): sample_size = 3; est_error = ErrorMetric ::FORW_REPR_ERR; break;
             case (EstimationMethod::Homography): sample_size = 4; est_error = ErrorMetric ::FORW_REPR_ERR;
@@ -446,6 +431,8 @@ public:
             case (EstimationMethod::Fundamental): sample_size = 7; est_error = ErrorMetric ::SAMPSON_ERR; break;
             case (EstimationMethod::Fundamental8): sample_size = 8; est_error = ErrorMetric ::SAMPSON_ERR; break;
             case (EstimationMethod::Essential): sample_size = 5; est_error = ErrorMetric ::SGD_ERR; break;
+            case (EstimationMethod::P3P): sample_size = 3; est_error = ErrorMetric ::RERPOJ; break;
+            case (EstimationMethod::P6P): sample_size = 6; est_error = ErrorMetric ::RERPOJ; break;
             default: assert(0 && "Estimator has not implemented yet!");
         }
 
@@ -468,6 +455,12 @@ public:
             } else if (sample_size == 6) { // E six points
                 avg_num_models = 5;
             }
+        } else if (estimator_ = EstimationMethod::P3P) {
+            avg_num_models = 2;
+            time_for_model_est = 300;
+        } else if (estimator_ = EstimationMethod::P6P) {
+            avg_num_models = 1;
+            time_for_model_est = 250;
         }
 
         /*
@@ -475,7 +468,7 @@ public:
          * so threshold must be squared.
          */
         threshold = threshold_;
-        if (est_error == ErrorMetric::FORW_REPR_ERR || est_error == ErrorMetric::SYMM_REPR_ERR)
+        if (est_error == ErrorMetric::FORW_REPR_ERR || est_error == ErrorMetric::SYMM_REPR_ERR || est_error == ErrorMetric ::RERPOJ)
             threshold *= threshold_;
 
         sampler = sampler_;
@@ -642,6 +635,9 @@ public:
     }
     bool isEssential () const override {
         return estimator == EstimationMethod ::Essential;
+    }
+    bool isPnP() const override {
+        return estimator == EstimationMethod ::P3P || estimator == EstimationMethod ::P6P;
     }
 };
 

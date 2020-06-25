@@ -6,42 +6,48 @@
 #include "../usac.hpp"
 
 namespace cv { namespace usac {
-
 class RansacQualityImpl : public RansacQuality {
 private:
     const Ptr<Error> &error;
-    int points_size;
-    double threshold;
+    const int points_size;
+    const double threshold;
+    double best_score;
 public:
-
     RansacQualityImpl (int points_size_, double threshold_, const Ptr<Error> &error_)
-            : error (error_) {
-        points_size = points_size_;
-        threshold = threshold_;
+            : error (error_), points_size(points_size_), threshold(threshold_) {
+        best_score = std::numeric_limits<double>::max();
     }
 
-    /*
-     * calculating number of inliers of current model.
-     */
     // use inline
-    Score getScore (const Mat& model, double threshold, bool get_inliers, std::vector<int>& inliers) const override {
-
+    Score getScore (const Mat& model, double threshold, bool get_inliers,
+            std::vector<int>& inliers) const override {
         error->setModelParameters(model);
-
         int inlier_number = 0;
 
         if (get_inliers) {
-            for (int point = 0; point < points_size; point++)
+            for (int point = 0; point < points_size; point++) {
                 if (error->getError(point) < threshold)
                     inliers[inlier_number++] = point;
+                // if current number of inliers plus all possible are less than
+                // max number of inliers then break evaluation.
+                if (inlier_number + (points_size - point) < -best_score)
+                    break;
+            }
         } else {
-            for (int point = 0; point < points_size; point++)
+            for (int point = 0; point < points_size; point++) {
                 if (error->getError(point) < threshold)
                     inlier_number++;
+                if (inlier_number + (points_size - point) < -best_score)
+                    break;
+            }
         }
 
         // score is negative inlier number! If less then better
         return Score(inlier_number, -static_cast<double>(inlier_number));
+    }
+
+    void setBestScore(double best_score_) override {
+        best_score = best_score_;
     }
 
     Score getScore (const Mat& model, bool get_inliers, std::vector<int>& inliers) const override
@@ -61,21 +67,18 @@ public:
         for (int point = 0; point < points_size; point++)
             if (error->getError(point) < thr)
                 inliers[num_inliers++] = point;
-
         return num_inliers;
     }
 
-    int getInliers (const Mat& model, std::vector<int>& inliers, std::vector<bool>& inliers_mask,
-            std::vector<double>& errors) const override {
+    int getInliers (const Mat& model, std::vector<bool>& inliers_mask) const override {
         std::fill(inliers_mask.begin(), inliers_mask.end(), 0);
         error->setModelParameters(model);
         int num_inliers = 0;
         for (int point = 0; point < points_size; point++) {
             const auto err = error->getError(point);
             if (err < threshold) {
-                inliers[num_inliers++] = point;
                 inliers_mask[point] = true;
-                errors[point] = err;
+                num_inliers++;
             }
         }
         return num_inliers;
@@ -88,26 +91,25 @@ public:
     { return error->getError (point_idx) < threshold; }
 };
 
-Ptr<RansacQuality> RansacQuality::create(int points_size_, double threshold_, const Ptr<Error> &error_) {
-    return Ptr<RansacQualityImpl> (new RansacQualityImpl
-                (points_size_, threshold_, error_));
+Ptr<RansacQuality> RansacQuality::create(int points_size_, double threshold_,
+        const Ptr<Error> &error_) {
+    return makePtr<RansacQualityImpl>(points_size_, threshold_, error_);
 }
-
 
 class MsacQualityImpl : public MsacQuality {
 protected:
-    int points_size;
-    double threshold;
+    const int points_size;
+    const double threshold;
     const Ptr<Error> &error;
+    double best_score;
 public:
-
     MsacQualityImpl (int points_size_, double threshold_, const Ptr<Error> &error_)
-            : error (error_) {
-        points_size = points_size_;
-        threshold = threshold_;
+            : error (error_), points_size (points_size_), threshold (threshold_) {
+        best_score = std::numeric_limits<double>::max();
     }
 
-    inline Score getScore (const Mat& model, double threshold, bool get_inliers, std::vector<int>& inliers) const override {
+    inline Score getScore (const Mat& model, double threshold, bool get_inliers,
+            std::vector<int>& inliers) const override {
         error->setModelParameters(model);
 
         double err, sum_errors = 0;
@@ -115,15 +117,22 @@ public:
         for (int point = 0; point < points_size; point++) {
             err = error->getError(point);
             if (err < threshold) {
-                if (get_inliers) {
+                if (get_inliers)
                     inliers[inlier_number] = point;
-                }
                 sum_errors += err;
                 inlier_number++;
-            }
+            } else
+                sum_errors += threshold;
+
+            if (sum_errors > best_score)
+                break;
         }
 
-        return Score(inlier_number, sum_errors + (points_size - inlier_number) * threshold);
+        return Score(inlier_number, sum_errors);
+    }
+
+    void setBestScore(double best_score_) override {
+        best_score = best_score_;
     }
 
     Score getScore (const Mat& model, bool get_inliers, std::vector<int>& inliers) const override
@@ -142,21 +151,18 @@ public:
         for (int point = 0; point < points_size; point++)
             if (error->getError(point) < thr)
                 inliers[num_inliers++] = point;
-
         return num_inliers;
     }
 
-    int getInliers (const Mat& model, std::vector<int>& inliers, std::vector<bool>& inliers_mask,
-            std::vector<double>& errors) const override {
+    int getInliers (const Mat& model, std::vector<bool>& inliers_mask) const override {
         std::fill(inliers_mask.begin(), inliers_mask.end(), 0);
         error->setModelParameters(model);
         int num_inliers = 0;
         for (int point = 0; point < points_size; point++) {
             const auto err = error->getError(point);
             if (err < threshold) {
-                inliers[num_inliers++] = point;
                 inliers_mask[point] = true;
-                errors[point] = err;
+                num_inliers++;
             }
         }
         return num_inliers;
@@ -169,11 +175,10 @@ public:
     { return error->getError (point_idx) < threshold; }
 };
 
-Ptr<MsacQuality> MsacQuality::create(int points_size_, double threshold_, const Ptr<Error> &error_) {
-    return Ptr<MsacQualityImpl>(new MsacQualityImpl
-            (points_size_, threshold_, error_));
+Ptr<MsacQuality> MsacQuality::create(int points_size_, double threshold_,
+        const Ptr<Error> &error_) {
+    return Ptr<MsacQualityImpl>(new MsacQualityImpl(points_size_, threshold_, error_));
 }
-
 
 //////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////// MODEL VERIFIER /////////////////////////////////////////
@@ -246,7 +251,6 @@ public:
     const std::vector<SPRT_history> &getSPRTvector () const override {
         return sprt_histories;
     }
-
     void reset () override {
         sprt_histories.clear();
         sprt_histories.reserve(20);
@@ -312,7 +316,6 @@ public:
 };
 
 ///////////////////////////////// SPRT VERIFIER UNIVERSAL /////////////////////////////////////////
-
 class SPRTverifierImpl : public SPRTverifier {
 private:
     SPRTImpl sprt;
@@ -400,23 +403,22 @@ Ptr<SPRTverifier> SPRTverifier::create (RNG &rng, const Ptr<Quality> &quality_, 
 }
 
 ///////////////////////////////////// SPRT VERIFIER MSAC //////////////////////////////////////////
-
-
-class SPRTmsacImpl : public SPRTmsac {
+class SPRTScoreImpl : public SPRTScore {
 private:
     SPRTImpl sprt;
     const Ptr<Error> &err;
     const double inlier_threshold;
     Score score;
     bool last_model_is_good;
+    const bool binary_score;
     RNG &rng;
 public:
 
-    SPRTmsacImpl (RNG &rng_, const Ptr<Error>&err_, int points_size_, int sample_size_,
+    explicit SPRTScoreImpl (RNG &rng_, const Ptr<Error>&err_, int points_size_, int sample_size_,
          double inlier_threshold_, double prob_pt_of_good_model, double prob_pt_of_bad_model,
-         double time_sample, double avg_num_models) : rng(rng_), sprt (rng_, points_size_,
+         double time_sample, double avg_num_models, bool bin_score_) : rng(rng_), sprt (rng_, points_size_,
          sample_size_, prob_pt_of_good_model, prob_pt_of_bad_model, time_sample, avg_num_models),
-         err(err_), inlier_threshold (inlier_threshold_) {}
+         err(err_), inlier_threshold (inlier_threshold_), binary_score (bin_score_) {}
 
     inline bool isModelGood (const Mat &model) override {
         // set model in estimator inside model to run isInlier()
@@ -427,41 +429,55 @@ public:
         sprt.random_pool_idx = rng.uniform(0, sprt.points_size);
 
         int tested_point, tested_inliers = 0;
-        for (tested_point = 0; tested_point < sprt.points_size; tested_point++) {
-
-            // reset pool index if it overflows
-            if (sprt.random_pool_idx >= sprt.points_size)
-                sprt.random_pool_idx = 0;
-
-            double error = err->getError (sprt.points_random_pool[sprt.random_pool_idx++]);
-
-            if (error < inlier_threshold) {
-                sum_errors += error;
-                tested_inliers++;
-                lambda *= sprt.delta_to_epsilon;
-            } else {
-                lambda *= sprt.complement_delta_to_complement_epsilon;
+        if (binary_score)
+            for (tested_point = 0; tested_point < sprt.points_size; tested_point++) {
+                // reset pool index if it overflows
+                if (sprt.random_pool_idx >= sprt.points_size)
+                    sprt.random_pool_idx = 0;
+                if (err->getError (sprt.points_random_pool[sprt.random_pool_idx++]) < inlier_threshold) {
+                    tested_inliers++;
+                    lambda *= sprt.delta_to_epsilon;
+                } else
+                    lambda *= sprt.complement_delta_to_complement_epsilon;
+                if (lambda > sprt.current_A) {
+                    good_model = false;
+                    tested_point++;
+                    break;
+                }
             }
-
-            if (lambda > sprt.current_A) {
-                good_model = false;
-                tested_point++;
-                break;
+        else
+            for (tested_point = 0; tested_point < sprt.points_size; tested_point++) {
+                if (sprt.random_pool_idx >= sprt.points_size)
+                    sprt.random_pool_idx = 0;
+                double error = err->getError (sprt.points_random_pool[sprt.random_pool_idx++]);
+                if (error < inlier_threshold) {
+                    sum_errors += error;
+                    tested_inliers++;
+                    lambda *= sprt.delta_to_epsilon;
+                } else
+                    lambda *= sprt.complement_delta_to_complement_epsilon;
+                if (lambda > sprt.current_A) {
+                    good_model = false;
+                    tested_point++;
+                    break;
+                }
             }
-        }
 
         // increase number of samples processed by current test
         sprt.sprt_histories[sprt.current_sprt_idx].tested_samples++;
 
         last_model_is_good = good_model;
-
         if (good_model) {
             score.inlier_number = tested_inliers;
-            score.score = sum_errors + (sprt.points_size - tested_inliers) * inlier_threshold;
+            if (binary_score)
+                score.score = -static_cast<double>(tested_inliers);
+            else
+                score.score = sum_errors + (sprt.points_size - tested_inliers) * inlier_threshold;
 
             if (tested_inliers > sprt.highest_inlier_number) {
                 sprt.highest_inlier_number = tested_inliers; // update max inlier number
-                sprt.createTest(static_cast<double>(tested_inliers) / sprt.points_size, sprt.current_delta);
+                sprt.createTest(static_cast<double>(tested_inliers)
+                         / sprt.points_size, sprt.current_delta);
             }
         } else {
             double delta_estimated = static_cast<double> (tested_inliers) / tested_point;
@@ -483,93 +499,11 @@ public:
         return true;
     }
 };
-Ptr<SPRTmsac> SPRTmsac::create (RNG &rng, const Ptr<Error> &err_, int points_size_, int sample_size_,
+Ptr<SPRTScore> SPRTScore::create (RNG &rng, const Ptr<Error> &err_, int points_size_, int sample_size_,
       double inlier_threshold_, double prob_pt_of_good_model, double prob_pt_of_bad_model,
-      double time_sample, double avg_num_models) {
-    return Ptr<SPRTmsacImpl>(new SPRTmsacImpl (rng, err_, points_size_, sample_size_,
-    inlier_threshold_, prob_pt_of_good_model, prob_pt_of_bad_model, time_sample, avg_num_models));
-}
-
-//////////////////////////////////// SPRT VERIFIER RANSAC /////////////////////////////////////////
-
-class SPRTransacImpl : public SPRTransac {
-private:
-    SPRTImpl sprt;
-    const Ptr<Quality> &quality;
-    Score score;
-    bool last_model_is_good;
-    RNG &rng;
-public:
-
-    SPRTransacImpl (RNG &rng_, const Ptr<Quality> &quality_, int points_size_, int sample_size_,
-        double prob_pt_of_good_model, double prob_pt_of_bad_model,
-        double time_sample, double avg_num_models) : rng (rng_), sprt (rng_, points_size_, sample_size_,
-        prob_pt_of_good_model, prob_pt_of_bad_model, time_sample, avg_num_models),
-        quality(quality_) {}
-
-    inline bool isModelGood (const Mat &model) override {
-        // set model in estimator inside model to run isInlier()
-        quality->setModel(model);
-        double lambda = 1;
-        bool good_model = true;
-        sprt.random_pool_idx = rng.uniform(0, sprt.points_size);
-        int tested_point, tested_inliers = 0;
-        for (tested_point = 0; tested_point < sprt.points_size; tested_point++) {
-            // reset pool index if it overflows
-            if (sprt.random_pool_idx >= sprt.points_size)
-                sprt.random_pool_idx = 0;
-
-            if (quality->isInlier(sprt.points_random_pool[sprt.random_pool_idx++])) {
-                tested_inliers++;
-                lambda *= sprt.delta_to_epsilon;
-            } else {
-                lambda *= sprt.complement_delta_to_complement_epsilon;
-            }
-
-            if (lambda > sprt.current_A) {
-                good_model = false;
-                tested_point++;
-                break;
-            }
-        }
-
-        // increase number of samples processed by current test
-        sprt.sprt_histories[sprt.current_sprt_idx].tested_samples++;
-
-        last_model_is_good = good_model;
-
-        if (good_model) {
-            score.inlier_number = tested_inliers;
-            score.score = -static_cast<double >(tested_inliers);
-
-            if (tested_inliers > sprt.highest_inlier_number) {
-                sprt.highest_inlier_number = tested_inliers; // update max inlier number
-                sprt.createTest(static_cast<double>(tested_inliers) / sprt.points_size, sprt.current_delta);
-            }
-        } else {
-            double delta_estimated = static_cast<double> (tested_inliers) / tested_point;
-            if (delta_estimated > 0 && fabs(sprt.current_delta - delta_estimated)
-                                       / sprt.current_delta > 0.05) {
-                sprt.createTest(sprt.current_epsilon, delta_estimated);
-            }
-        }
-        return good_model;
-    }
-
-    const std::vector<SPRT_history> &getSPRTvector () const override {
-        return sprt.getSPRTvector();
-    }
-
-    inline bool getScore (Score &score_) const override {
-        if (!last_model_is_good) return false;
-        score_ = score;
-        return true;
-    }
-};
-Ptr<SPRTransac> SPRTransac::create(RNG &rng, const Ptr<Quality> &quality_, int points_size_,
-        int sample_size_, double prob_pt_of_good_model, double prob_pt_of_bad_model,
-        double time_sample, double avg_num_models) {
-    return Ptr<SPRTransacImpl>(new SPRTransacImpl(rng, quality_, points_size_,
-        sample_size_, prob_pt_of_good_model, prob_pt_of_bad_model, time_sample, avg_num_models));
+      double time_sample, double avg_num_models, bool binary_score) {
+    return Ptr<SPRTScoreImpl>(new SPRTScoreImpl (rng, err_, points_size_, sample_size_,
+    inlier_threshold_, prob_pt_of_good_model, prob_pt_of_bad_model, time_sample, avg_num_models,
+    binary_score));
 }
 }}
