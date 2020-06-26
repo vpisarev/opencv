@@ -25,11 +25,6 @@ public:
         setNewPointsSize (points_size_);
     }
 
-    void setNewSampleSize (int sample_size_) override {
-        assert (sample_size_ <= points_size);
-        sample_size = sample_size_;
-    }
-
     void setNewPointsSize (int points_size_) override {
         assert (sample_size <= points_size_);
 
@@ -42,12 +37,6 @@ public:
             for (int i = 0; i < points_size; i++)
                 points_random_pool[i] = i;
         }
-    }
-
-    void setNew (int sample_size_, int points_size_) override {
-        assert (sample_size_ <= points_size_);
-        sample_size = sample_size_;
-        setNewPointsSize(points_size_);
     }
 
     void generateSample (std::vector<int>& sample) override {
@@ -83,11 +72,6 @@ public:
                     break;
             if (j == -1) sample[i++] = num;
         }
-    }
-
-    void generateSample (std::vector<int>& sample, int sample_size_, int points_size_) override {
-        setNew (sample_size_, points_size_);
-        generateSample(sample);
     }
 
     int getSampleSize () const override

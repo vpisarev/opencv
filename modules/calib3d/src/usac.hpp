@@ -9,27 +9,33 @@ namespace cv { namespace usac {
 // Abstract Error class
 class Error : public Algorithm {
 public:
+    // set model to use getError() function
     virtual void setModelParameters (const Mat &model) = 0;
+    // returns error of point wih @point_idx w.r.t. model
     virtual float getError (int point_idx) const = 0;
 };
 
-// Symmetric Reprojected Error
-class ReprojectedErrorSymmetric : public Error {
+// Symmetric Reprojection Error for Homography
+class ReprojectionErrorSymmetric : public Error {
 public:
-    static Ptr<ReprojectedErrorSymmetric> create(const Mat &points);
+    static Ptr<ReprojectionErrorSymmetric> create(const Mat &points);
 };
 
-// Forward Reprojected Error
-class ReprojectedErrorForward : public Error {
+// Forward Reprojection Error for Homography
+class ReprojectionErrorForward : public Error {
 public:
-    static Ptr<ReprojectedErrorForward> create(const Mat &points);
+    static Ptr<ReprojectionErrorForward> create(const Mat &points);
 };
 
-/*
-* Class for normalizing transformations of points.
-*/
+// Normalizing transformation of data points
 class NormTransform : public Algorithm {
 public:
+    /*
+     * @norm_points is output matrix of size pts_size x 4
+     * @sample constains indices of points
+     * @sample_number is number of used points in sample <0; sample_number)
+     * @T1, T2 are output transformation matrices
+     */
     virtual void getNormTransformation (Mat &norm_points, const std::vector<int> &sample,
                                         int sample_number, Mat &T1, Mat &T2) const = 0;
     static Ptr<NormTransform> create (const Mat &points);
@@ -39,18 +45,11 @@ public:
 ////////////////////////////////////////// SOLVER ///////////////////////////////////////////
 class MinimalSolver : public Algorithm {
 public:
-    /*
-     * Estimate models from minimal sample
-     * models.size() == output
-     */
+    // Estimate models from minimal sample. models.size() == number of found solutions
     virtual int estimate (const std::vector<int> &sample, std::vector<Mat> &models) = 0;
-    /*
-     * Get minimal sample size required for estimation.
-     */
+    // return minimal sample size required for estimation.
     virtual int getSampleSize() const = 0;
-    /*
-     * Get maximum number of possible solutions.
-     */
+    // return maximum number of possible solutions.
     virtual int getMaxNumberOfSolutions () const = 0;
 };
 
@@ -68,24 +67,16 @@ public:
 //////////////////////////////////////// NON MINIMAL SOLVER ///////////////////////////////////////
 class NonMinimalSolver : public Algorithm {
 public:
-    /*
-     * Estimate models from non minimal sample
-     * models.size() == output
-     */
+    // Estimate models from non minimal sample. models.size() == number of found solutions
     virtual int estimate (const std::vector<int> &sample, int sample_size,
                           std::vector<Mat> &models, const std::vector<double> &weights) = 0;
-
-    /*
-     * Get minimal sample size required for non-minimal estimation.
-     */
+    // return minimal sample size required for non-minimal estimation.
     virtual int getMinimumRequiredSampleSize() const = 0;
-
-    /*
-     * Get maximum number of possible solutions.
-     */
+    // return maximum number of possible solutions.
     virtual int getMaxNumberOfSolutions () const = 0;
 };
 
+//-------------------------- HOMOGRAPHY MATRIX -----------------------
 class HomographyNonMinimalSolver : public NonMinimalSolver {
 public:
     static Ptr<HomographyNonMinimalSolver> create(const Mat &points_);
@@ -164,50 +155,34 @@ public:
     static Ptr<HomographyDegeneracy> create(const Mat &points_, int sample_size_);
 };
 
-
 /////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////// ESTIMATOR //////////////////////////////////
 class Estimator : public Algorithm{
 public:
     /*
-     * Estimate models with minimal solvers.
+     * Estimate models with minimal solver.
      * Return number of valid solutions after estimation.
      * Return models accordingly to number of solutions.
      * Note, vector of models must allocated before.
-     * Note, not all degenerate tests including in estimation.
+     * Note, not all degenerate tests are included in estimation.
      */
     virtual int
     estimateModels (const std::vector<int> &sample, std::vector<Mat> &models) const = 0;
-
     /*
      * Estimate model with non-minimal solver.
-     * Return true if model was estimated successfully. Otherwise return false.
-     * Return only one valid model.
-     * Note, not all degenerate tests including in estimation.
+     * Return number of valid solutions after estimation.
+     * Note, not all degenerate tests are included in estimation.
      */
-    // todo: think about weights reference. Maybe setter?
     virtual int
     estimateModelNonMinimalSample (const std::vector<int> &sample, int sample_size,
                        std::vector<Mat> &models, const std::vector<double> &weights) const = 0;
-
-    /*
-     * Get number of samples required for minimal estimation.
-     */
+    // return minimal sample size required for minimal estimation.
     virtual int getMinimalSampleSize () const = 0;
-
-    /*
-     * Get minimal number of samples required for non-minimal estimation.
-     */
+    // return minimal sample size required for non-minimal estimation.
     virtual int getNonMinimalSampleSize () const = 0;
-
-    /*
-     * Get maximum number of possible solutions of minimal estimation.
-     */
+    // return maximum number of possible solutions of minimal estimation.
     virtual int getMaxNumSolutions () const = 0;
-
-    /*
-     * Get maximum number of possible solutions of non-minimal estimation.
-     */
+    // return maximum number of possible solutions of non-minimal estimation.
     virtual int getMaxNumSolutionsNonMinimal () const = 0;
 };
 
@@ -223,17 +198,15 @@ class Score {
 public:
     int inlier_number;
     double score;
-    Score () {
+    Score () { // set worst case
         inlier_number = 0;
         score = std::numeric_limits<double>::max();
     }
-    Score (int inlier_number_, double score_) {
+    Score (int inlier_number_, double score_) { // copy constructor
         inlier_number = inlier_number_;
         score = score_;
     }
-    /*
-     * Compare two scores. Objective is minimization of score. Lower is better.
-     */
+    // Compare two scores. Objective is minimization of score. Lower score is better.
     inline bool better(const Score &score2) const {
         return score < score2.score;
     }
@@ -244,46 +217,38 @@ class Quality : public Algorithm {
 public:
     virtual ~Quality() override = default;
     /*
-     * Calculates number of inliers and score for current model.
-     * @score: of class Score contains inlier_number and score variables.
+     * Calculates number of inliers and score of the @model.
+     * return Score with calculated inlier_number and score.
      * @model: Mat current model, e.g., H matrix.
      * @get_inliers: if true inliers will be stored to @inliers.
-     * @inliers: array of inliers, contains inlier indices, which are stored from the beginning of array.
-     * Note, all pointers must be allocated, @inliers should be allocated to max size (=points size)
+     * @inliers: vector containing inlier indices, which are stored from the beginning of array.
+     * Note, @inliers must be of size of number of points.
      */
-    virtual Score getScore (const Mat &model, double threshold, bool get_inliers, std::vector<int> &inliers) const = 0;
-    virtual Score getScore (const Mat &model, bool get_inliers, std::vector<int> &inliers) const = 0;
+    virtual Score getScore (const Mat &model, double threshold, bool get_inliers,
+            std::vector<int> &inliers) const = 0;
+    virtual Score getScore (const Mat &model,bool get_inliers,std::vector<int> &inliers) const = 0;
     virtual Score getScore (const Mat &model) const = 0;
-
-    // make sure than estimator is updated with the latest model.
-    // make isInlier() also virtual for MAGSAC, because threshold is unknown.
-    // for other quality classes inlier is point which error is less than threshold.
+    // return true if point with given @point_idx is inliers, false-otherwise
     virtual bool isInlier (int point_idx) const = 0;
-
-    // set model to estimator
+    // set @model for function isInlier()
     virtual void setModel (const Mat &model) const = 0;
-
-    // get inliers with initialized threshold
+    // get @inliers of the @model. Assume threshold is given
     virtual int getInliers (const Mat &model, std::vector<int> &inliers) const = 0;
-
-    // get inliers for given threshold
+    // get @inliers of the @model for given threshold
     virtual int getInliers (const Mat &model, std::vector<int> &inliers, double thr) const = 0;
-
-    /*
-     * Set the best score, so evaluation of the model can terminate earlier
-     */
+    // Set the best score, so evaluation of the model can terminate earlier
     virtual void setBestScore (double best_score_) = 0;
-    /*
-     * @inliers_mask: true if point i is inlier, false - otherwise.
-     */
+    // set @inliers_mask: true if point i is inlier, false - otherwise.
     virtual int getInliers (const Mat &model, std::vector<bool> &inliers_mask) const = 0;
 };
 
+// RANSAC (binary) quality
 class RansacQuality : public Quality {
 public:
-    static Ptr<RansacQuality> create(int points_size_, double threshold_, const Ptr<Error> &error_);
+    static Ptr<RansacQuality> create(int points_size_, double threshold_,const Ptr<Error> &error_);
 };
 
+// M-estimator quality - truncated Squared error
 class MsacQuality : public Quality {
 public:
     static Ptr<MsacQuality> create(int points_size_, double threshold_, const Ptr<Error> &error_);
@@ -294,22 +259,17 @@ public:
 class ModelVerifier : public Algorithm {
 public:
     virtual ~ModelVerifier() override = default;
-    /*
-     * Returns true if model is good, false - otherwise.
-     */
+    // Return true if model is good, false - otherwise.
     inline virtual bool isModelGood(const Mat &model) {
         return true;
     }
-    /*
-     * Return true if score was computed during evaluation.
-     */
+    // Return true if score was computed during evaluation.
     inline virtual bool getScore(Score &score) const {
         return false;
     }
     /*
      * Reset ModelVerification to initial state.
      * Assume parameters of ModelVerification (e.g., points size) are not changed.
-     * SPRT as sequential decision making requires to be reset.
      */
     virtual void reset () {}
 };
@@ -338,56 +298,34 @@ struct SPRT_history {
     }
 };
 
+///////////////////////////////// SPRT VERIFIER /////////////////////////////////////////
 /*
 * Matas, Jiri, and Ondrej Chum. "Randomized RANSAC with sequential probability ratio test."
 * Tenth IEEE International Conference on Computer Vision (ICCV'05) Volume 1. Vol. 2. IEEE, 2005.
 */
 class SPRT : public ModelVerifier {
 public:
-    /*
-     * Return constant reference of vector of SPRT histories for SPRT termination.
-     */
+    // return constant reference of vector of SPRT histories for SPRT termination.
     virtual const std::vector<SPRT_history> &getSPRTvector () const = 0;
-};
 
-///////////////////////////////// SPRT VERIFIER UNIVERSAL /////////////////////////////////////////
-class SPRTverifier : public SPRT {
-public:
-    static Ptr<SPRTverifier> create (RNG &rng, const Ptr<Quality> &quality_, int points_size_,
-         int sample_size_, double prob_pt_of_good_model, double prob_pt_of_bad_model,
-         double time_sample, double avg_num_models);
-};
-
-///////////////////////////////////// SPRT VERIFIER MSAC //////////////////////////////////////////
-class SPRTScore : public SPRT {
-public:
-    static Ptr<SPRTScore> create (RNG &rng, const Ptr<Error> &err_, int points_size_, int sample_size_,
-         double inlier_threshold_, double prob_pt_of_good_model, double prob_pt_of_bad_model,
-         double time_sample, double avg_num_models, bool binary_score);
+    static Ptr<SPRT> create (RNG &rng, const Ptr<Error> &err_, int points_size_,
+       int sample_size_, double inlier_threshold_, double prob_pt_of_good_model,
+       double prob_pt_of_bad_model, double time_sample, double avg_num_models, int score_type_);
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////// TERMINATION ///////////////////////////////////////////
 class TerminationCriteria : public Algorithm {
 public:
+    // return true if RANSAC can terminate by given @current_iteration number
     virtual bool terminate(int current_iteration) const = 0;
-    /*
-     * After calling this function begin_time is set.
-     * This function is used in the beginning of RANSAC.
-     */
+    // termination starts measure time. Should be called in the beginning of RANSAC.
     virtual void startMeasureTime() = 0;
-    /*
-     * Updates necessary conditions for terminate() function.
-     */
+    // update termination object by given @model and @inlier number.
     virtual void update(const Mat &model, int inlier_number) = 0;
-    /*
-     * Return predicted number of iterations required for RANSAC
-     */
+    // return predicted number of iterations required for RANSAC
     virtual int getPredictedNumberIterations() const = 0;
-    /*
-     * Resets Termination to initial state. Assume parameters of Termination
-     * (e.g., max iterations) are not changed.
-     */
+    // reset termination to initial state. Assume main parameters of termination are the same.
     virtual void reset() = 0;
 };
 
@@ -401,24 +339,26 @@ public:
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////// UTILS ////////////////////////////////////////////////
-class Utils : public Algorithm {
-public:
-    static void random_shuffle (RNG &rng, std::vector<int> &array);
-};
-
-class Math {
-public:
+namespace Utils {
+    void random_shuffle (RNG &rng, std::vector<int> &array);
+}
+namespace Math {
     /*
      * @points Nx4 array: x1 y1 x2 y2
      * @sample Mx1 array
+     * return true if any 3 out of M points in sample are collinear
      */
-    static bool haveCollinearPoints(const Mat &points, const std::vector<int> &sample,
+    bool haveCollinearPoints(const Mat &points, const std::vector<int> &sample,
             double threshold=1);
-    static Mat getSkewSymmetric(const Mat &v_);
-    static Mat cross(const Mat &a_, const Mat &b_);
-    static int rank3x3 (const Mat &A_);
-    static void eliminateUpperTriangluar (double * a, int m, int n);
-};
+    // return skew symmetric matrix
+    Mat getSkewSymmetric(const Mat &v_);
+    // do cross product between two vectors
+    Mat cross(const Mat &a_, const Mat &b_);
+    // compute rank of 3x3 matrix
+    int rank3x3 (const Mat &A_);
+    // eliminate matrix with m rows and n columns to be upper triangular.
+    void eliminateUpperTriangluar (std::vector<double> &a, int m, int n);
+}
 
 ///////////////////////////////////////// RANDOM GENERATOR /////////////////////////////////////
 class RandomGenerator : public Algorithm {
@@ -426,8 +366,11 @@ public:
     virtual ~RandomGenerator() override = default;
     // interval is <0, max_range);
     virtual void resetGenerator (int max_range) = 0;
+    // return sample filled with random numbers
     virtual void generateUniqueRandomSet (std::vector<int> &sample) = 0;
+    // return subset=sample size
     virtual void setSubsetSize (int subset_sz) = 0;
+    // return random number
     virtual int getRandomNumber () = 0;
 };
 
@@ -435,7 +378,9 @@ class UniformRandomGenerator : public RandomGenerator {
 public:
     static Ptr<UniformRandomGenerator> create (RNG &rng);
     static Ptr<UniformRandomGenerator> create (RNG &rng, int max_range, int subset_size_);
+    // fill @sample of size @subset_size with random numbers in range <0, @max_range)
     virtual void generateUniqueRandomSet (std::vector<int> &sample, int subset_size, int max_range) = 0;
+    // fill @sample of size @sample.size() with random numbers in range <0, @max_range)
     virtual void generateUniqueRandomSet (std::vector<int> &sample, int max_range) = 0;
 };
 
@@ -444,49 +389,26 @@ public:
 class Sampler : public Algorithm {
 public:
     virtual ~Sampler() override = default;
-
-    // set new sample size
-    virtual void setNewSampleSize (int sample_size) = 0;
-
     // set new points size
     virtual void setNewPointsSize (int points_size) = 0;
-
-    // set new sample size and points size
-    virtual void setNew (int sample_size, int points_size) = 0;
-    /*
-     * Generate sample. Fill @sample with indices of points.
-     */
+    // generate sample. Fill @sample with indices of points.
     virtual void generateSample (std::vector<int> &sample) = 0;
-    /*
-     * Generate sample for given points size
-     */
+    // generate sample for given points size
     virtual void generateSample (std::vector<int> &sample, int points_size) = 0;
-    /*
-     * Generate sample for given sample size and points size.
-     */
-    virtual void generateSample (std::vector<int> &sample, int sample_size, int points_size) = 0;
-
+    // return sample size
     virtual int getSampleSize () const = 0;
-    /*
-     * Reset Sampler to initial state. Assume that parameters of Sampler (e.g., sample size) are not changed.
-     * Sampler as Uniform or NAPSAC does not require reset() because sampling is independent.
-     * However, PROSAC and P-NAPSAC requires.
-     */
+    // reset Sampler to initial state. Assume that parameters of Sampler are not changed.
     virtual void reset () = 0;
 };
 
 ////////////////////////////////////// UNIFORM SAMPLER ////////////////////////////////////////////
-/*
-* Choose uniformly m (sample size) points from N (points size).
-* Uses Fisher-Yates shuffle.
-*/
 class UniformSampler : public Sampler {
 public:
     static Ptr<UniformSampler> create(RNG &rng, int sample_size_, int points_size_);
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////// LOCAL OPTIMIZATION ////////////////////////////////////////
+////////////////////////////////////// LOCAL OPTIMIZATION /////////////////////////////////////////
 class LocalOptimization : public Algorithm {
 public:
     virtual ~LocalOptimization() override = default;
@@ -499,12 +421,6 @@ public:
      */
     virtual bool refineModel (const Mat &best_model, const Score &best_model_score,
                               Mat &new_model, Score &new_model_score) = 0;
-
-    /*
-     * Reset LocalOptimization to initial state. Assume parameters of LO
-     * are not changed (e.g., non minimal sample size).
-     */
-    virtual void reset () {}
 };
 
 //////////////////////////////////// INNER LO ///////////////////////////////////////
@@ -525,7 +441,7 @@ public:
      * Polish so-far-the-best RANSAC model in the end of RANSAC.
      * @model: input final RANSAC model.
      * @new_model: output polished model.
-     * @new_score: socre of output model.
+     * @new_score: score of output model.
      * Return true if polishing was successful, false - otherwise.
      */
     virtual bool polishSoFarTheBestModel (const Mat &model, const Score &best_model_score,
@@ -551,19 +467,10 @@ public:
         int time_mcs_, double score_, int number_inliers_, int number_iterations_,
         int number_estimated_models_, int number_good_models_);
 
-    /*
-     * Return inliers' indices.
-     * size of vector = number of inliers
-     */
+    // Return inliers' indices. size of vector = number of inliers
     virtual const std::vector<int > &getInliers() const = 0;
-    /*
-     * Return inliers mask. Vector of points size. 1-inlier, 0-outlier.
-     */
+    // Return inliers mask. Vector of points size. 1-inlier, 0-outlier.
     virtual const std::vector<bool> &getInliersMask() const = 0;
-
-    /*
-     * Return inliers' errors. Vector of points size.
-     */
     virtual int getTimeMicroSeconds() const = 0;
     virtual int getTimeMicroSeconds1() const = 0;
     virtual int getTimeMilliSeconds2() const = 0;
@@ -662,7 +569,7 @@ public:
                                int img2_width_, int img2_height_) = 0;
 
     static Ptr<Model> create(double threshold_, EstimationMethod estimator_, SamplingMethod sampler_,
-         double confidence_=0.95, int max_iterations_=5000, ScoreMethod score_ =ScoreMethod::RANSAC);
+         double confidence_=0.95, int max_iterations_=5000, ScoreMethod score_ =ScoreMethod::MSAC);
 };
 
 Mat findHomography(InputArray srcPoints, InputArray dstPoints, int method = 0,

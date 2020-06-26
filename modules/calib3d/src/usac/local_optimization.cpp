@@ -82,8 +82,6 @@ public:
 
                 if (best_model_score.better(lo_score))
                     continue;
-//                else
-//                    std::cout << "new lo score is better!\n";
 
                 if (lo_score.better(new_model_score)) {
                     // update best model
@@ -101,8 +99,6 @@ public:
 
         return true;
     }
-
-    void reset () override {}
 };
 
 Ptr<InnerLocalOptimization> InnerLocalOptimization::create

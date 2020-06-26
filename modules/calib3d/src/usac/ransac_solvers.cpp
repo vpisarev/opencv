@@ -123,7 +123,6 @@ public:
     void reset () {
         sampler.reset();
         termination_criteria.reset();
-        if (local_optimization != nullptr) local_optimization->reset();
         model_verifier.reset();
         // other components don't need to be reset.
     }
@@ -227,6 +226,9 @@ public:
                         break;
 
                     if (LO && !is_magsac) {
+#if DEBUG
+                        std::cout << "run Local optimization\n";
+#endif
                         // update model by Local optimizaion
                         Mat lo_model;
 //                        std::cout << "best score " << best_score.inlier_number << "\n";
@@ -255,7 +257,7 @@ public:
             Mat polished_model;
             Score polisher_score;
             if (model_polisher.polishSoFarTheBestModel (best_model, best_score,
-                    polished_model, polisher_score)) {
+                                                        polished_model, polisher_score)) {
                 if (polisher_score.better(best_score)) {
                     best_score = polisher_score;
                     polished_model.copyTo(best_model);
@@ -272,8 +274,8 @@ public:
             // Store results
             ransac_output = RansacOutput::create(best_model, inliers_mask,
                 std::chrono::duration_cast<std::chrono::microseconds>
-                (std::chrono::steady_clock::now() - begin_time).count(), best_score.score,
-                best_score.inlier_number, iters, number_of_estimated_models, number_of_good_models);
+               (std::chrono::steady_clock::now() - begin_time).count(), best_score.score,
+               best_score.inlier_number, iters, number_of_estimated_models, number_of_good_models);
         }
         return true;
     }
@@ -291,20 +293,20 @@ Mat findHomography (InputArray srcPoints, InputArray dstPoints, int method, doub
                                       SamplingMethod::Uniform, confidence, maxIters, ScoreMethod::MSAC);
 
     params->setTrace(mask.needed());
-    params->setLocalOptimization(usac::LocalOptimMethod ::InLORsc);
-    params->setPolisher(usac::PolishingMethod ::LSQPolisher);
+    params->setLocalOptimization(LocalOptimMethod ::InLORsc);
+    params->setPolisher(PolishingMethod ::LSQPolisher);
     params->setVerifier(VerificationMethod ::SprtVerifier);
 
     RNG rng;
-    Ptr<Error> error = ReprojectedErrorForward::create(points);
+    Ptr<Error> error = ReprojectionErrorForward::create(points);
     Ptr<Degeneracy> degeneracy = HomographyDegeneracy::create(points, params->getSampleSize());
     Ptr<MinimalSolver> h_min = HomographyMinimalSolver4ptsGEM::create(points);
     Ptr<NonMinimalSolver> h_non_min = HomographyNonMinimalSolver::create(points);
     Ptr<Estimator> estimator = HomographyEstimator::create(h_min, h_non_min, degeneracy);
     Ptr<Quality> quality = MsacQuality::create(points_size, params->getThreshold(), error);
-    Ptr<ModelVerifier> verifier = SPRTScore::create(rng, error, points_size, params->getSampleSize(),
+    Ptr<ModelVerifier> verifier = SPRT::create(rng, error, points_size, params->getSampleSize(),
                   params->getThreshold(), params->getSPRTepsilon(), params->getSPRTdelta(),
-                  params->getTimeForModelEstimation(), params->getSPRTavgNumModels(), false);
+                  params->getTimeForModelEstimation(), params->getSPRTavgNumModels(), 1);
     Ptr<FinalModelPolisher> polisher = LeastSquaresPolishing::create(estimator, quality, degeneracy, points_size);
     Ptr<Sampler> sampler = UniformSampler::create(rng, params->getSampleSize(), points_size);
     Ptr<TerminationCriteria> termination = StandardTerminationCriteria::create(

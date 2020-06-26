@@ -6,7 +6,6 @@
 #include "../usac.hpp"
 
 namespace cv { namespace usac {
-
 class HomographyDegeneracyImpl : public HomographyDegeneracy {
 private:
     const Mat &points_mat;

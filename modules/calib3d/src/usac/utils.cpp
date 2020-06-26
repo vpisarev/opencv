@@ -75,8 +75,9 @@ int Math::rank3x3 (const Mat &A_) {
     Mat A;
     A_.copyTo(A);
     A.convertTo(A, CV_64F); // convert to double
-    auto * a = (double *) A.data;
-    const int m = A.rows, n = A.cols;
+    std::vector<double> a ((double *) A.data, (double *) A.data+9);
+//    auto * a = (double *) A.data;
+    const int m = 3, n = 3;
 
     eliminateUpperTriangluar(a, m, n);
 
@@ -95,7 +96,7 @@ int Math::rank3x3 (const Mat &A_) {
 /*
  * Eliminate matrix of m rows and n columns to be upper triangular.
  */
-void Math::eliminateUpperTriangluar (double * a, int m, int n) {
+void Math::eliminateUpperTriangluar (std::vector<double> &a, int m, int n) {
     for (int r = 0; r < m; r++){
         double pivot = a[r*n+r];
         int row_with_pivot = r;

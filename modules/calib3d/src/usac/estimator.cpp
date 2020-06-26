@@ -12,14 +12,8 @@ private:
     const Ptr<NonMinimalSolver> &non_min_solver;
     const Ptr<Degeneracy>& degeneracy;
 public:
-    /*
-     * @input_points: is matrix of size: number of points x 4
-     * x1 y1 x'1 y'1
-     * ...
-     * xN yN x'N y'N
-     */
-    HomographyEstimatorImpl (const Ptr<MinimalSolver> &min_solver_, const Ptr<NonMinimalSolver> &non_min_solver_,
-                         const Ptr<Degeneracy>& degeneracy_) :
+    HomographyEstimatorImpl (const Ptr<MinimalSolver> &min_solver_,
+            const Ptr<NonMinimalSolver> &non_min_solver_, const Ptr<Degeneracy>& degeneracy_) :
           degeneracy (degeneracy_), min_solver (min_solver_), non_min_solver (non_min_solver_) {}
 
     inline int estimateModels (const std::vector<int>& sample, std::vector<Mat>& models) const override {
@@ -43,16 +37,14 @@ public:
         return non_min_solver->getMinimumRequiredSampleSize();
     }
 };
-
-Ptr<HomographyEstimator> HomographyEstimator::create (const Ptr<MinimalSolver> &min_solver_, const Ptr<NonMinimalSolver> &non_min_solver_,
-            const Ptr<Degeneracy>& degeneracy_) {
-    return Ptr<HomographyEstimatorImpl>
-    (new HomographyEstimatorImpl(min_solver_, non_min_solver_, degeneracy_));
+Ptr<HomographyEstimator> HomographyEstimator::create (const Ptr<MinimalSolver> &min_solver_,
+        const Ptr<NonMinimalSolver> &non_min_solver_, const Ptr<Degeneracy>& degeneracy_) {
+    return makePtr<HomographyEstimatorImpl>(min_solver_, non_min_solver_, degeneracy_);
 }
 
 ///////////////////////////////////////////// ERROR /////////////////////////////////////////
-// Symmetric Reprojected Error
-class ReprojectedErrorSymmetricImpl : public ReprojectedErrorSymmetric {
+// Symmetric Reprojection Error
+class ReprojectedErrorSymmetricImpl : public ReprojectionErrorSymmetric {
 private:
     const double * const points;
     float m11, m12, m13, m21, m22, m23, m31, m32, m33;
@@ -73,7 +65,6 @@ public:
         minv21 = minv[3]; minv22 = minv[4]; minv23 = minv[5];
         minv31 = minv[6]; minv32 = minv[7]; minv33 = minv[8];
     }
-
     inline float getError (int point_idx) const override {
         const int smpl = 4*point_idx;
         const float x1 = points[smpl  ], y1 = points[smpl+1],
@@ -91,13 +82,13 @@ public:
                 (x1 - est_x1) * (x1 - est_x1) + (y1 - est_y1) * (y1 - est_y1)) / 2;
     }
 };
-Ptr<ReprojectedErrorSymmetric>
-ReprojectedErrorSymmetric::create(const Mat &points) {
+Ptr<ReprojectionErrorSymmetric>
+ReprojectionErrorSymmetric::create(const Mat &points) {
     return makePtr<ReprojectedErrorSymmetricImpl>(points);
 }
 
-// Forward Reprojected Error
-class ReprojectedErrorForwardImpl : public ReprojectedErrorForward {
+// Forward Reprojection Error
+class ReprojectedErrorForwardImpl : public ReprojectionErrorForward {
 private:
     const double * const points;
     float m11, m12, m13, m21, m22, m23, m31, m32, m33;
@@ -111,7 +102,6 @@ public:
         m21 = m[3]; m22 = m[4]; m23 = m[5];
         m31 = m[6]; m32 = m[7]; m33 = m[8];
     }
-
     inline float getError (int point_idx) const override {
         const int smpl = 4*point_idx;
         const float x1 = points[smpl  ], y1 = points[smpl+1],
@@ -124,8 +114,8 @@ public:
         return (x2 - est_x2) * (x2 - est_x2) + (y2 - est_y2) * (y2 - est_y2);
     }
 };
-Ptr<ReprojectedErrorForward>
-ReprojectedErrorForward::create(const Mat &points) {
+Ptr<ReprojectionErrorForward>
+ReprojectionErrorForward::create(const Mat &points) {
     return makePtr<ReprojectedErrorForwardImpl>(points);
 }
 
@@ -136,9 +126,7 @@ private:
 public:
     explicit NormTransformImpl (const Mat &points_) : points((double*)points_.data) {}
 
-    /*
-     * Compute normalized points and transformation matrices.
-     */
+    // Compute normalized points and transformation matrices.
     void getNormTransformation (Mat& norm_points, const std::vector<int>& sample,
                                 int sample_size, Mat &T1, Mat &T2) const override {
         double mean_pts1_x = 0, mean_pts1_y = 0, mean_pts2_x = 0, mean_pts2_y = 0;
@@ -201,7 +189,6 @@ public:
             smpl = 4 * sample[i];
             (*norm_points_ptr++) = avg_dist1 * points[smpl    ] + transl_x1; // Norm_img1_xi
             (*norm_points_ptr++) = avg_dist1 * points[smpl + 1] + transl_y1; // Norm_img1_yi
-
             (*norm_points_ptr++) = avg_dist2 * points[smpl + 2] + transl_x2; // Norm_img2_xi
             (*norm_points_ptr++) = avg_dist2 * points[smpl + 3] + transl_y2; // Norm_img2_yi
         }

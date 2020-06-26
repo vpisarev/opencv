@@ -184,12 +184,9 @@ Ptr<MsacQuality> MsacQuality::create(int points_size_, double threshold_,
 ///////////////////////////////////// MODEL VERIFIER /////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////
 
-/*
-* Matas, Jiri, and Ondrej Chum. "Randomized RANSAC with sequential probability ratio test."
-* Tenth IEEE International Conference on Computer Vision (ICCV'05) Volume 1. Vol. 2. IEEE, 2005.
-*/
+///////////////////////////////////// SPRT VERIFIER MSAC //////////////////////////////////////////
 class SPRTImpl : public SPRT {
-public:
+private:
     double current_epsilon, current_delta, current_A, delta_to_epsilon, complement_delta_to_complement_epsilon;
     // time t_M needed to instantiate a model hypothesis given a sample
     // Let m_S be the number of models that are verified per sample
@@ -199,13 +196,19 @@ public:
     int sample_size, current_sprt_idx; // i
     std::vector<SPRT_history> sprt_histories;
     std::vector<int> points_random_pool;
+
+    const Ptr<Error> &err;
+    const double inlier_threshold;
+    Score score;
+    bool last_model_is_good;
+    const int score_type; // 1 is MSAC, 0 is RANSAC, for everything else score is not computed.
+    RNG &rng;
 public:
-
-    SPRTImpl (RNG &rng, int points_size_, int sample_size_, double prob_pt_of_good_model,
-              double prob_pt_of_bad_model, double time_sample, double avg_num_models)
-            : t_M (time_sample), m_S (avg_num_models), prob_pt_good_m (prob_pt_of_good_model),
-              prob_pt_bad_m(prob_pt_of_bad_model) {
-
+    explicit SPRTImpl (RNG &rng_, const Ptr<Error>&err_, int points_size_, int sample_size_,
+         double inlier_threshold_, double prob_pt_of_good_model, double prob_pt_of_bad_model,
+         double time_sample, double avg_num_models, int score_type_) : rng(rng_), t_M (time_sample),
+         m_S (avg_num_models), prob_pt_good_m (prob_pt_of_good_model), prob_pt_bad_m(prob_pt_of_bad_model),
+         err(err_), inlier_threshold (inlier_threshold_), score_type (score_type_) {
         sample_size = sample_size_;
         points_size = points_size_;
 
@@ -245,23 +248,111 @@ public:
      * Return: true if model is good, false - otherwise.
      */
 
-    /*
-     * Return constant reference of vector of SPRT histories for SPRT termination.
-     */
+    inline bool isModelGood (const Mat &model) override {
+        // set model in estimator inside model to run isInlier()
+        err->setModelParameters(model);
+
+        double lambda = 1, sum_errors = 0;
+        bool good_model = true;
+        random_pool_idx = rng.uniform(0, points_size);
+
+        int tested_point, tested_inliers = 0;
+        if (score_type == 1)
+            for (tested_point = 0; tested_point < points_size; tested_point++) {
+                if (random_pool_idx >= points_size)
+                    random_pool_idx = 0;
+                double error = err->getError (points_random_pool[random_pool_idx++]);
+                if (error < inlier_threshold) {
+                    sum_errors += error;
+                    tested_inliers++;
+                    lambda *= delta_to_epsilon;
+                } else
+                    lambda *= complement_delta_to_complement_epsilon;
+                if (lambda > current_A) {
+                    good_model = false;
+                    tested_point++;
+                    break;
+                }
+            }
+        else
+            for (tested_point = 0; tested_point < points_size; tested_point++) {
+                // reset pool index if it overflows
+                if (random_pool_idx >= points_size)
+                    random_pool_idx = 0;
+                if (err->getError (points_random_pool[random_pool_idx++]) < inlier_threshold) {
+                    tested_inliers++;
+                    lambda *= delta_to_epsilon;
+                } else
+                    lambda *= complement_delta_to_complement_epsilon;
+                if (lambda > current_A) {
+                    good_model = false;
+                    tested_point++;
+                    break;
+                }
+            }
+
+        // increase number of samples processed by current test
+        sprt_histories[current_sprt_idx].tested_samples++;
+
+        last_model_is_good = good_model;
+        if (good_model) {
+            score.inlier_number = tested_inliers;
+            if (score_type == 1)
+                score.score = sum_errors + (points_size - tested_inliers) * inlier_threshold;
+            else if (score_type == 0)
+                score.score = -static_cast<double>(tested_inliers);
+
+            if (tested_inliers > highest_inlier_number) {
+                highest_inlier_number = tested_inliers; // update max inlier number
+                /*
+                 * Model accepted and the largest support so far:
+                 * design (i+1)-th test (εi + 1= εˆ, δi+1 = δ, i := i + 1).
+                 * Store the current model parameters θ
+                 */
+                createTest(static_cast<double>(tested_inliers)
+                         / points_size, current_delta);
+            }
+        } else {
+            /*
+             * Since almost all tested models are ‘bad’, the probability
+             * δ can be estimated as the average fraction of consistent data points
+             * in rejected models.
+             */
+            double delta_estimated = static_cast<double> (tested_inliers) / tested_point;
+            if (delta_estimated > 0 && fabs(current_delta - delta_estimated)
+                                       / current_delta > 0.05) {
+                /*
+                 * Model rejected: re-estimate δ. If the estimate δ_ differs
+                 * from δi by more than 5% design (i+1)-th test (εi+1 = εi,
+                 * δi+1 = δˆ, i := i + 1)
+                 */
+                createTest(current_epsilon, delta_estimated);
+            }
+        }
+        return good_model;
+    }
+
     const std::vector<SPRT_history> &getSPRTvector () const override {
         return sprt_histories;
     }
+
+    inline bool getScore (Score &score_) const override {
+        if (!last_model_is_good) return false;
+        if (score_type != 0 || score_type != 1)
+            return false;
+        score_ = score;
+        return true;
+    }
+
     void reset () override {
         sprt_histories.clear();
         sprt_histories.reserve(20);
         createTest(prob_pt_good_m, prob_pt_bad_m);
         highest_inlier_number = 0;
     }
-public:
+private:
 
-    /*
-     * Saves sprt test to sprt history and update current epsilon, delta and threshold.
-     */
+    // Saves sprt test to sprt history and update current epsilon, delta and threshold.
     void createTest (double epsilon, double delta) {
         // if epsilon is closed to 1 then set them to 0.99 to avoid numerical problems
         if (epsilon > 0.999999) epsilon = 0.99;
@@ -314,196 +405,11 @@ public:
         return An;
     }
 };
-
-///////////////////////////////// SPRT VERIFIER UNIVERSAL /////////////////////////////////////////
-class SPRTverifierImpl : public SPRTverifier {
-private:
-    SPRTImpl sprt;
-    const Ptr<Quality> &quality;
-    RNG &rng;
-public:
-
-    SPRTverifierImpl (RNG &rng_, const Ptr<Quality> &quality_, int points_size_, int sample_size_,
-          double prob_pt_of_good_model, double prob_pt_of_bad_model, double time_sample,
-          double avg_num_models) : rng(rng_), sprt (rng, points_size_, sample_size_, prob_pt_of_good_model,
-          prob_pt_of_bad_model, time_sample, avg_num_models), quality(quality_) {}
-
-    inline bool isModelGood (const Mat &model) override {
-        // set model in estimator inside model to run isInlier()
-        quality->setModel(model);
-
-        double lambda = 1;
-        bool good_model = true;
-        sprt.random_pool_idx = rng.uniform(0, sprt.points_size);
-
-        int tested_point, tested_inliers = 0;
-        for (tested_point = 0; tested_point < sprt.points_size; tested_point++) {
-
-            // reset pool index if it overflows
-            if (sprt.random_pool_idx >= sprt.points_size)
-                sprt.random_pool_idx = 0;
-
-            if (quality->isInlier(sprt.points_random_pool[sprt.random_pool_idx++])) {
-                tested_inliers++;
-                lambda *= sprt.delta_to_epsilon;
-            } else {
-                lambda *= sprt.complement_delta_to_complement_epsilon;
-            }
-
-            if (lambda > sprt.current_A) {
-                good_model = false;
-                tested_point++;
-                break;
-            }
-        }
-
-        // increase number of samples processed by current test
-        sprt.sprt_histories[sprt.current_sprt_idx].tested_samples++;
-
-        if (good_model) {
-            if (tested_inliers > sprt.highest_inlier_number) {
-                sprt.highest_inlier_number = tested_inliers; // update max inlier number
-                /*
-                 * Model accepted and the largest support so far:
-                 * design (i+1)-th test (εi + 1= εˆ, δi+1 = δ, i := i + 1).
-                 * Store the current model parameters θ
-                 */
-                sprt.createTest(static_cast<double>(tested_inliers) / sprt.points_size, sprt.current_delta);
-            }
-        } else {
-            /*
-             * Since almost all tested models are ‘bad’, the probability
-             * δ can be estimated as the average fraction of consistent data points
-             * in rejected models.
-             */
-            double delta_estimated = static_cast<double> (tested_inliers) / tested_point;
-
-            if (delta_estimated > 0 && fabs(sprt.current_delta - delta_estimated) / sprt.current_delta > 0.05) {
-                /*
-                * Model rejected: re-estimate δ. If the estimate δ_ differs
-                * from δi by more than 5% design (i+1)-th test (εi+1 = εi,
-                * δi+1 = δˆ, i := i + 1)
-                */
-                sprt.createTest(sprt.current_epsilon, delta_estimated);
-            }
-        }
-        return good_model;
-    }
-
-    const std::vector<SPRT_history> &getSPRTvector () const override {
-        return sprt.getSPRTvector();
-    }
-};
-
-Ptr<SPRTverifier> SPRTverifier::create (RNG &rng, const Ptr<Quality> &quality_, int points_size_,
-        int sample_size_, double prob_pt_of_good_model, double prob_pt_of_bad_model,
-        double time_sample, double avg_num_models) {
-    return Ptr<SPRTverifierImpl> (new SPRTverifierImpl(rng, quality_, points_size_, sample_size_,
-            prob_pt_of_good_model, prob_pt_of_bad_model, time_sample, avg_num_models));
-}
-
-///////////////////////////////////// SPRT VERIFIER MSAC //////////////////////////////////////////
-class SPRTScoreImpl : public SPRTScore {
-private:
-    SPRTImpl sprt;
-    const Ptr<Error> &err;
-    const double inlier_threshold;
-    Score score;
-    bool last_model_is_good;
-    const bool binary_score;
-    RNG &rng;
-public:
-
-    explicit SPRTScoreImpl (RNG &rng_, const Ptr<Error>&err_, int points_size_, int sample_size_,
-         double inlier_threshold_, double prob_pt_of_good_model, double prob_pt_of_bad_model,
-         double time_sample, double avg_num_models, bool bin_score_) : rng(rng_), sprt (rng_, points_size_,
-         sample_size_, prob_pt_of_good_model, prob_pt_of_bad_model, time_sample, avg_num_models),
-         err(err_), inlier_threshold (inlier_threshold_), binary_score (bin_score_) {}
-
-    inline bool isModelGood (const Mat &model) override {
-        // set model in estimator inside model to run isInlier()
-        err->setModelParameters(model);
-
-        double lambda = 1, sum_errors = 0;
-        bool good_model = true;
-        sprt.random_pool_idx = rng.uniform(0, sprt.points_size);
-
-        int tested_point, tested_inliers = 0;
-        if (binary_score)
-            for (tested_point = 0; tested_point < sprt.points_size; tested_point++) {
-                // reset pool index if it overflows
-                if (sprt.random_pool_idx >= sprt.points_size)
-                    sprt.random_pool_idx = 0;
-                if (err->getError (sprt.points_random_pool[sprt.random_pool_idx++]) < inlier_threshold) {
-                    tested_inliers++;
-                    lambda *= sprt.delta_to_epsilon;
-                } else
-                    lambda *= sprt.complement_delta_to_complement_epsilon;
-                if (lambda > sprt.current_A) {
-                    good_model = false;
-                    tested_point++;
-                    break;
-                }
-            }
-        else
-            for (tested_point = 0; tested_point < sprt.points_size; tested_point++) {
-                if (sprt.random_pool_idx >= sprt.points_size)
-                    sprt.random_pool_idx = 0;
-                double error = err->getError (sprt.points_random_pool[sprt.random_pool_idx++]);
-                if (error < inlier_threshold) {
-                    sum_errors += error;
-                    tested_inliers++;
-                    lambda *= sprt.delta_to_epsilon;
-                } else
-                    lambda *= sprt.complement_delta_to_complement_epsilon;
-                if (lambda > sprt.current_A) {
-                    good_model = false;
-                    tested_point++;
-                    break;
-                }
-            }
-
-        // increase number of samples processed by current test
-        sprt.sprt_histories[sprt.current_sprt_idx].tested_samples++;
-
-        last_model_is_good = good_model;
-        if (good_model) {
-            score.inlier_number = tested_inliers;
-            if (binary_score)
-                score.score = -static_cast<double>(tested_inliers);
-            else
-                score.score = sum_errors + (sprt.points_size - tested_inliers) * inlier_threshold;
-
-            if (tested_inliers > sprt.highest_inlier_number) {
-                sprt.highest_inlier_number = tested_inliers; // update max inlier number
-                sprt.createTest(static_cast<double>(tested_inliers)
-                         / sprt.points_size, sprt.current_delta);
-            }
-        } else {
-            double delta_estimated = static_cast<double> (tested_inliers) / tested_point;
-            if (delta_estimated > 0 && fabs(sprt.current_delta - delta_estimated)
-                                       / sprt.current_delta > 0.05) {
-                sprt.createTest(sprt.current_epsilon, delta_estimated);
-            }
-        }
-        return good_model;
-    }
-
-    const std::vector<SPRT_history> &getSPRTvector () const override {
-        return sprt.getSPRTvector();
-    }
-
-    inline bool getScore (Score &score_) const override {
-        if (!last_model_is_good) return false;
-        score_ = score;
-        return true;
-    }
-};
-Ptr<SPRTScore> SPRTScore::create (RNG &rng, const Ptr<Error> &err_, int points_size_, int sample_size_,
+Ptr<SPRT> SPRT::create (RNG &rng, const Ptr<Error> &err_, int points_size_, int sample_size_,
       double inlier_threshold_, double prob_pt_of_good_model, double prob_pt_of_bad_model,
-      double time_sample, double avg_num_models, bool binary_score) {
-    return Ptr<SPRTScoreImpl>(new SPRTScoreImpl (rng, err_, points_size_, sample_size_,
+      double time_sample, double avg_num_models, int score_type_) {
+    return Ptr<SPRTImpl>(new SPRTImpl (rng, err_, points_size_, sample_size_,
     inlier_threshold_, prob_pt_of_good_model, prob_pt_of_bad_model, time_sample, avg_num_models,
-    binary_score));
+                                                       score_type_));
 }
 }}
