@@ -93,41 +93,17 @@ public:
      * Check if sample causes degenerate configurations.
      * For example, test if points are collinear.
      */
-    inline virtual bool isSampleGood (const std::vector<int> &sample) const {
-        return true;
-    }
+    virtual bool isSampleGood (const std::vector<int> &sample) const = 0;
     /*
      * Check if model satisfies constraints.
      * For example, test if epipolar geometry satisfies oriented constraint.
      */
-    inline virtual bool isModelValid (const Mat &model, const std::vector<int> &sample) const {
-        return true;
-    }
-    /*
-     * Check if model is degenerate.
-     * Firstly test if sample is degenerate. Then check model itself.
-     * For example, for fundamental matrix estimation checks if no more than 5 points lie on the dominant plane
-     * and then check if model satisfies oriented constraint.
-     * This method could be combination of two previous functions, although is more general.
-     */
-    virtual bool isModelDegenerate (const Mat &model, const std::vector<int> &sample) const {
-        return false;
-    }
-    /*
-     * Check if model satisfies rank constraint. For example, homography matrix must have rank 3; fundamental or
-     * essential matrix must have rank 2.
-     */
-    virtual bool satisfyRankConstraint (const Mat &model) const {
-        return true;
-    }
+    virtual bool isModelValid (const Mat &model, const std::vector<int> &sample) const = 0;
     /*
      * Recover rank constraint.
      * Primarily for epipolar geometry estimation. If matrix is of rank 3 then do SVD to get rank 2.
-     * Return: true if recovered successfully, false - otherwise.
      */
-    virtual bool recoverRank (Mat &model) const {
-        return true;
-    }
+    virtual void recoverRank (Mat &model) const = 0;
     /*
      * Fix degenerate model.
      * For example, for Fundamental matrix estimation.
@@ -135,9 +111,7 @@ public:
      * -1 model is degenerate failed to recover:
      * Otherwise: return number of recovered models. If output number is 0 then model is not degenerate.
      */
-    virtual int recoverIfDegenerate (const std::vector<int> &sample, const Mat &best_model) {
-        return 0;
-    }
+    virtual int recoverIfDegenerate (const std::vector<int> &sample, const Mat &best_model) = 0;
     virtual const std::vector<Mat> &getRecoveredModels() const {
         return recovered_models;
     }
@@ -148,8 +122,10 @@ public:
     virtual int getMaximumNumberOfRecoveredModels () const {
         return 0;
     }
-};
 
+    static Ptr<Degeneracy> create();
+};
+   
 class HomographyDegeneracy : public Degeneracy {
 public:
     static Ptr<HomographyDegeneracy> create(const Mat &points_, int sample_size_);
@@ -445,9 +421,7 @@ public:
      * Return true if polishing was successful, false - otherwise.
      */
     virtual bool polishSoFarTheBestModel (const Mat &model, const Score &best_model_score,
-            Mat &new_model, Score &new_model_score) {
-        return false;
-    }
+            Mat &new_model, Score &new_model_score) = 0;
 };
 
 ///////////////////////////////////// LEAST SQUARES POLISHER //////////////////////////////////////

@@ -26,7 +26,7 @@ public:
 
     InnerLocalOptimizationImpl (const Ptr<Estimator> &estimator_,
             const Ptr<Quality> &quality_, const Ptr<Sampler> &lo_sampler_,
-            const Ptr<Degeneracy> & degeneracy_, int points_size, int lo_inner_iterations_)
+            const Ptr<Degeneracy> &degeneracy_, int points_size, int lo_inner_iterations_)
             : estimator (estimator_), quality (quality_), lo_sampler (lo_sampler_),
             degeneracy (degeneracy_){
 
@@ -112,8 +112,8 @@ Ptr<InnerLocalOptimization> InnerLocalOptimization::create
 /////////////////////////////////////////// FINAL MODEL POLISHER ////////////////////////
 class LeastSquaresPolishingImpl : public LeastSquaresPolishing {
 private:
-    const Ptr<Quality> &quality;
     const Ptr<Estimator> &estimator;
+    const Ptr<Quality> &quality;
     const Ptr<Degeneracy> &degeneracy;
     Score score;
     std::vector<int> inliers;

@@ -10,9 +10,8 @@ namespace cv { namespace usac {
 class StandardTerminationCriteriaImpl : public StandardTerminationCriteria {
 private:
     const double log_confidence;
-    const int MAX_ITERATIONS, MAX_TIME_MCS, points_size;
+    const int points_size, sample_size, MAX_ITERATIONS, MAX_TIME_MCS;
     int predicted_iterations;
-    const int sample_size;
 
     const bool is_time_limit;
     std::chrono::steady_clock::time_point begin_time;
@@ -21,8 +20,8 @@ public:
             int sample_size_, int max_iterations_, bool is_time_limit_,
             int max_time_mcs_) :
             log_confidence(log(1 - confidence)), points_size (points_size_),
-            sample_size (sample_size_), is_time_limit(is_time_limit_),
-            MAX_ITERATIONS(max_iterations_), MAX_TIME_MCS(max_time_mcs_) {
+            sample_size (sample_size_), MAX_ITERATIONS(max_iterations_),
+            MAX_TIME_MCS(max_time_mcs_), is_time_limit(is_time_limit_) {
         predicted_iterations = max_iterations_;
     }
 

@@ -34,7 +34,8 @@ public:
         model = model_.clone();
 
         inliers.reserve(number_inliers_);
-        for (int i = 0; i < inliers_mask_.size(); i++)
+        const int num_pts = inliers_mask_.size();
+        for (int i = 0; i < num_pts; i++)
             if (inliers_mask_[i])
                 inliers.emplace_back(i);
         inliers_mask = inliers_mask_;
@@ -109,8 +110,9 @@ public:
             LocalOptimization * const local_optimization_, FinalModelPolisher &model_polisher_) :
 
             params (params_), estimator (estimator_), quality (quality_), sampler (sampler_),
-            termination_criteria (termination_criteria_), local_optimization (local_optimization_),
-            model_verifier (model_verifier_), degeneracy (degeneracy_), model_polisher (model_polisher_) {
+            termination_criteria (termination_criteria_), model_verifier (model_verifier_), 
+            degeneracy (degeneracy_), local_optimization (local_optimization_),
+            model_polisher (model_polisher_) {
         points_size = points_size_;
 
         // do some asserts
@@ -226,14 +228,9 @@ public:
                         break;
 
                     if (LO && !is_magsac) {
-#if DEBUG
-                        std::cout << "run Local optimization\n";
-#endif
                         // update model by Local optimizaion
                         Mat lo_model;
-//                        std::cout << "best score " << best_score.inlier_number << "\n";
                         if (local_optimization->refineModel(best_model, best_score, lo_model, lo_score)) {
-//                            std::cout << "lo score " << lo_score.inlier_number << "\n";
                             if (lo_score.better(best_score)) {
                                 best_score = lo_score;
                                 lo_model.copyTo(best_model);
@@ -269,7 +266,7 @@ public:
         if (params.getTrace() >= 1) {
             // get final inliers from the best model
             std::vector<bool> inliers_mask (points_size);
-            int n_inliers = quality.getInliers(best_model, inliers_mask);
+            quality.getInliers(best_model, inliers_mask);
 
             // Store results
             ransac_output = RansacOutput::create(best_model, inliers_mask,
@@ -457,10 +454,10 @@ public:
             } else if (sample_size == 6) { // E six points
                 avg_num_models = 5;
             }
-        } else if (estimator_ = EstimationMethod::P3P) {
+        } else if (estimator_ == EstimationMethod::P3P) {
             avg_num_models = 2;
             time_for_model_est = 300;
-        } else if (estimator_ = EstimationMethod::P6P) {
+        } else if (estimator_ == EstimationMethod::P6P) {
             avg_num_models = 1;
             time_for_model_est = 250;
         }

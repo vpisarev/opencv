@@ -6,26 +6,41 @@
 #include "../usac.hpp"
 
 namespace cv { namespace usac {
+class DegeneracyImpl : public Degeneracy {
+public:
+    inline bool isSampleGood (const std::vector<int> &sample) const override {
+        return true;
+    }
+    inline bool isModelValid (const Mat &model, const std::vector<int> &sample) const override {
+        return true;
+    }
+    void recoverRank (Mat &model) const override {}
+    int recoverIfDegenerate (const std::vector<int> &sample, const Mat &best_model) override {
+        return 0;
+    }
+};
+Ptr<Degeneracy> Degeneracy::create() {
+    return makePtr<DegeneracyImpl>();
+}
+
 class HomographyDegeneracyImpl : public HomographyDegeneracy {
 private:
-    const Mat &points_mat;
     const double * const points;
     const int sample_size;
 public:
     explicit HomographyDegeneracyImpl (const Mat &points_, int sample_size_) :
-            points ((double *)points_.data), points_mat(points_), sample_size (sample_size_) {}
+            points ((double *)points_.data), sample_size (sample_size_) {}
 
     inline bool isSampleGood (const std::vector<int>& sample) const override {
         return testSample(sample);
-        // if (!testSample(sample))
-        //    return false;
-        // check if 3 out of sample size points are collinear
-        // return ! Math::haveCollinearPoints(points_mat, sample, sample_size);
     }
-    bool satisfyRankConstraint (const Mat &model) const override {
-        return Math::rank3x3(model) == 3;
+    inline bool isModelValid(const Mat &E, const std::vector<int>& sample) const override {
+        return true;
     }
-
+    void recoverRank (Mat &model) const override {}
+    virtual int recoverIfDegenerate (const std::vector<int> &sample, const Mat &best_model) override {
+        return 0;
+    }
 private:
     inline bool testSample (const std::vector<int>& sample) const {
         const int smpl1 = 4*sample[0], smpl2 = 4*sample[1], smpl3 = 4*sample[2], smpl4 = 4*sample[3];

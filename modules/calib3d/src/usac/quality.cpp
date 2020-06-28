@@ -19,14 +19,14 @@ public:
     }
 
     // use inline
-    Score getScore (const Mat& model, double threshold, bool get_inliers,
+    Score getScore (const Mat& model, double threshold_, bool get_inliers,
             std::vector<int>& inliers) const override {
         error->setModelParameters(model);
         int inlier_number = 0;
 
         if (get_inliers) {
             for (int point = 0; point < points_size; point++) {
-                if (error->getError(point) < threshold)
+                if (error->getError(point) < threshold_)
                     inliers[inlier_number++] = point;
                 // if current number of inliers plus all possible are less than
                 // max number of inliers then break evaluation.
@@ -35,7 +35,7 @@ public:
             }
         } else {
             for (int point = 0; point < points_size; point++) {
-                if (error->getError(point) < threshold)
+                if (error->getError(point) < threshold_)
                     inlier_number++;
                 if (inlier_number + (points_size - point) < -best_score)
                     break;
@@ -98,9 +98,9 @@ Ptr<RansacQuality> RansacQuality::create(int points_size_, double threshold_,
 
 class MsacQualityImpl : public MsacQuality {
 protected:
+    const Ptr<Error> &error;
     const int points_size;
     const double threshold;
-    const Ptr<Error> &error;
     double best_score;
 public:
     MsacQualityImpl (int points_size_, double threshold_, const Ptr<Error> &error_)
@@ -108,7 +108,7 @@ public:
         best_score = std::numeric_limits<double>::max();
     }
 
-    inline Score getScore (const Mat& model, double threshold, bool get_inliers,
+    inline Score getScore (const Mat& model, double threshold_, bool get_inliers,
             std::vector<int>& inliers) const override {
         error->setModelParameters(model);
 
@@ -116,13 +116,13 @@ public:
         int inlier_number = 0;
         for (int point = 0; point < points_size; point++) {
             err = error->getError(point);
-            if (err < threshold) {
+            if (err < threshold_) {
                 if (get_inliers)
                     inliers[inlier_number] = point;
                 sum_errors += err;
                 inlier_number++;
             } else
-                sum_errors += threshold;
+                sum_errors += threshold_;
 
             if (sum_errors > best_score)
                 break;
@@ -187,30 +187,31 @@ Ptr<MsacQuality> MsacQuality::create(int points_size_, double threshold_,
 ///////////////////////////////////// SPRT VERIFIER MSAC //////////////////////////////////////////
 class SPRTImpl : public SPRT {
 private:
+    RNG &rng;
+    const Ptr<Error> &err;
+    const int points_size, sample_size; 
+    const double inlier_threshold, prob_pt_good_m, prob_pt_bad_m, t_M, m_S;
+
+    // score_type: 1 is MSAC, 0 is RANSAC, for everything else score is not computed.
+    const int score_type;
+
     double current_epsilon, current_delta, current_A, delta_to_epsilon, complement_delta_to_complement_epsilon;
     // time t_M needed to instantiate a model hypothesis given a sample
     // Let m_S be the number of models that are verified per sample
-    const double t_M, m_S, prob_pt_good_m, prob_pt_bad_m;
 
-    int points_size, random_pool_idx, highest_inlier_number;
-    int sample_size, current_sprt_idx; // i
+    int random_pool_idx, highest_inlier_number, current_sprt_idx; // i
     std::vector<SPRT_history> sprt_histories;
     std::vector<int> points_random_pool;
 
-    const Ptr<Error> &err;
-    const double inlier_threshold;
     Score score;
     bool last_model_is_good;
-    const int score_type; // 1 is MSAC, 0 is RANSAC, for everything else score is not computed.
-    RNG &rng;
 public:
     explicit SPRTImpl (RNG &rng_, const Ptr<Error>&err_, int points_size_, int sample_size_,
-         double inlier_threshold_, double prob_pt_of_good_model, double prob_pt_of_bad_model,
-         double time_sample, double avg_num_models, int score_type_) : rng(rng_), t_M (time_sample),
-         m_S (avg_num_models), prob_pt_good_m (prob_pt_of_good_model), prob_pt_bad_m(prob_pt_of_bad_model),
-         err(err_), inlier_threshold (inlier_threshold_), score_type (score_type_) {
-        sample_size = sample_size_;
-        points_size = points_size_;
+        double inlier_threshold_, double prob_pt_of_good_model, double prob_pt_of_bad_model,
+        double time_sample, double avg_num_models, int score_type_) : rng(rng_), err(err_),
+        points_size(points_size_), sample_size(sample_size_), inlier_threshold (inlier_threshold_),
+        prob_pt_good_m (prob_pt_of_good_model), prob_pt_bad_m(prob_pt_of_bad_model), 
+        t_M (time_sample), m_S (avg_num_models), score_type (score_type_) {
 
         // Generate array of random points for randomized evaluation
         points_random_pool = std::vector<int> (points_size_);
