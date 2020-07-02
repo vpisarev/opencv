@@ -62,7 +62,6 @@ public:
     // get inliers for given threshold
     int getInliers (const Mat& model, std::vector<int>& inliers, double thr) const override {
         error->setModelParameters(model);
-
         int num_inliers = 0;
         for (int point = 0; point < points_size; point++)
             if (error->getError(point) < thr)
@@ -89,6 +88,9 @@ public:
 
     inline bool isInlier (int point_idx) const override
     { return error->getError (point_idx) < threshold; }
+    Ptr<Quality> clone () const override {
+        return makePtr<RansacQualityImpl>(*this);
+    }
 };
 
 Ptr<RansacQuality> RansacQuality::create(int points_size_, double threshold_,
@@ -146,7 +148,6 @@ public:
     // get inliers for given threshold
     int getInliers (const Mat& model, std::vector<int>& inliers, double thr) const override {
         error->setModelParameters(model);
-
         int num_inliers = 0;
         for (int point = 0; point < points_size; point++)
             if (error->getError(point) < thr)
@@ -158,9 +159,11 @@ public:
         std::fill(inliers_mask.begin(), inliers_mask.end(), 0);
         error->setModelParameters(model);
         int num_inliers = 0;
+//        std::cout << "model " << model << "\n";
         for (int point = 0; point < points_size; point++) {
             const auto err = error->getError(point);
             if (err < threshold) {
+//                std::cout << point << " " << err << "\n";
                 inliers_mask[point] = true;
                 num_inliers++;
             }
@@ -173,6 +176,9 @@ public:
 
     inline bool isInlier (int point_idx) const override
     { return error->getError (point_idx) < threshold; }
+    Ptr<Quality> clone () const override {
+        return makePtr<MsacQualityImpl>(*this);
+    }
 };
 
 Ptr<MsacQuality> MsacQuality::create(int points_size_, double threshold_,
@@ -180,16 +186,12 @@ Ptr<MsacQuality> MsacQuality::create(int points_size_, double threshold_,
     return Ptr<MsacQualityImpl>(new MsacQualityImpl(points_size_, threshold_, error_));
 }
 
-//////////////////////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////// MODEL VERIFIER /////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////////
-
 ///////////////////////////////////// SPRT VERIFIER MSAC //////////////////////////////////////////
 class SPRTImpl : public SPRT {
 private:
     RNG &rng;
     const Ptr<Error> &err;
-    const int points_size, sample_size; 
+    const int points_size, sample_size;
     const double inlier_threshold, prob_pt_good_m, prob_pt_bad_m, t_M, m_S;
 
     // score_type: 1 is MSAC, 0 is RANSAC, for everything else score is not computed.
@@ -205,12 +207,13 @@ private:
 
     Score score;
     bool last_model_is_good;
+    double lowest_sum_errors;
 public:
     explicit SPRTImpl (RNG &rng_, const Ptr<Error>&err_, int points_size_, int sample_size_,
         double inlier_threshold_, double prob_pt_of_good_model, double prob_pt_of_bad_model,
         double time_sample, double avg_num_models, int score_type_) : rng(rng_), err(err_),
         points_size(points_size_), sample_size(sample_size_), inlier_threshold (inlier_threshold_),
-        prob_pt_good_m (prob_pt_of_good_model), prob_pt_bad_m(prob_pt_of_bad_model), 
+        prob_pt_good_m (prob_pt_of_good_model), prob_pt_bad_m(prob_pt_of_bad_model),
         t_M (time_sample), m_S (avg_num_models), score_type (score_type_) {
 
         // Generate array of random points for randomized evaluation
@@ -226,6 +229,8 @@ public:
         createTest(prob_pt_of_good_model, prob_pt_of_bad_model);
 
         highest_inlier_number = 0;
+        lowest_sum_errors = std::numeric_limits<double>::max();
+        last_model_is_good = false;
     }
 
     /*
@@ -241,16 +246,14 @@ public:
      * 4.  If j = N the number of correspondences decide model ”accepted”
      *
      * Verifies model and returns model score.
-     */
-    /*
+
      * Returns true if model is good, false - otherwise.
      * @model: model to verify
      * @current_hypothesis: current RANSAC iteration
      * Return: true if model is good, false - otherwise.
      */
-
     inline bool isModelGood (const Mat &model) override {
-        // set model in estimator inside model to run isInlier()
+        // update error object with current model
         err->setModelParameters(model);
 
         double lambda = 1, sum_errors = 0;
@@ -267,9 +270,11 @@ public:
                     sum_errors += error;
                     tested_inliers++;
                     lambda *= delta_to_epsilon;
-                } else
+                } else {
+                    sum_errors += inlier_threshold;
                     lambda *= complement_delta_to_complement_epsilon;
-                if (lambda > current_A) {
+                }
+                if (lambda > current_A || sum_errors > lowest_sum_errors /* no case it would be better */) {
                     good_model = false;
                     tested_point++;
                     break;
@@ -285,7 +290,7 @@ public:
                     lambda *= delta_to_epsilon;
                 } else
                     lambda *= complement_delta_to_complement_epsilon;
-                if (lambda > current_A) {
+                if (lambda > current_A || (tested_inliers + (points_size - tested_point)) < highest_inlier_number) {
                     good_model = false;
                     tested_point++;
                     break;
@@ -298,9 +303,10 @@ public:
         last_model_is_good = good_model;
         if (good_model) {
             score.inlier_number = tested_inliers;
-            if (score_type == 1)
-                score.score = sum_errors + (points_size - tested_inliers) * inlier_threshold;
-            else if (score_type == 0)
+            if (score_type == 1) {
+                score.score = sum_errors;
+                lowest_sum_errors = sum_errors;
+            } else if (score_type == 0)
                 score.score = -static_cast<double>(tested_inliers);
 
             if (tested_inliers > highest_inlier_number) {
@@ -321,14 +327,13 @@ public:
              */
             double delta_estimated = static_cast<double> (tested_inliers) / tested_point;
             if (delta_estimated > 0 && fabs(current_delta - delta_estimated)
-                                       / current_delta > 0.05) {
+                                       / current_delta > 0.05)
                 /*
                  * Model rejected: re-estimate δ. If the estimate δ_ differs
                  * from δi by more than 5% design (i+1)-th test (εi+1 = εi,
                  * δi+1 = δˆ, i := i + 1)
                  */
                 createTest(current_epsilon, delta_estimated);
-            }
         }
         return good_model;
     }
@@ -344,12 +349,8 @@ public:
         score_ = score;
         return true;
     }
-
-    void reset () override {
-        sprt_histories.clear();
-        sprt_histories.reserve(20);
-        createTest(prob_pt_good_m, prob_pt_bad_m);
-        highest_inlier_number = 0;
+    Ptr<ModelVerifier> clone () const override {
+        return makePtr<SPRTImpl>(*this);
     }
 private:
 
@@ -365,7 +366,7 @@ private:
         new_sprt_history.delta = delta;
         new_sprt_history.A = estimateThresholdA (epsilon, delta);
 
-        sprt_histories.push_back(new_sprt_history);
+        sprt_histories.emplace_back(new_sprt_history);
 
         current_A = new_sprt_history.A;
         current_delta = delta;

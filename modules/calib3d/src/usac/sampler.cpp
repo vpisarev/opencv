@@ -6,7 +6,6 @@
 #include "../usac.hpp"
 
 namespace cv { namespace usac {
-
 /*
 * Uniform Sampler:
 * Choose uniformly m (sample size) points from N (points size).
@@ -20,7 +19,6 @@ private:
 public:
 
     UniformSamplerImpl (RNG &rng_, int sample_size_, int points_size_) : rng(rng_) {
-        assert(sample_size_ <= points_size_);
         sample_size = sample_size_;
         setNewPointsSize (points_size_);
     }
@@ -43,16 +41,13 @@ public:
         random_pool_size = points_size; // random points of entire range
         for (int i = 0; i < sample_size; i++) {
             // get random point index
-            int array_random_index = rng.uniform(0, random_pool_size);
+            const int array_random_index = rng.uniform(0, random_pool_size);
             // get point by random index
-            int random_point = points_random_pool[array_random_index];
-            // swap random point with the end of random pool
-            random_pool_size--;
-            points_random_pool[array_random_index] = points_random_pool[random_pool_size];
-            points_random_pool[random_pool_size] = random_point;
-
             // store sample
-            sample[i] = random_point;
+            sample[i] = points_random_pool[array_random_index];
+            // swap random point with the end of random pool
+            std::swap(points_random_pool[array_random_index],
+                      points_random_pool[--random_pool_size]);
         }
     }
 
@@ -76,8 +71,6 @@ public:
 
     int getSampleSize () const override
     { return sample_size; }
-
-    void reset () override {}
 };
 
 Ptr<UniformSampler> UniformSampler::create(RNG &rng, int sample_size_, int points_size_) {

@@ -17,8 +17,8 @@ private:
     std::chrono::steady_clock::time_point begin_time;
 public:
     StandardTerminationCriteriaImpl (double confidence, int points_size_,
-            int sample_size_, int max_iterations_, bool is_time_limit_,
-            int max_time_mcs_) :
+                                     int sample_size_, int max_iterations_, bool is_time_limit_,
+                                     int max_time_mcs_) :
             log_confidence(log(1 - confidence)), points_size (points_size_),
             sample_size (sample_size_), MAX_ITERATIONS(max_iterations_),
             MAX_TIME_MCS(max_time_mcs_), is_time_limit(is_time_limit_) {
@@ -37,6 +37,7 @@ public:
      * 1 - p = (1-w^n)^k is probability that in K steps of getting at least one outlier is 1% (5%).
      */
     void update (const Mat &model, int inlier_number) override {
+        UNUSED_VAR(model);
         const double predicted_iters = log_confidence / log(1 - std::pow
             (static_cast<double>(inlier_number) / points_size, sample_size));
 
@@ -68,9 +69,6 @@ public:
     }
     inline int getPredictedNumberIterations () const override {
         return predicted_iterations;
-    }
-    void reset () override {
-        predicted_iterations = MAX_ITERATIONS;
     }
 };
 

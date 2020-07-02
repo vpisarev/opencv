@@ -6,23 +6,6 @@
 #include "../usac.hpp"
 
 namespace cv { namespace usac {
-class DegeneracyImpl : public Degeneracy {
-public:
-    inline bool isSampleGood (const std::vector<int> &sample) const override {
-        return true;
-    }
-    inline bool isModelValid (const Mat &model, const std::vector<int> &sample) const override {
-        return true;
-    }
-    void recoverRank (Mat &model) const override {}
-    int recoverIfDegenerate (const std::vector<int> &sample, const Mat &best_model) override {
-        return 0;
-    }
-};
-Ptr<Degeneracy> Degeneracy::create() {
-    return makePtr<DegeneracyImpl>();
-}
-
 class HomographyDegeneracyImpl : public HomographyDegeneracy {
 private:
     const double * const points;
@@ -32,17 +15,6 @@ public:
             points ((double *)points_.data), sample_size (sample_size_) {}
 
     inline bool isSampleGood (const std::vector<int>& sample) const override {
-        return testSample(sample);
-    }
-    inline bool isModelValid(const Mat &E, const std::vector<int>& sample) const override {
-        return true;
-    }
-    void recoverRank (Mat &model) const override {}
-    virtual int recoverIfDegenerate (const std::vector<int> &sample, const Mat &best_model) override {
-        return 0;
-    }
-private:
-    inline bool testSample (const std::vector<int>& sample) const {
         const int smpl1 = 4*sample[0], smpl2 = 4*sample[1], smpl3 = 4*sample[2], smpl4 = 4*sample[3];
         const float x1 = points[smpl1], y1 = points[smpl1+1], X1 = points[smpl1+2], Y1 = points[smpl1+3];
         const float x2 = points[smpl2], y2 = points[smpl2+1], X2 = points[smpl2+2], Y2 = points[smpl2+3];
@@ -71,6 +43,10 @@ private:
             (CD_cross_x * X2 + CD_cross_y * Y2 + CD_cross_z) < 0)
             return false;
         return true;
+    }
+
+    Ptr<Degeneracy> clone() const override {
+        return makePtr<HomographyDegeneracyImpl>(*this);
     }
 };
 

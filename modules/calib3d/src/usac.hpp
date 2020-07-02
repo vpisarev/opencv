@@ -46,7 +46,7 @@ public:
 class MinimalSolver : public Algorithm {
 public:
     // Estimate models from minimal sample. models.size() == number of found solutions
-    virtual int estimate (const std::vector<int> &sample, std::vector<Mat> &models) = 0;
+    virtual int estimate (const std::vector<int> &sample, std::vector<Mat> &models) const = 0;
     // return minimal sample size required for estimation.
     virtual int getSampleSize() const = 0;
     // return maximum number of possible solutions.
@@ -54,11 +54,6 @@ public:
 };
 
 //-------------------------- HOMOGRAPHY MATRIX -----------------------
-class HomographyMinimalSolver4ptsQR : public MinimalSolver {
-public:
-    static Ptr<HomographyMinimalSolver4ptsQR> create(const Mat &points_);
-};
-
 class HomographyMinimalSolver4ptsGEM : public MinimalSolver {
 public:
     static Ptr<HomographyMinimalSolver4ptsGEM> create(const Mat &points_);
@@ -69,7 +64,7 @@ class NonMinimalSolver : public Algorithm {
 public:
     // Estimate models from non minimal sample. models.size() == number of found solutions
     virtual int estimate (const std::vector<int> &sample, int sample_size,
-                          std::vector<Mat> &models, const std::vector<double> &weights) = 0;
+          std::vector<Mat> &models, const std::vector<double> &weights) const = 0;
     // return minimal sample size required for non-minimal estimation.
     virtual int getMinimumRequiredSampleSize() const = 0;
     // return maximum number of possible solutions.
@@ -80,92 +75,6 @@ public:
 class HomographyNonMinimalSolver : public NonMinimalSolver {
 public:
     static Ptr<HomographyNonMinimalSolver> create(const Mat &points_);
-};
-
-//////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////// DEGENERACY //////////////////////////////////
-class Degeneracy : public Algorithm {
-private:
-    std::vector<Mat> recovered_models;
-public:
-    virtual ~Degeneracy() override = default;
-    /*
-     * Check if sample causes degenerate configurations.
-     * For example, test if points are collinear.
-     */
-    virtual bool isSampleGood (const std::vector<int> &sample) const = 0;
-    /*
-     * Check if model satisfies constraints.
-     * For example, test if epipolar geometry satisfies oriented constraint.
-     */
-    virtual bool isModelValid (const Mat &model, const std::vector<int> &sample) const = 0;
-    /*
-     * Recover rank constraint.
-     * Primarily for epipolar geometry estimation. If matrix is of rank 3 then do SVD to get rank 2.
-     */
-    virtual void recoverRank (Mat &model) const = 0;
-    /*
-     * Fix degenerate model.
-     * For example, for Fundamental matrix estimation.
-     * Return:
-     * -1 model is degenerate failed to recover:
-     * Otherwise: return number of recovered models. If output number is 0 then model is not degenerate.
-     */
-    virtual int recoverIfDegenerate (const std::vector<int> &sample, const Mat &best_model) = 0;
-    virtual const std::vector<Mat> &getRecoveredModels() const {
-        return recovered_models;
-    }
-    /*
-     * Get maximum number of possible recovered models.
-     * For example, for Fundamental matrix maximum 5 non-degenerate models could be computed.
-     */
-    virtual int getMaximumNumberOfRecoveredModels () const {
-        return 0;
-    }
-
-    static Ptr<Degeneracy> create();
-};
-   
-class HomographyDegeneracy : public Degeneracy {
-public:
-    static Ptr<HomographyDegeneracy> create(const Mat &points_, int sample_size_);
-};
-
-/////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////// ESTIMATOR //////////////////////////////////
-class Estimator : public Algorithm{
-public:
-    /*
-     * Estimate models with minimal solver.
-     * Return number of valid solutions after estimation.
-     * Return models accordingly to number of solutions.
-     * Note, vector of models must allocated before.
-     * Note, not all degenerate tests are included in estimation.
-     */
-    virtual int
-    estimateModels (const std::vector<int> &sample, std::vector<Mat> &models) const = 0;
-    /*
-     * Estimate model with non-minimal solver.
-     * Return number of valid solutions after estimation.
-     * Note, not all degenerate tests are included in estimation.
-     */
-    virtual int
-    estimateModelNonMinimalSample (const std::vector<int> &sample, int sample_size,
-                       std::vector<Mat> &models, const std::vector<double> &weights) const = 0;
-    // return minimal sample size required for minimal estimation.
-    virtual int getMinimalSampleSize () const = 0;
-    // return minimal sample size required for non-minimal estimation.
-    virtual int getNonMinimalSampleSize () const = 0;
-    // return maximum number of possible solutions of minimal estimation.
-    virtual int getMaxNumSolutions () const = 0;
-    // return maximum number of possible solutions of non-minimal estimation.
-    virtual int getMaxNumSolutionsNonMinimal () const = 0;
-};
-
-class HomographyEstimator : public Estimator {
-public:
-    static Ptr<HomographyEstimator> create (const Ptr<MinimalSolver> &min_solver_,
-            const Ptr<NonMinimalSolver> &non_min_solver_, const Ptr<Degeneracy> &degeneracy_);
 };
 
 //////////////////////////////////////////////////////////////////////////////////////////////
@@ -201,7 +110,7 @@ public:
      * Note, @inliers must be of size of number of points.
      */
     virtual Score getScore (const Mat &model, double threshold, bool get_inliers,
-            std::vector<int> &inliers) const = 0;
+                            std::vector<int> &inliers) const = 0;
     virtual Score getScore (const Mat &model,bool get_inliers,std::vector<int> &inliers) const = 0;
     virtual Score getScore (const Mat &model) const = 0;
     // return true if point with given @point_idx is inliers, false-otherwise
@@ -216,6 +125,7 @@ public:
     virtual void setBestScore (double best_score_) = 0;
     // set @inliers_mask: true if point i is inlier, false - otherwise.
     virtual int getInliers (const Mat &model, std::vector<bool> &inliers_mask) const = 0;
+    virtual Ptr<Quality> clone () const = 0;
 };
 
 // RANSAC (binary) quality
@@ -230,26 +140,96 @@ public:
     static Ptr<MsacQuality> create(int points_size_, double threshold_, const Ptr<Error> &error_);
 };
 
+//////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////// DEGENERACY //////////////////////////////////
+#define UNUSED_VAR(x) (void)(x)
+class Degeneracy : public Algorithm {
+public:
+    virtual ~Degeneracy() override = default;
+    /*
+     * Check if sample causes degenerate configurations.
+     * For example, test if points are collinear.
+     */
+    virtual bool isSampleGood (const std::vector<int> &sample) const {
+        UNUSED_VAR(sample);
+        return true;
+    }
+    /*
+     * Check if model satisfies constraints.
+     * For example, test if epipolar geometry satisfies oriented constraint.
+     */
+    virtual bool isModelValid (const Mat &model, const std::vector<int> &sample) const {
+        UNUSED_VAR(model); UNUSED_VAR(sample);
+        return true;
+    }
+    /*
+     * Fix degenerate model.
+     * Return true if model is degenerate, false - otherwise
+     */
+    virtual bool recoverIfDegenerate (const std::vector<int> &sample, const Mat &best_model,
+            Mat &non_degenerate_model, Score &non_degenerate_model_score) {
+        UNUSED_VAR(sample); UNUSED_VAR(best_model); UNUSED_VAR(non_degenerate_model);
+        UNUSED_VAR(non_degenerate_model_score);
+        return false;
+    }
+//    static Ptr<Degeneracy> create();
+    virtual Ptr<Degeneracy> clone() const = 0;
+};
+
+class HomographyDegeneracy : public Degeneracy {
+public:
+    static Ptr<HomographyDegeneracy> create(const Mat &points_, int sample_size_);
+};
+
+/////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////// ESTIMATOR //////////////////////////////////
+class Estimator : public Algorithm{
+public:
+    /*
+     * Estimate models with minimal solver.
+     * Return number of valid solutions after estimation.
+     * Return models accordingly to number of solutions.
+     * Note, vector of models must allocated before.
+     * Note, not all degenerate tests are included in estimation.
+     */
+    virtual int
+    estimateModels (const std::vector<int> &sample, std::vector<Mat> &models) const = 0;
+    /*
+     * Estimate model with non-minimal solver.
+     * Return number of valid solutions after estimation.
+     * Note, not all degenerate tests are included in estimation.
+     */
+    virtual int
+    estimateModelNonMinimalSample (const std::vector<int> &sample, int sample_size,
+                       std::vector<Mat> &models, const std::vector<double> &weights) const = 0;
+    // return minimal sample size required for minimal estimation.
+    virtual int getMinimalSampleSize () const = 0;
+    // return minimal sample size required for non-minimal estimation.
+    virtual int getNonMinimalSampleSize () const = 0;
+    // return maximum number of possible solutions of minimal estimation.
+    virtual int getMaxNumSolutions () const = 0;
+    // return maximum number of possible solutions of non-minimal estimation.
+    virtual int getMaxNumSolutionsNonMinimal () const = 0;
+    virtual Ptr<Estimator> clone() const = 0;
+};
+
+class HomographyEstimator : public Estimator {
+public:
+    static Ptr<HomographyEstimator> create (const Ptr<MinimalSolver> &min_solver_,
+            const Ptr<NonMinimalSolver> &non_min_solver_, const Ptr<Degeneracy> &degeneracy_);
+};
+
 //////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////// MODEL VERIFIER ////////////////////////////////////
 class ModelVerifier : public Algorithm {
 public:
     virtual ~ModelVerifier() override = default;
     // Return true if model is good, false - otherwise.
-    inline virtual bool isModelGood(const Mat &model) {
-        return true;
-    }
+    virtual bool isModelGood(const Mat &model) = 0;
     // Return true if score was computed during evaluation.
-    inline virtual bool getScore(Score &score) const {
-        return false;
-    }
-    /*
-     * Reset ModelVerification to initial state.
-     * Assume parameters of ModelVerification (e.g., points size) are not changed.
-     */
-    virtual void reset () {}
+    virtual bool getScore(Score &score) const = 0;
+    virtual Ptr<ModelVerifier> clone () const = 0;
 };
-
 struct SPRT_history {
     /*
      * delta:
@@ -301,8 +281,6 @@ public:
     virtual void update(const Mat &model, int inlier_number) = 0;
     // return predicted number of iterations required for RANSAC
     virtual int getPredictedNumberIterations() const = 0;
-    // reset termination to initial state. Assume main parameters of termination are the same.
-    virtual void reset() = 0;
 };
 
 //////////////////////////////// STANDARD TERMINATION ///////////////////////////////////////////
@@ -355,7 +333,8 @@ public:
     static Ptr<UniformRandomGenerator> create (RNG &rng);
     static Ptr<UniformRandomGenerator> create (RNG &rng, int max_range, int subset_size_);
     // fill @sample of size @subset_size with random numbers in range <0, @max_range)
-    virtual void generateUniqueRandomSet (std::vector<int> &sample, int subset_size, int max_range) = 0;
+    virtual void generateUniqueRandomSet (std::vector<int> &sample, int subset_size,
+                                                                    int max_range) = 0;
     // fill @sample of size @sample.size() with random numbers in range <0, @max_range)
     virtual void generateUniqueRandomSet (std::vector<int> &sample, int max_range) = 0;
 };
@@ -373,8 +352,6 @@ public:
     virtual void generateSample (std::vector<int> &sample, int points_size) = 0;
     // return sample size
     virtual int getSampleSize () const = 0;
-    // reset Sampler to initial state. Assume that parameters of Sampler are not changed.
-    virtual void reset () = 0;
 };
 
 ////////////////////////////////////// UNIFORM SAMPLER ////////////////////////////////////////////
@@ -397,6 +374,7 @@ public:
      */
     virtual bool refineModel (const Mat &best_model, const Score &best_model_score,
                               Mat &new_model, Score &new_model_score) = 0;
+    virtual Ptr<LocalOptimization> clone() const = 0;
 };
 
 //////////////////////////////////// INNER LO ///////////////////////////////////////
@@ -454,6 +432,7 @@ public:
     virtual int getNumberOfGoodModels () const = 0;
     virtual int getNumberOfEstimatedModels () const = 0;
     virtual const Mat &getModel() const = 0;
+    virtual Ptr<RansacOutput> clone() const = 0;
 };
 
 ////////////////////////////////////////////// MODEL /////////////////////////////////////////////
@@ -462,7 +441,7 @@ public:
 * Fundamental - 7 points
 * Essential - 5 points, Stewenius solver
 */
-enum EstimationMethod  { Homography, HomographyQR, Fundamental, Fundamental8,
+enum EstimationMethod  { Homography, Fundamental, Fundamental8,
     Essential, Affine, P3P, P6P, Similarity };
 enum SamplingMethod  { Uniform, ProgressiveNAPSAC, Napsac, Prosac, Evsac };
 enum NeighborSearchMethod {Flann, Grid, RadiusSearch};
@@ -485,8 +464,6 @@ public:
     virtual int getMaxNumHypothesisToTestBeforeRejection() const = 0;
     virtual PolishingMethod getFinalPolisher () const = 0;
     virtual LocalOptimMethod getLO () const = 0;
-    virtual const Mat &getDescriptor () const = 0;
-    virtual Mat &getRefDescriptor () = 0;
 
     virtual ErrorMetric getError () const = 0;
     virtual EstimationMethod getEstimator () const = 0;
@@ -536,7 +513,6 @@ public:
     virtual void setTrace (int trace) = 0;
     virtual int getTrace () const = 0;
 
-    virtual void setDescriptor(const Mat &desc) = 0;
     virtual void setSPRT (double sprt_eps_ = 0.005, double sprt_delta_ = 0.0025,
                           double avg_num_models_ = 1, double time_for_model_est_ = 5e2) = 0;
     virtual void setImageSize (int img1_width_, int img1_height_,
@@ -546,10 +522,11 @@ public:
          double confidence_=0.95, int max_iterations_=5000, ScoreMethod score_ =ScoreMethod::MSAC);
 };
 
+int mergePoints (const Mat &pts1, const Mat &pts2, Mat &pts);
+
 Mat findHomography(InputArray srcPoints, InputArray dstPoints, int method = 0,
                    double ransacReprojThreshold = 3, OutputArray mask = noArray(),
                    const int maxIters = 2000, const double confidence = 0.995);
-
 }}
 
 #endif //OPENCV_USAC_USAC_HPP

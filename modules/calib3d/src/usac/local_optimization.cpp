@@ -40,9 +40,7 @@ public:
         lo_models = std::vector<Mat> (estimator->getMaxNumSolutionsNonMinimal());
     }
 
-    /*
-     * Implementation of Inner Locally Optimized Ransac
-     */
+    // Implementation of Inner Locally Optimized Ransac
     bool refineModel (const Mat &so_far_the_best_model, const Score &best_model_score,
                       Mat &new_model, Score &new_model_score) override {
         new_model_score = Score(); // set score to inf (worst case)
@@ -90,14 +88,15 @@ public:
                 }
             }
 
-            if (num_inliers_of_best_model < new_model_score.inlier_number) {
+            if (num_inliers_of_best_model < new_model_score.inlier_number)
                 // update inliers of the best model.
-                num_inliers_of_best_model = quality->getInliers(new_model,
-                                                               inliers_of_best_model);
-            }
-        }
+                num_inliers_of_best_model = quality->getInliers(new_model,inliers_of_best_model);
 
+        }
         return true;
+    }
+    Ptr<LocalOptimization> clone() const override {
+        return makePtr<InnerLocalOptimizationImpl>(*this);
     }
 };
 
@@ -140,8 +139,6 @@ public:
 
         out_score = Score(); // set the worst case
 
-//        std::cout << "LSQ best: " << best_model_score.inlier_number << " " << best_model_score.score << "\n";
-
         // several all-inlier least-squares refines model better than only one but for
         // big amount of points may be too time-consuming.
         for (int norm = 0; norm < lsq_iterations; norm++) {
@@ -150,7 +147,6 @@ public:
              * Calculate and Save Covariance Matrix and use it next normalization with adding or
              * extracting some points.
              */
-
             bool model_updated = false;
 
             // estimate non minimal models with all inliers
@@ -159,14 +155,9 @@ public:
             for (int model_idx = 0; model_idx < num_models; model_idx++) {
                 score = quality->getScore(models[model_idx]);
 
-//                std::cout << "LSQ new score: " << score.inlier_number << " " << score.score << "\n";
-
                 if (best_model_score.better(score))
                     continue;
-//                else
-//                    std::cout << "New model is better!\n";
 
-//                std::cout << "score of non minimal model " << score;
                 if (score.better(out_score)) {
                     models[model_idx].copyTo(new_model);
                     out_score = score;
@@ -174,20 +165,16 @@ public:
                 }
             }
 
-            if (!model_updated) {
+            if (!model_updated)
                 // if model was not updated at the first iteration then return false
                 // otherwise if all-inliers LSQ has not updated model then no sense
                 // to do it again -> return true (model was updated before).
                 return norm > 0;
-            }
 
             // if number of inliers doesn't increase more than 5% then break
             if (fabs(static_cast<double>(out_score.inlier_number) - static_cast<double>
             (best_model_score.inlier_number)) / best_model_score.inlier_number < 0.05)
                 return true;
-
-//            std::cout << "LSQ best " << best_model_score ;
-//            std::cout << "LSQ new " << out_score;
 
             if (norm != lsq_iterations - 1)
                 // if not the last LSQ normalization then get inliers for next normalization

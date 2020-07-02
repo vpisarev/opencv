@@ -4,126 +4,19 @@
 
 #include "../precomp.hpp"
 #include "../usac.hpp"
-#include <Eigen/QR>
+#ifdef HAVE_EIGEN
+#include <Eigen/Eigen>
+#endif
 
 namespace cv { namespace usac {
-
-class HomographyMinimalSolver4ptsQRImpl : public HomographyMinimalSolver4ptsQR {
-private:
-    double a1[9] = {0, 0, -1, 0, 0, 0, 0, 0, 0}, a2[9] = {0, 0, 0, 0, 0, -1, 0, 0, 0}, AtA[81];
-    const double * const points;
-public:
-    explicit HomographyMinimalSolver4ptsQRImpl (const Mat &points_) :
-                points ((double *) points_.data) {}
-
-    /*
-     * Use Direct Linear Transformation (DLT) for 4 points.
-     * Note, vector of H must be initialized (use getMaxNumberOfSolutions() for that).
-     */
-    int estimate (const std::vector<int>& sample, std::vector<Mat> &models) override {
-        memset(AtA, 0, sizeof(AtA)); // set covariance matrix to zeros
-
-        int smpl;
-        double x1, y1, x2, y2;
-        for (int i = 0; i < 4; i++) {
-            smpl = 4 * sample[i];
-            x1 = points[smpl]; y1 = points[smpl+1]; x2 = points[smpl+2]; y2 = points[smpl+3];
-
-            a1[0] = -x1;
-            a1[1] = -y1;
-            a1[6] = x2 * x1;
-            a1[7] = x2 * y1;
-            a1[8] = x2;
-
-            a2[3] = -x1;
-            a2[4] = -y1;
-            a2[6] = y2 * x1;
-            a2[7] = y2 * y1;
-            a2[8] = y2;
-
-            // fill covarinace matrix
-            for (int j = 0; j < 9; j++)
-                for (int z = j; z < 9; z++)
-                    AtA[j * 9 + z] += a1[j] * a1[z] + a2[j] * a2[z];
-        }
-
-        // copy symmetric part of covariance matrix
-        for (int j = 1; j < 9; j++)
-            for (int z = 0; z < j; z++)
-                AtA[j*9+z] = AtA[z*9+j];
-
-        Eigen::Matrix<double, 9, 9> cov (AtA);
-        Eigen::HouseholderQR<Eigen::MatrixXd> qr(cov);
-        Eigen::MatrixXd Q = qr.householderQ();
-        if (Q.cols() != 9)
-            return 0;
-
-        // extract the last nullspace
-        models = std::vector<Mat>(1, Mat_<double>(3,3));
-        Eigen::Map<Eigen::Matrix<double, 9, 1>>((double *)models[0].data) = Q.col(8);
-
-        return 1;
-    }
-
-    int getMaxNumberOfSolutions () const override { return 1; }
-    int getSampleSize() const override { return 4; }
-private:
-    int estimateEigen(const std::vector<int>& sample, std::vector<Mat> &models) {
-        memset(AtA, 0, sizeof(AtA));
-
-        double x1, y1, x2, y2;
-        for (int i = 0; i < 4; i++) {
-            const int smpl = 4*sample[i];
-            x1 = points[smpl]; y1 = points[smpl+1]; x2 = points[smpl+2]; y2 = points[smpl+3];
-
-            a1[0] = -x1;
-            a1[1] = -y1;
-            a1[6] = x2*x1;
-            a1[7] = x2*y1;
-            a1[8] = x2;
-
-            a2[3] = -x1;
-            a2[4] = -y1;
-            a2[6] = y2*x1;
-            a2[7] = y2*y1;
-            a2[8] = y2;
-
-            for (int j = 0; j < 9; j++)
-                for (int z = j; z < 9; z++)
-                    AtA[j*9+z] += a1[j]*a1[z] + a2[j]*a2[z];
-        }
-
-        /*
-         * TODO:
-         * a) find / create solver to compute exactly one (the highest) eigen value and orresponding eigen vector.
-         * b) use pre-computed symmetric matrices for each point.
-         */
-        Mat_<double> AtA_ (9,9, AtA);
-        completeSymm(AtA_);
-
-        Mat D, Vt;
-        eigen(AtA_, D, Vt);
-
-        if (Vt.rows != 9 /*|| fabs(Vt.at<double>(8,8)) < FLT_EPSILON*/) // full uv
-            return 0;
-
-        models = std::vector<Mat> {Vt.row(8).reshape(0 /* same num of channels*/, 3)};
-
-        return 1;
-    }
-};
-
-Ptr<HomographyMinimalSolver4ptsQR> HomographyMinimalSolver4ptsQR::create(const Mat &points_) {
-    return makePtr<HomographyMinimalSolver4ptsQRImpl>(points_);
-}
-
 class HomographyMinimalSolver4ptsGEMImpl : public HomographyMinimalSolver4ptsGEM {
 private:
     const double * const points;
 public:
-    explicit HomographyMinimalSolver4ptsGEMImpl (const Mat &points_) : points ((double *) points_.data) {}
+    explicit HomographyMinimalSolver4ptsGEMImpl (const Mat &points_) :
+        points ((double *) points_.data) {}
 
-    int estimate (const std::vector<int>& sample, std::vector<Mat> &models) override {
+    int estimate (const std::vector<int>& sample, std::vector<Mat> &models) const override {
         /*
           IMPORTANT: READ BEFORE DOWNLOADING, COPYING, INSTALLING OR USING.
 
@@ -285,7 +178,6 @@ public:
         scalar1=major[0][5];major[1][5]-=scalar1*m17;major[2][5]-=scalar1*m27;
         scalar1=major[0][6];major[1][6]-=scalar1*m17;major[2][6]-=scalar1*m27;
 
-
         /* One column left (Two in fact, but the last one is the homography) */
         major[2][3]/=major[1][3];
         const double m23 = major[2][3];
@@ -331,7 +223,6 @@ Ptr<HomographyMinimalSolver4ptsGEM> HomographyMinimalSolver4ptsGEM::create(const
 class HomographyNonMinimalSolverImpl : public HomographyNonMinimalSolver {
 private:
     const Ptr<NormTransform> normTr;
-    double a1[9] = {0, 0, -1, 0, 0, 0, 0, 0, 0}, a2[9] = {0, 0, 0, 0, 0, -1, 0, 0, 0}, AtA[81];
 public:
     explicit HomographyNonMinimalSolverImpl (const Mat &points_) :
         normTr (NormTransform::create(points_)) {}
@@ -341,33 +232,26 @@ public:
      * Use Principal Component Analysis. Use normalized points.
      */
     int estimate (const std::vector<int>& sample, int sample_size, std::vector<Mat> &models,
-            const std::vector<double>& weights) override {
+            const std::vector<double>& weights) const override {
         if (sample_size < getMinimumRequiredSampleSize())
             return 0;
 
-        Mat H, T1, T2, norm_points;
-        normTr->getNormTransformation(norm_points, sample, sample_size, T1, T2);
+        Mat T1, T2, norm_points_;
+        normTr->getNormTransformation(norm_points_, sample, sample_size, T1, T2);
 
-        if (! DLTNp((double *) norm_points.data, sample_size, H, weights)) return 0;
+        /*
+         * @norm_points is matrix 4 x inlier_size
+         * @weights is vector of inliers_size
+         * weights[i] is weight of i-th inlier
+         */
+        const auto * const norm_points = (double *) norm_points_.data;
 
-        models = std::vector<Mat>{ T2.inv() * H * T1 };
-        return 1;
-    }
-
-    int getMinimumRequiredSampleSize() const override { return 4; }
-    int getMaxNumberOfSolutions () const override { return 1; }
-private:
-    /*
-     * @norm_points is matrix 4 x inlier_size
-     * @weights is vector of inliers_size
-     * weights[i] is weight of i-th inlier
-     */
-    bool DLTNp (const double * const norm_points, int sample_number, Mat &H,
-            const std::vector<double>& weights) {
-        memset(AtA, 0, sizeof(AtA));
+        double a1[9] = {0, 0, -1, 0, 0, 0, 0, 0, 0},
+               a2[9] = {0, 0, 0, 0, 0, -1, 0, 0, 0},
+               AtA[81] = {0};
 
         if (weights.empty()) {
-            for (int i = 0; i < sample_number; i++) {
+            for (int i = 0; i < sample_size; i++) {
                 const int smpl = 4*i;
                 const double x1 = norm_points[smpl  ], y1 = norm_points[smpl+1],
                              x2 = norm_points[smpl+2], y2 = norm_points[smpl+3];
@@ -389,15 +273,15 @@ private:
                         AtA[j*9+z] += a1[j]*a1[z] + a2[j]*a2[z];
             }
         } else {
-            for (int i = 0; i < sample_number; i++) {
+            for (int i = 0; i < sample_size; i++) {
                 const int smpl = 4*i;
                 const double weight = weights[i];
                 const double x1 = norm_points[smpl  ], y1 = norm_points[smpl+1],
-                             x2 = norm_points[smpl+2], y2 = norm_points[smpl+3];
+                        x2 = norm_points[smpl+2], y2 = norm_points[smpl+3];
                 const double minus_weight_times_x1 = -weight * x1,
                              minus_weight_times_y1 = -weight * y1,
-                                    weight_times_x2 = weight * x2,
-                                    weight_times_y2 = weight * y2;
+                                   weight_times_x2 =  weight * x2,
+                                   weight_times_y2 =  weight * y2;
 
                 a1[0] = minus_weight_times_x1;
                 a1[1] = minus_weight_times_y1;
@@ -424,26 +308,32 @@ private:
             for (int z = 0; z < j; z++)
                 AtA[j*9+z] = AtA[z*9+j];
 
-        // PCA:
-        //    Matx<double, 9, 9> AtA_ (AtA);
-        //    Mat D, Vt;
-        //    completeSymm(AtA_);
-        //    eigen(AtA_, D, Vt);
-        //    if (Vt.rows != 9) return false;
-        //    H = Vt.row(Vt.rows-1).reshape(0 /* same num of channels*/, 3);
-
+#ifdef HAVE_EIGEN
         Eigen::Matrix<double, 9, 9> cov (AtA);
+        Mat H = Mat_<double>(3,3);
         Eigen::HouseholderQR<Eigen::Matrix<double, 9, 9>> qr(cov);
         Eigen::MatrixXd Q = qr.householderQ();
-        if (Q.cols() != 9)
-            return false;
-
-        H = Mat_<double>(3,3);
+        if (Q.cols() != 9) return 0;
         // extract the last nullspace
         Eigen::Map<Eigen::Matrix<double, 9, 1>>((double *)H.data) = Q.col(8);
+#else
+        Matx<double, 9, 9> AtA_ (AtA);
+        Mat D, Vt;
+        eigen(AtA_, D, Vt);
+//        Mat U, W, Vt;
+//        SVD::compute(AtA_, W, U, Vt, SVD::FULL_UV + SVD::MODIFY_A);
+        if (Vt.rows != 9) return 0;
+        Mat H = Vt.row(Vt.rows-1).reshape(0 /* same num of channels*/, 3);
+#endif
 
-        return true;
+        models = std::vector<Mat>{ T2.inv() * H * T1 };
+        return 1;
     }
+
+    int getMinimumRequiredSampleSize() const override { return 4; }
+    int getMaxNumberOfSolutions () const override { return 1; }
+private:
+
 };
 
 Ptr<HomographyNonMinimalSolver> HomographyNonMinimalSolver::create(const Mat &points_) {

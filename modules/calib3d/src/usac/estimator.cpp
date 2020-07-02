@@ -14,7 +14,7 @@ private:
 public:
     HomographyEstimatorImpl (const Ptr<MinimalSolver> &min_solver_,
             const Ptr<NonMinimalSolver> &non_min_solver_, const Ptr<Degeneracy>& degeneracy_) :
-          min_solver (min_solver_), non_min_solver (non_min_solver_), degeneracy (degeneracy_) {}
+            min_solver (min_solver_), non_min_solver (non_min_solver_), degeneracy (degeneracy_) {}
 
     inline int estimateModels (const std::vector<int>& sample, std::vector<Mat>& models) const override {
         if (! degeneracy->isSampleGood(sample)) return 0;
@@ -35,6 +35,9 @@ public:
     }
     int getNonMinimalSampleSize () const override {
         return non_min_solver->getMinimumRequiredSampleSize();
+    }
+    Ptr<Estimator> clone() const override {
+        return makePtr<HomographyEstimatorImpl>(*this);
     }
 };
 Ptr<HomographyEstimator> HomographyEstimator::create (const Ptr<MinimalSolver> &min_solver_,
