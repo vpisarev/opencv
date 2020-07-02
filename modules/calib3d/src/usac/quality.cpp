@@ -191,8 +191,8 @@ class SPRTImpl : public SPRT {
 private:
     RNG &rng;
     const Ptr<Error> &err;
-    const int points_size, sample_size;
-    const double inlier_threshold, prob_pt_good_m, prob_pt_bad_m, t_M, m_S;
+    const int points_size;
+    const double inlier_threshold, t_M, m_S;
 
     // score_type: 1 is MSAC, 0 is RANSAC, for everything else score is not computed.
     const int score_type;
@@ -209,17 +209,17 @@ private:
     bool last_model_is_good;
     double lowest_sum_errors;
 public:
-    explicit SPRTImpl (RNG &rng_, const Ptr<Error>&err_, int points_size_, int sample_size_,
+    explicit SPRTImpl (RNG &rng_, const Ptr<Error>&err_, int points_size_,
         double inlier_threshold_, double prob_pt_of_good_model, double prob_pt_of_bad_model,
         double time_sample, double avg_num_models, int score_type_) : rng(rng_), err(err_),
-        points_size(points_size_), sample_size(sample_size_), inlier_threshold (inlier_threshold_),
-        prob_pt_good_m (prob_pt_of_good_model), prob_pt_bad_m(prob_pt_of_bad_model),
+        points_size(points_size_), inlier_threshold (inlier_threshold_),
         t_M (time_sample), m_S (avg_num_models), score_type (score_type_) {
 
         // Generate array of random points for randomized evaluation
         points_random_pool = std::vector<int> (points_size_);
         // fill values from 0 to points_size-1
-        std::iota(points_random_pool.begin(), points_random_pool.end(), 0);
+        for (int i = 0; i < points_size; i++)
+            points_random_pool[i] = i;
         Utils::random_shuffle (rng, points_random_pool);
         ///////////////////////////////
 
@@ -407,10 +407,10 @@ private:
         return An;
     }
 };
-Ptr<SPRT> SPRT::create (RNG &rng, const Ptr<Error> &err_, int points_size_, int sample_size_,
+Ptr<SPRT> SPRT::create (RNG &rng, const Ptr<Error> &err_, int points_size_,
       double inlier_threshold_, double prob_pt_of_good_model, double prob_pt_of_bad_model,
       double time_sample, double avg_num_models, int score_type_) {
-    return Ptr<SPRTImpl>(new SPRTImpl (rng, err_, points_size_, sample_size_,
+    return Ptr<SPRTImpl>(new SPRTImpl (rng, err_, points_size_,
     inlier_threshold_, prob_pt_of_good_model, prob_pt_of_bad_model, time_sample, avg_num_models,
                                                        score_type_));
 }

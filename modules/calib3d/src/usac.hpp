@@ -178,7 +178,7 @@ public:
 
 class HomographyDegeneracy : public Degeneracy {
 public:
-    static Ptr<HomographyDegeneracy> create(const Mat &points_, int sample_size_);
+    static Ptr<HomographyDegeneracy> create(const Mat &points_);
 };
 
 /////////////////////////////////////////////////////////////////////////////////////
@@ -265,7 +265,7 @@ public:
     virtual const std::vector<SPRT_history> &getSPRTvector () const = 0;
 
     static Ptr<SPRT> create (RNG &rng, const Ptr<Error> &err_, int points_size_,
-       int sample_size_, double inlier_threshold_, double prob_pt_of_good_model,
+       double inlier_threshold_, double prob_pt_of_good_model,
        double prob_pt_of_bad_model, double time_sample, double avg_num_models, int score_type_);
 };
 

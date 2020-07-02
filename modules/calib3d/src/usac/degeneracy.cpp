@@ -9,10 +9,9 @@ namespace cv { namespace usac {
 class HomographyDegeneracyImpl : public HomographyDegeneracy {
 private:
     const double * const points;
-    const int sample_size;
 public:
-    explicit HomographyDegeneracyImpl (const Mat &points_, int sample_size_) :
-            points ((double *)points_.data), sample_size (sample_size_) {}
+    explicit HomographyDegeneracyImpl (const Mat &points_) :
+            points ((double *)points_.data) {}
 
     inline bool isSampleGood (const std::vector<int>& sample) const override {
         const int smpl1 = 4*sample[0], smpl2 = 4*sample[1], smpl3 = 4*sample[2], smpl4 = 4*sample[3];
@@ -50,7 +49,7 @@ public:
     }
 };
 
-Ptr<HomographyDegeneracy> HomographyDegeneracy::create (const Mat &points_, int sample_size_) {
-    return makePtr<HomographyDegeneracyImpl>(points_, sample_size_);
+Ptr<HomographyDegeneracy> HomographyDegeneracy::create (const Mat &points_) {
+    return makePtr<HomographyDegeneracyImpl>(points_);
 }
 }}

@@ -273,12 +273,12 @@ Mat findHomography (InputArray srcPoints, InputArray dstPoints, int method, doub
 
     RNG rng;
     Ptr<Error> error = ReprojectionErrorForward::create(points);
-    Ptr<Degeneracy> degeneracy = HomographyDegeneracy::create(points, params->getSampleSize());
+    Ptr<Degeneracy> degeneracy = HomographyDegeneracy::create(points);
     Ptr<MinimalSolver> h_min = HomographyMinimalSolver4ptsGEM::create(points);
     Ptr<NonMinimalSolver> h_non_min = HomographyNonMinimalSolver::create(points);
     Ptr<Estimator> estimator = HomographyEstimator::create(h_min, h_non_min, degeneracy);
     Ptr<Quality> quality = MsacQuality::create(points_size, params->getThreshold(), error);
-    Ptr<ModelVerifier> verifier = SPRT::create(rng, error, points_size, params->getSampleSize(),
+    Ptr<ModelVerifier> verifier = SPRT::create(rng, error, points_size,
                   params->getThreshold(), params->getSPRTepsilon(), params->getSPRTdelta(),
                   params->getTimeForModelEstimation(), params->getSPRTavgNumModels(), 1);
     Ptr<FinalModelPolisher> polisher = LeastSquaresPolishing::create(estimator, quality, degeneracy, points_size);
