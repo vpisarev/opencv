@@ -17,7 +17,6 @@ namespace opencv_test {
 
         // generate random translation
         cv::Vec3d t = cv::Vec3d(rng.uniform(-0.5f, 0.5f), rng.uniform(-0.5f, 0.5f), rng.uniform(1.0f, 2.0f));
-        cv::Mat tvec = (cv::Mat_<double>(3,1) << t(0), t(1), t(2));
 
         // generate random calibration
         cv::Matx33d K = cv::Matx33d::zeros();
@@ -31,7 +30,7 @@ namespace opencv_test {
         const int pts_size = 5000;
         const double inlier_ratio = 0.5;
         // compute inlier number
-        const int inl_size = inlier_ratio * pts_size;
+        const int inl_size = static_cast<int>(inlier_ratio * pts_size);
         const int out_size = pts_size - inl_size;
 
         cv::Mat inliers, outliers, points3d;
@@ -65,10 +64,9 @@ namespace opencv_test {
         cv::Mat mask;
         // compute max_iters with standard upper bound rule for RANSAC with 1.5x tolerance
         const double conf = 0.99, thr = 2., max_iters = 1.5 * log(1 - conf) /
-                    log(1 - pow(static_cast<float>(inl_size) / pts_size, 4 /* sample size */));
-
+                         log(1 - pow(static_cast<float>(inl_size) / pts_size, 4 /* sample size */));
         cv::Mat H = findHomography(pts1.rowRange(0,2).t(), pts2.rowRange(0,2).t(),
-                        USAC, thr, mask, max_iters, conf);
+                USAC, thr, mask, static_cast<int>(max_iters), conf);
         CV_Assert(!H.empty());
 
         // convert image points to homogeneous by extending to 3D

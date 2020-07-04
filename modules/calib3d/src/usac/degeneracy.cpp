@@ -8,12 +8,12 @@
 namespace cv { namespace usac {
 class HomographyDegeneracyImpl : public HomographyDegeneracy {
 private:
-    const double * const points;
+    const float * const points;
 public:
     explicit HomographyDegeneracyImpl (const Mat &points_) :
-            points ((double *)points_.data) {}
+            points ((float *)points_.data) {}
 
-    inline bool isSampleGood (const std::vector<int>& sample) const override {
+    inline bool isSampleGood (const std::vector<int> &sample) const override {
         const int smpl1 = 4*sample[0], smpl2 = 4*sample[1], smpl3 = 4*sample[2], smpl4 = 4*sample[3];
         const float x1 = points[smpl1], y1 = points[smpl1+1], X1 = points[smpl1+2], Y1 = points[smpl1+3];
         const float x2 = points[smpl2], y2 = points[smpl2+1], X2 = points[smpl2+2], Y2 = points[smpl2+3];
@@ -43,12 +43,10 @@ public:
             return false;
         return true;
     }
-
     Ptr<Degeneracy> clone() const override {
         return makePtr<HomographyDegeneracyImpl>(*this);
     }
 };
-
 Ptr<HomographyDegeneracy> HomographyDegeneracy::create (const Mat &points_) {
     return makePtr<HomographyDegeneracyImpl>(points_);
 }

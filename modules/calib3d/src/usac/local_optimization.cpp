@@ -15,7 +15,6 @@ private:
     const Ptr<Estimator> &estimator;
     const Ptr<Quality> &quality;
     const Ptr<Sampler> &lo_sampler;
-    const Ptr<Degeneracy> &degeneracy;
 
     Score lo_score;
     std::vector<Mat> lo_models;
@@ -26,9 +25,8 @@ public:
 
     InnerLocalOptimizationImpl (const Ptr<Estimator> &estimator_,
             const Ptr<Quality> &quality_, const Ptr<Sampler> &lo_sampler_,
-            const Ptr<Degeneracy> &degeneracy_, int points_size, int lo_inner_iterations_)
-            : estimator (estimator_), quality (quality_), lo_sampler (lo_sampler_),
-            degeneracy (degeneracy_){
+            int points_size, int lo_inner_iterations_)
+            : estimator (estimator_), quality (quality_), lo_sampler (lo_sampler_) {
 
         lo_inner_max_iterations = lo_inner_iterations_;
         lo_sample_size = lo_sampler->getSampleSize();
@@ -102,10 +100,9 @@ public:
 
 Ptr<InnerLocalOptimization> InnerLocalOptimization::create
 (const Ptr<Estimator> &estimator_, const Ptr<Quality> &quality_,
-       const Ptr<Sampler> &lo_sampler_, const Ptr<Degeneracy> &degeneracy_,
-       int points_size, int lo_inner_iterations_) {
+       const Ptr<Sampler> &lo_sampler_, int points_size, int lo_inner_iterations_) {
     return makePtr<InnerLocalOptimizationImpl>(estimator_, quality_, lo_sampler_,
-            degeneracy_, points_size, lo_inner_iterations_);
+            points_size, lo_inner_iterations_);
 }
 
 /////////////////////////////////////////// FINAL MODEL POLISHER ////////////////////////
@@ -113,7 +110,6 @@ class LeastSquaresPolishingImpl : public LeastSquaresPolishing {
 private:
     const Ptr<Estimator> &estimator;
     const Ptr<Quality> &quality;
-    const Ptr<Degeneracy> &degeneracy;
     Score score;
     std::vector<int> inliers;
     int lsq_iterations;
@@ -122,8 +118,8 @@ private:
 public:
 
     LeastSquaresPolishingImpl(const Ptr<Estimator> &estimator_, const Ptr<Quality> &quality_,
-                  const Ptr<Degeneracy> &degeneracy_, int points_size, int lsq_iterations_ = 2) :
-                  estimator(estimator_), quality(quality_), degeneracy(degeneracy_) {
+            int points_size, int lsq_iterations_ = 2) :
+            estimator(estimator_), quality(quality_) {
         lsq_iterations = lsq_iterations_;
         // allocate memory for inliers array and models
         inliers = std::vector<int>(points_size);
@@ -184,8 +180,8 @@ public:
     }
 };
 Ptr<LeastSquaresPolishing> LeastSquaresPolishing::create (const Ptr<Estimator> &estimator_,
-         const Ptr<Quality> &quality_, const Ptr<Degeneracy> &degeneracy_, int points_size,
+         const Ptr<Quality> &quality_, int points_size,
          int lsq_iterations_) {
-    return makePtr<LeastSquaresPolishingImpl>(estimator_, quality_, degeneracy_, points_size, lsq_iterations_);
+    return makePtr<LeastSquaresPolishingImpl>(estimator_, quality_, points_size, lsq_iterations_);
 }
 }}

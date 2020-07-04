@@ -8,10 +8,10 @@
 namespace cv { namespace usac {
 // Performs Fisher-Yates shuffle
 void Utils::random_shuffle (RNG &rng, std::vector<int>& array) {
-    int rand_idx, temp_size = array.size(), array_size = array.size();
+    const int array_size = static_cast<int>(array.size());
+    int temp_size = static_cast<int>(array.size());
     for (int i = 0; i < array_size; i++) {
-        rand_idx = rng.uniform(0, temp_size); // get random index of array of working interval
-
+        const int rand_idx = rng.uniform(0, temp_size); // get random index of array of temp size
         // decrease temp size and swap values of random index to the end (temp size)
         std::swap(array[rand_idx], array[--temp_size]);
     }
@@ -20,14 +20,14 @@ void Utils::random_shuffle (RNG &rng, std::vector<int>& array) {
 ////////////////////////////////////////////////////////////////////////
 bool Math::haveCollinearPoints(const Mat &points_, const std::vector<int>& sample,
                                       double threshold) {
-    const auto * const points = (double *) points_.data;
+    const auto * const points = (float *) points_.data;
     // Checks if no more than 2 points are on the same line
     // If area of triangle constructed with 3 points is less then threshold then points are collinear:
     //           |x1 y1 1|             |x1      y1      1|
     // (1/2) det |x2 y2 1| = (1/2) det |x2-x1   y2-y1   0| = (1/2) det |x2-x1   y2-y1| < threshold
     //           |x3 y3 1|             |x3-x1   y3-y1   0|             |x3-x1   y3-y1|
     double x1, y1, x2, y2, x3, y3, X1, Y1, X2, Y2, X3, Y3;
-    int pt_idx, sample_size = sample.size();
+    int pt_idx, sample_size = static_cast<int>(sample.size());
     for (int i1 = 0; i1 < sample_size-2; i1++) {
         pt_idx = 4*sample[i1];
         x1 = points[pt_idx  ]; y1 = points[pt_idx+1];
@@ -76,7 +76,6 @@ int Math::rank3x3 (const Mat &A_) {
     A_.copyTo(A);
     A.convertTo(A, CV_64F); // convert to double
     std::vector<double> a ((double *) A.data, (double *) A.data+9);
-//    auto * a = (double *) A.data;
     const int m = 3, n = 3;
 
     eliminateUpperTriangluar(a, m, n);

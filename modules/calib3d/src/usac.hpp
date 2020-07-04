@@ -142,7 +142,6 @@ public:
 
 //////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////// DEGENERACY //////////////////////////////////
-#define UNUSED_VAR(x) (void)(x)
 class Degeneracy : public Algorithm {
 public:
     virtual ~Degeneracy() override = default;
@@ -150,29 +149,24 @@ public:
      * Check if sample causes degenerate configurations.
      * For example, test if points are collinear.
      */
-    virtual bool isSampleGood (const std::vector<int> &sample) const {
-        UNUSED_VAR(sample);
+    virtual bool isSampleGood (const std::vector<int> &/*sample*/) const {
         return true;
     }
     /*
      * Check if model satisfies constraints.
      * For example, test if epipolar geometry satisfies oriented constraint.
      */
-    virtual bool isModelValid (const Mat &model, const std::vector<int> &sample) const {
-        UNUSED_VAR(model); UNUSED_VAR(sample);
+    virtual bool isModelValid (const Mat &/*model*/, const std::vector<int> &/*sample*/) const {
         return true;
     }
     /*
      * Fix degenerate model.
      * Return true if model is degenerate, false - otherwise
      */
-    virtual bool recoverIfDegenerate (const std::vector<int> &sample, const Mat &best_model,
-            Mat &non_degenerate_model, Score &non_degenerate_model_score) {
-        UNUSED_VAR(sample); UNUSED_VAR(best_model); UNUSED_VAR(non_degenerate_model);
-        UNUSED_VAR(non_degenerate_model_score);
+    virtual bool recoverIfDegenerate (const std::vector<int> &/*sample*/, const Mat &/*best_model*/,
+                          Mat &/*non_degenerate_model*/, Score &/*non_degenerate_model_score*/) {
         return false;
     }
-//    static Ptr<Degeneracy> create();
     virtual Ptr<Degeneracy> clone() const = 0;
 };
 
@@ -322,6 +316,11 @@ public:
     virtual void resetGenerator (int max_range) = 0;
     // return sample filled with random numbers
     virtual void generateUniqueRandomSet (std::vector<int> &sample) = 0;
+    // fill @sample of size @subset_size with random numbers in range <0, @max_range)
+    virtual void generateUniqueRandomSet (std::vector<int> &sample, int subset_size,
+                                                                    int max_range) = 0;
+    // fill @sample of size @sample.size() with random numbers in range <0, @max_range)
+    virtual void generateUniqueRandomSet (std::vector<int> &sample, int max_range) = 0;
     // return subset=sample size
     virtual void setSubsetSize (int subset_sz) = 0;
     // return random number
@@ -332,11 +331,6 @@ class UniformRandomGenerator : public RandomGenerator {
 public:
     static Ptr<UniformRandomGenerator> create (RNG &rng);
     static Ptr<UniformRandomGenerator> create (RNG &rng, int max_range, int subset_size_);
-    // fill @sample of size @subset_size with random numbers in range <0, @max_range)
-    virtual void generateUniqueRandomSet (std::vector<int> &sample, int subset_size,
-                                                                    int max_range) = 0;
-    // fill @sample of size @sample.size() with random numbers in range <0, @max_range)
-    virtual void generateUniqueRandomSet (std::vector<int> &sample, int max_range) = 0;
 };
 
 //////////////////////////////////////////////////////////////////////////////////////////
@@ -382,8 +376,7 @@ class InnerLocalOptimization : public LocalOptimization {
 public:
     static Ptr<InnerLocalOptimization>
     create(const Ptr<Estimator> &estimator_, const Ptr<Quality> &quality_,
-           const Ptr<Sampler> &lo_sampler_, const Ptr<Degeneracy>  &degeneracy_,
-           int points_size, int lo_inner_iterations_=15);
+           const Ptr<Sampler> &lo_sampler_, int points_size, int lo_inner_iterations_=15);
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -406,8 +399,7 @@ public:
 class LeastSquaresPolishing : public FinalModelPolisher {
 public:
     static Ptr<LeastSquaresPolishing> create (const Ptr<Estimator> &estimator_,
-        const Ptr<Quality> &quality_, const Ptr<Degeneracy> &degeneracy_,
-        int points_size, int lsq_iterations_=2);
+        const Ptr<Quality> &quality_, int points_size, int lsq_iterations_=2);
 };
 
 /////////////////////////////////// RANSAC OUTPUT ///////////////////////////////////
@@ -420,7 +412,7 @@ public:
         int number_estimated_models_, int number_good_models_);
 
     // Return inliers' indices. size of vector = number of inliers
-    virtual const std::vector<int > &getInliers() const = 0;
+    virtual const std::vector<int > &getInliers() = 0;
     // Return inliers mask. Vector of points size. 1-inlier, 0-outlier.
     virtual const std::vector<bool> &getInliersMask() const = 0;
     virtual int getTimeMicroSeconds() const = 0;
@@ -486,6 +478,16 @@ public:
     virtual double getRelaxCoef () const = 0;
     virtual int getMaxTimeMcs() const = 0;
 
+    virtual int getSamplerLengthPNAPSAC () const = 0;
+    virtual int getFinalLSQIterations () const = 0;
+    virtual int getDegreesOfFreedom () const = 0;
+    virtual double getSigmaQuantile () const = 0;
+    virtual double getUpperIncompleteOfSigmaQuantile () const = 0;
+    virtual double getLowerIncompleteOfSigmaQuantile () const = 0;
+    virtual double getC () const = 0;
+    virtual double getMaximumThreshold () const = 0;
+    virtual double getGraphCutSpatialCoherenceTerm () const = 0;
+    virtual int getLOSampleSize () const = 0;
     virtual int getLOThresholdMultiplier() const = 0;
     virtual int getLOIterativeSampleSize() const = 0;
     virtual int getLOIterativeMaxIters() const = 0;

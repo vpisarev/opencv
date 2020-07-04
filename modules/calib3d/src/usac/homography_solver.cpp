@@ -11,10 +11,10 @@
 namespace cv { namespace usac {
 class HomographyMinimalSolver4ptsGEMImpl : public HomographyMinimalSolver4ptsGEM {
 private:
-    const double * const points;
+    const float * const points;
 public:
     explicit HomographyMinimalSolver4ptsGEMImpl (const Mat &points_) :
-        points ((double *) points_.data) {}
+        points ((float*) points_.data) {}
 
     int estimate (const std::vector<int>& sample, std::vector<Mat> &models) const override {
         /*
@@ -244,7 +244,7 @@ public:
          * @weights is vector of inliers_size
          * weights[i] is weight of i-th inlier
          */
-        const auto * const norm_points = (double *) norm_points_.data;
+        const auto * const norm_points = (float *) norm_points_.data;
 
         double a1[9] = {0, 0, -1, 0, 0, 0, 0, 0, 0},
                a2[9] = {0, 0, 0, 0, 0, -1, 0, 0, 0},

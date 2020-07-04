@@ -32,12 +32,6 @@ public:
         int number_good_models_) {
 
         model = model_.clone();
-
-        inliers.reserve(number_inliers_);
-        const int num_pts = inliers_mask_.size();
-        for (int i = 0; i < num_pts; i++)
-            if (inliers_mask_[i])
-                inliers.emplace_back(i);
         inliers_mask = inliers_mask_;
 
         time_mcs = time_mcs_;
@@ -57,7 +51,16 @@ public:
      * Return inliers' indices.
      * size of vector = number of inliers
      */
-    const std::vector<int > &getInliers() const override {
+    const std::vector<int > &getInliers() override {
+        if (inliers.empty()) {
+            inliers.reserve(inliers_mask.size());
+            int pt_cnt = 0;
+            for (bool is_inlier : inliers_mask) {
+                if (is_inlier)
+                    inliers.emplace_back(pt_cnt);
+                pt_cnt++;
+            }
+        }
         return inliers;
     }
 
@@ -162,7 +165,6 @@ public:
                     if (! model_verifier.getScore(current_score))
                         current_score = quality.getScore(models[i]);
 
-//                std::cout << "iters " << iters << " score " << current_score.inlier_number << " best " << best_score.inlier_number << "\n";
                 if (current_score.better(best_score)) {
                     // if number of non degenerate models is zero then input model is good
                     Mat non_degnerate_model;
@@ -171,7 +173,6 @@ public:
                             non_degnerate_model, non_denegenerate_model_score);
 
                     if (is_degenerate) {
-                        // std::cout << "model is degenerate! Current score " << current_score.inlier_number << " non degenerate score " << non_denegenerate_model_score.inlier_number << "\n";
                         // check if best non degenerate model is better than so far the best model
                         if (non_denegenerate_model_score.better(best_score)) {
                             best_score = non_denegenerate_model_score;
@@ -234,8 +235,8 @@ public:
         }
         // Store results
         ransac_output = RansacOutput::create(best_model, inliers_mask,
-                std::chrono::duration_cast<std::chrono::microseconds>
-                (std::chrono::steady_clock::now() - begin_time).count(), best_score.score,
+                static_cast<int>(std::chrono::duration_cast<std::chrono::microseconds>
+                (std::chrono::steady_clock::now() - begin_time).count()), best_score.score,
                 best_score.inlier_number, iters, -1, -1);
         return true;
     }
@@ -253,7 +254,7 @@ int mergePoints (const Mat &pts1, const Mat &pts2, Mat &pts) {
     } else {
         hconcat(pts1.t(), pts2.t(), pts);
     }
-    pts.convertTo(pts, CV_64F); // convert to double
+    pts.convertTo(pts, CV_32F); // convert to float
     return pts.rows;
 }
 
@@ -281,13 +282,13 @@ Mat findHomography (InputArray srcPoints, InputArray dstPoints, int method, doub
     Ptr<ModelVerifier> verifier = SPRT::create(rng, error, points_size,
                   params->getThreshold(), params->getSPRTepsilon(), params->getSPRTdelta(),
                   params->getTimeForModelEstimation(), params->getSPRTavgNumModels(), 1);
-    Ptr<FinalModelPolisher> polisher = LeastSquaresPolishing::create(estimator, quality, degeneracy, points_size);
+    Ptr<FinalModelPolisher> polisher = LeastSquaresPolishing::create(estimator, quality, points_size);
     Ptr<Sampler> sampler = UniformSampler::create(rng, params->getSampleSize(), points_size);
     Ptr<TerminationCriteria> termination = StandardTerminationCriteria::create(
             params->getConfidence(), points_size, params->getSampleSize(), params->getMaxIters(), params->isTimeLimit());
 
     Ptr<Sampler> lo_sampler = UniformSampler::create(rng, params->getMaxSampleSizeLO(), points_size);
-    Ptr<LocalOptimization> inner_lo_rsc = InnerLocalOptimization::create(estimator, quality, lo_sampler, degeneracy, points_size);
+    Ptr<LocalOptimization> inner_lo_rsc = InnerLocalOptimization::create(estimator, quality, lo_sampler, points_size);
 
     Ptr<RansacOutput> ransac_output;
     if (method == USAC) {
@@ -295,8 +296,7 @@ Mat findHomography (InputArray srcPoints, InputArray dstPoints, int method, doub
                        *termination, *verifier, *degeneracy, inner_lo_rsc, *polisher);
         if (!ransac.run(ransac_output)) return Mat();
     } else {
-        // todo: add other options
-        return Mat();
+        CV_Assert(0);
     }
 
     if (mask.needed()) {
@@ -329,8 +329,8 @@ private:
     // for neighborhood graph
     int k_nearest_neighbors = 8; // for FLANN
     int cell_size = 25; // pixels, for grid neighbors searching
-    double radius = 15; // pixels, for radius-search neighborhood graph
-    int flann_search_params = 32;
+//    double radius = 15; // pixels, for radius-search neighborhood graph
+//    int flann_search_params = 32;
     NeighborSearchMethod neighborsType = NeighborSearchMethod::Grid;
 
     // Local Optimization parameters
@@ -338,7 +338,6 @@ private:
     int lo_sample_size=14, lo_inner_iterations=15, lo_iterative_iterations=5,
             lo_threshold_multiplier=4, lo_iter_sample_size = 30;
     bool sample_size_limit = true; // parameter for Iterative LO-RANSAC
-    const int num_iters_before_LO = 10;
 
     // Graph cut parameters
     const double spatial_coherence_term = 0.1;
@@ -350,29 +349,11 @@ private:
     VerificationMethod verifier = VerificationMethod ::NullVerifier;
     const int max_hypothesis_test_before_verification = 5;
 
-    // number of points to be verified for Tdd test
-    int num_tdd = 1;
-
     // sprt parameters
     double sprt_eps, sprt_delta, avg_num_models, time_for_model_est;
 
     // randomization of RANSAC
     bool reset_random_generator = false;
-
-    // fundamental degeneracy
-    double homography_thr = 4.;
-
-    // MLESAC parameters
-    int iters_EM = 3;
-    double outlier_range = 400., gamma_init = 0.5;
-
-    // PROSAC parameters
-    int growth_max_samples = 2e5;
-    double beta_prob = 0.05, non_rand_prob = 0.95;
-
-    // density sort for PROSAC, if points are not ordered before, then they could be sorted by density
-    // inside USAC framework
-    bool density_sort = false;
 
     // estimator error
     ErrorMetric est_error;
@@ -392,7 +373,8 @@ private:
     int trace = 2;
 
     // magsac parameters for H, F, E
-    double DoF = 4, sigma_quantile = 3.64, upper_incomplete_of_sigma_quantile = 0.00365,
+    int DoF = 4;
+    double sigma_quantile = 3.64, upper_incomplete_of_sigma_quantile = 0.00365,
     lower_incomplete_of_sigma_quantile = 1.30122, C = 0.25, maximum_thr = 10.;
 public:
     ModelImpl (double threshold_, EstimationMethod estimator_, SamplingMethod sampler_, double confidence_=0.95,
@@ -502,6 +484,36 @@ public:
     }
     int getSampleSize () const override {
         return sample_size;
+    }
+    int getSamplerLengthPNAPSAC () const override {
+        return sampler_length;
+    }
+    int getFinalLSQIterations () const override {
+        return final_lsq_iters;
+    }
+    int getDegreesOfFreedom () const override {
+        return DoF;
+    }
+    double getSigmaQuantile () const override {
+        return sigma_quantile;
+    }
+    double getUpperIncompleteOfSigmaQuantile () const override {
+        return upper_incomplete_of_sigma_quantile;
+    }
+    double getLowerIncompleteOfSigmaQuantile () const override {
+        return lower_incomplete_of_sigma_quantile;
+    }
+    double getC () const override {
+        return C;
+    }
+    double getMaximumThreshold () const override {
+        return maximum_thr;
+    }
+    double getGraphCutSpatialCoherenceTerm () const override {
+        return spatial_coherence_term;
+    }
+    int getLOSampleSize () const override {
+        return lo_sample_size;
     }
     int getMaxTimeMcs() const override {
         return max_time_mcs;

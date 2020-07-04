@@ -159,11 +159,9 @@ public:
         std::fill(inliers_mask.begin(), inliers_mask.end(), 0);
         error->setModelParameters(model);
         int num_inliers = 0;
-//        std::cout << "model " << model << "\n";
         for (int point = 0; point < points_size; point++) {
             const auto err = error->getError(point);
             if (err < threshold) {
-//                std::cout << point << " " << err << "\n";
                 inliers_mask[point] = true;
                 num_inliers++;
             }
@@ -180,7 +178,6 @@ public:
         return makePtr<MsacQualityImpl>(*this);
     }
 };
-
 Ptr<MsacQuality> MsacQuality::create(int points_size_, double threshold_,
         const Ptr<Error> &error_) {
     return Ptr<MsacQualityImpl>(new MsacQualityImpl(points_size_, threshold_, error_));
@@ -375,7 +372,7 @@ private:
         delta_to_epsilon = delta / epsilon;
         complement_delta_to_complement_epsilon = (1 - delta) / (1 - epsilon);
 
-        current_sprt_idx = sprt_histories.size()-1;
+        current_sprt_idx = static_cast<int>(sprt_histories.size()) - 1;
     }
 
     /*

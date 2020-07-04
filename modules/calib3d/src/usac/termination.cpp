@@ -36,8 +36,7 @@ public:
      * (1 - w^n) is probability that at least one point of N is outlier.
      * 1 - p = (1-w^n)^k is probability that in K steps of getting at least one outlier is 1% (5%).
      */
-    void update (const Mat &model, int inlier_number) override {
-        UNUSED_VAR(model);
+    void update (const Mat &/*model*/, int inlier_number) override {
         const double predicted_iters = log_confidence / log(1 - std::pow
             (static_cast<double>(inlier_number) / points_size, sample_size));
 
