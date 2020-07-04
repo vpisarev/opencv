@@ -191,7 +191,7 @@ private:
     const int points_size;
     const double inlier_threshold, t_M, m_S;
 
-    // score_type: 1 is MSAC, 0 is RANSAC, for everything else score is not computed.
+    // score_type: 1 is RANSAC, 2 is MSAC, for everything else score is not computed.
     const int score_type;
 
     double current_epsilon, current_delta, current_A, delta_to_epsilon, complement_delta_to_complement_epsilon;
@@ -258,7 +258,7 @@ public:
         random_pool_idx = rng.uniform(0, points_size);
 
         int tested_point, tested_inliers = 0;
-        if (score_type == 1)
+        if (score_type == 2)
             for (tested_point = 0; tested_point < points_size; tested_point++) {
                 if (random_pool_idx >= points_size)
                     random_pool_idx = 0;
@@ -341,7 +341,7 @@ public:
 
     inline bool getScore (Score &score_) const override {
         if (!last_model_is_good) return false;
-        if (score_type != 0 || score_type != 1)
+        if (score_type != 1 || score_type != 2)
             return false;
         score_ = score;
         return true;

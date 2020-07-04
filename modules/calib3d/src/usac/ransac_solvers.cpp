@@ -281,7 +281,7 @@ Mat findHomography (InputArray srcPoints, InputArray dstPoints, int method, doub
     Ptr<Quality> quality = MsacQuality::create(points_size, params->getThreshold(), error);
     Ptr<ModelVerifier> verifier = SPRT::create(rng, error, points_size,
                   params->getThreshold(), params->getSPRTepsilon(), params->getSPRTdelta(),
-                  params->getTimeForModelEstimation(), params->getSPRTavgNumModels(), 1);
+                  params->getTimeForModelEstimation(), params->getSPRTavgNumModels(), 2);
     Ptr<FinalModelPolisher> polisher = LeastSquaresPolishing::create(estimator, quality, points_size);
     Ptr<Sampler> sampler = UniformSampler::create(rng, params->getSampleSize(), points_size);
     Ptr<TerminationCriteria> termination = StandardTerminationCriteria::create(
