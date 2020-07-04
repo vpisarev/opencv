@@ -184,16 +184,16 @@ public:
                 0, avg_dist2, transl_y2,
                 0, 0, 1);
 
-        norm_points = Mat_<float>(sample_size, 4);
+        norm_points = Mat_<float>(sample_size, 4); // normalized points Nx4 matrix
         auto * norm_points_ptr = (float *) norm_points.data;
 
         // Normalize points: Npts = T*pts    3x3 * 3xN
         for (int i = 0; i < sample_size; i++) {
             smpl = 4 * sample[i];
-            (*norm_points_ptr++) = avg_dist1 * points[smpl    ] + transl_x1; // Norm_img1_xi
-            (*norm_points_ptr++) = avg_dist1 * points[smpl + 1] + transl_y1; // Norm_img1_yi
-            (*norm_points_ptr++) = avg_dist2 * points[smpl + 2] + transl_x2; // Norm_img2_xi
-            (*norm_points_ptr++) = avg_dist2 * points[smpl + 3] + transl_y2; // Norm_img2_yi
+            (*norm_points_ptr++) = static_cast<float>(avg_dist1 * points[smpl    ] + transl_x1);
+            (*norm_points_ptr++) = static_cast<float>(avg_dist1 * points[smpl + 1] + transl_y1);
+            (*norm_points_ptr++) = static_cast<float>(avg_dist2 * points[smpl + 2] + transl_x2);
+            (*norm_points_ptr++) = static_cast<float>(avg_dist2 * points[smpl + 3] + transl_y2);
         }
     }
 };

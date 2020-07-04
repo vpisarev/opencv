@@ -5,14 +5,13 @@
 #include "../precomp.hpp"
 #include "../usac.hpp"
 
-////////////////////////////////// STANDARD TERMINATION ///////////////////////////////////////////
 namespace cv { namespace usac {
+////////////////////////////////// STANDARD TERMINATION ///////////////////////////////////////////
 class StandardTerminationCriteriaImpl : public StandardTerminationCriteria {
 private:
     const double log_confidence;
     const int points_size, sample_size, MAX_ITERATIONS, MAX_TIME_MCS;
     int predicted_iterations;
-
     const bool is_time_limit;
     std::chrono::steady_clock::time_point begin_time;
 public:
