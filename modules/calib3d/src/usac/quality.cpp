@@ -300,10 +300,10 @@ public:
         last_model_is_good = good_model;
         if (good_model) {
             score.inlier_number = tested_inliers;
-            if (score_type == 1) {
+            if (score_type == 2) {
                 score.score = sum_errors;
                 lowest_sum_errors = sum_errors;
-            } else if (score_type == 0)
+            } else if (score_type == 1)
                 score.score = -static_cast<double>(tested_inliers);
 
             if (tested_inliers > highest_inlier_number) {
