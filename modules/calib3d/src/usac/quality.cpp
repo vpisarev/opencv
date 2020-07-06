@@ -4,9 +4,9 @@
 
 #include "../precomp.hpp"
 #include "../usac.hpp"
-#ifdef _MSC_VER
-    #pragma warning(push)
-    #pragma warning(disable:4800) // warning C4800: 'const int': forcing value to bool 'true' or 'false' (performance warning)
+#if defined(_MSC_VER)
+#   pragma warning(push)
+#   pragma warning(disable:4800) // warning C4800: 'const int': forcing value to bool 'true' or 'false' (performance warning)
 #endif
 
 namespace cv { namespace usac {
@@ -417,6 +417,6 @@ Ptr<SPRT> SPRT::create (RNG &rng, const Ptr<Error> &err_, int points_size_,
 }
 }}
 
-#ifdef _MSC_VER
-    #pragma warning(pop)
+#if defined(_MSC_VER)
+#   pragma warning(pop)
 #endif
