@@ -57,7 +57,7 @@ public:
     }
     int getSampleSize () const override { return sample_size; }
     Ptr<Sampler> clone () const override {
-        return makePtr<UniformSamplerImpl>(rng.state/10+10, sample_size, points_size);
+        return makePtr<UniformSamplerImpl>(abs((int)rng.state)/10+10, sample_size, points_size);
     }
 private:
     void setPointsSize (int points_size_) {

@@ -4,12 +4,9 @@
 
 #if defined(_MSC_VER)
 #   pragma warning(push)
-#   pragma warning(disable:4800) // warning C4800: 'const int': forcing value to bool 'true' or 'false' (performance warning)
+#   pragma warning(disable:4800)
 #endif
 #include "../precomp.hpp"
-#if defined(_MSC_VER)
-#   pragma warning(pop)
-#endif
 #include "../usac.hpp"
 
 namespace cv { namespace usac {
@@ -359,7 +356,7 @@ public:
         }
     }
     Ptr<ModelVerifier> clone () const override {
-        return makePtr<SPRTImpl>(rng.state/3+3, err->clone(), points_size, inlier_threshold,
+        return makePtr<SPRTImpl>(abs((int)rng.state)/3+3, err->clone(), points_size, inlier_threshold,
                 sprt_histories[current_sprt_idx].epsilon, sprt_histories[current_sprt_idx].delta,
                 t_M, m_S, score_type);
     }
@@ -426,3 +423,7 @@ Ptr<SPRT> SPRT::create (int state, const Ptr<Error> &err_, int points_size_,
                                                        score_type_));
 }
 }}
+
+#if defined(_MSC_VER)
+#   pragma warning(pop)
+#endif

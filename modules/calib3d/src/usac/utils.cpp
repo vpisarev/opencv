@@ -173,7 +173,7 @@ public:
     void setSubsetSize (int subset_size_) override {
         subset_size = subset_size_;
     }
-    int getState () const override { return rng.state; }
+    int getState () const override { return abs((int)rng.state); }
 };
 
 Ptr<UniformRandomGenerator> UniformRandomGenerator::create (int state) {
