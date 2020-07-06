@@ -4,6 +4,10 @@
 
 #include "../precomp.hpp"
 #include "../usac.hpp"
+#ifdef _MSC_VER
+    #pragma warning(push)
+    #pragma warning(disable:4800) // warning C4800: 'const int': forcing value to bool 'true' or 'false' (performance warning)
+#endif
 
 namespace cv { namespace usac {
 class RansacQualityImpl : public RansacQuality {
@@ -184,10 +188,6 @@ Ptr<MsacQuality> MsacQuality::create(int points_size_, double threshold_,
 }
 
 ///////////////////////////////////// SPRT VERIFIER MSAC //////////////////////////////////////////
-#ifdef _MSC_VER
-    #pragma warning(push)
-    #pragma warning(disable:4800) // warning C4800: 'const int': forcing value to bool 'true' or 'false' (performance warning)
-#endif
 class SPRTImpl : public SPRT {
 private:
     RNG &rng;
@@ -415,7 +415,8 @@ Ptr<SPRT> SPRT::create (RNG &rng, const Ptr<Error> &err_, int points_size_,
     inlier_threshold_, prob_pt_of_good_model, prob_pt_of_bad_model, time_sample, avg_num_models,
                                                        score_type_));
 }
+}}
+
 #ifdef _MSC_VER
     #pragma warning(pop)
 #endif
-}}
