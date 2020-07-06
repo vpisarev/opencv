@@ -2,12 +2,15 @@
 // It is subject to the license terms in the LICENSE file found in the top-level directory
 // of this distribution and at http://opencv.org/license.html.
 
-#include "../precomp.hpp"
-#include "../usac.hpp"
 #if defined(_MSC_VER)
 #   pragma warning(push)
 #   pragma warning(disable:4800) // warning C4800: 'const int': forcing value to bool 'true' or 'false' (performance warning)
 #endif
+#include "../precomp.hpp"
+#if defined(_MSC_VER)
+#   pragma warning(pop)
+#endif
+#include "../usac.hpp"
 
 namespace cv { namespace usac {
 class RansacQualityImpl : public RansacQuality {
@@ -416,7 +419,3 @@ Ptr<SPRT> SPRT::create (RNG &rng, const Ptr<Error> &err_, int points_size_,
                                                        score_type_));
 }
 }}
-
-#if defined(_MSC_VER)
-#   pragma warning(pop)
-#endif
