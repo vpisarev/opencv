@@ -13,6 +13,7 @@ public:
     virtual void setModelParameters (const Mat &model) = 0;
     // returns error of point wih @point_idx w.r.t. model
     virtual float getError (int point_idx) const = 0;
+    virtual Ptr<Error> clone () const = 0;
 };
 
 // Symmetric Reprojection Error for Homography
@@ -51,6 +52,7 @@ public:
     virtual int getSampleSize() const = 0;
     // return maximum number of possible solutions.
     virtual int getMaxNumberOfSolutions () const = 0;
+    virtual Ptr<MinimalSolver> clone () const = 0;
 };
 
 //-------------------------- HOMOGRAPHY MATRIX -----------------------
@@ -69,6 +71,7 @@ public:
     virtual int getMinimumRequiredSampleSize() const = 0;
     // return maximum number of possible solutions.
     virtual int getMaxNumberOfSolutions () const = 0;
+    virtual Ptr<NonMinimalSolver> clone () const = 0;
 };
 
 //-------------------------- HOMOGRAPHY MATRIX -----------------------
@@ -163,7 +166,7 @@ public:
      * Fix degenerate model.
      * Return true if model is degenerate, false - otherwise
      */
-    virtual bool recoverIfDegenerate (const std::vector<int> &/*sample*/, const Mat &/*best_model*/,
+    virtual bool recoverIfDegenerate (const std::vector<int> &/*sample*/,const Mat &/*best_model*/,
                           Mat &/*non_degenerate_model*/, Score &/*non_degenerate_model_score*/) {
         return false;
     }
@@ -222,6 +225,8 @@ public:
     virtual bool isModelGood(const Mat &model) = 0;
     // Return true if score was computed during evaluation.
     virtual bool getScore(Score &score) const = 0;
+    // update verifier by given inlier number
+    virtual void update (int highest_inlier_number) = 0;
     virtual Ptr<ModelVerifier> clone () const = 0;
 };
 struct SPRT_history {
@@ -258,7 +263,7 @@ public:
     // return constant reference of vector of SPRT histories for SPRT termination.
     virtual const std::vector<SPRT_history> &getSPRTvector () const = 0;
 
-    static Ptr<SPRT> create (RNG &rng, const Ptr<Error> &err_, int points_size_,
+    static Ptr<SPRT> create (int state, const Ptr<Error> &err_, int points_size_,
        double inlier_threshold_, double prob_pt_of_good_model,
        double prob_pt_of_bad_model, double time_sample, double avg_num_models, int score_type_);
 };
@@ -301,10 +306,6 @@ namespace Math {
             double threshold=1);
     // return skew symmetric matrix
     Mat getSkewSymmetric(const Mat &v_);
-    // do cross product between two vectors
-    Mat cross(const Mat &a_, const Mat &b_);
-    // compute rank of 3x3 matrix
-    int rank3x3 (const Mat &A_);
     // eliminate matrix with m rows and n columns to be upper triangular.
     void eliminateUpperTriangluar (std::vector<double> &a, int m, int n);
 }
@@ -324,14 +325,17 @@ public:
     virtual void generateUniqueRandomSet (std::vector<int> &sample, int max_range) = 0;
     // return subset=sample size
     virtual void setSubsetSize (int subset_sz) = 0;
-    // return random number
+    // return random number from <0, max_range), where max_range is from constructor
     virtual int getRandomNumber () = 0;
+    // return random number from <0, max_rng)
+    virtual int getRandomNumber (int max_rng) = 0;
+    virtual int getState () const = 0;
 };
 
 class UniformRandomGenerator : public RandomGenerator {
 public:
-    static Ptr<UniformRandomGenerator> create (RNG &rng);
-    static Ptr<UniformRandomGenerator> create (RNG &rng, int max_range, int subset_size_);
+    static Ptr<UniformRandomGenerator> create (int state);
+    static Ptr<UniformRandomGenerator> create (int state, int max_range, int subset_size_);
 };
 
 //////////////////////////////////////////////////////////////////////////////////////////
@@ -347,12 +351,22 @@ public:
     virtual void generateSample (std::vector<int> &sample, int points_size) = 0;
     // return sample size
     virtual int getSampleSize () const = 0;
+    virtual Ptr<Sampler> clone () const = 0;
 };
 
 ////////////////////////////////////// UNIFORM SAMPLER ////////////////////////////////////////////
 class UniformSampler : public Sampler {
 public:
-    static Ptr<UniformSampler> create(RNG &rng, int sample_size_, int points_size_);
+    static Ptr<UniformSampler> create(int state, int sample_size_, int points_size_);
+};
+
+////////////////////////////////////// P-NAPSAC SAMPLER /////////////////////////////////////////
+class ProgressiveNapsac : public Sampler {
+public:
+    static Ptr<ProgressiveNapsac> create(int state, const Mat &points, int points_size_,
+       int sample_size_, const std::vector<int> &grid_cell_number_per_layer,
+       int img1_width, int img1_height, int img2_width, int img2_height,
+       int sampler_length_=10);
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////

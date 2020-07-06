@@ -12,9 +12,9 @@ namespace cv { namespace usac {
 */
 class InnerLocalOptimizationImpl : public InnerLocalOptimization {
 private:
-    const Ptr<Estimator> &estimator;
-    const Ptr<Quality> &quality;
-    const Ptr<Sampler> &lo_sampler;
+    const Ptr<Estimator> estimator;
+    const Ptr<Quality> quality;
+    const Ptr<Sampler> lo_sampler;
 
     Score lo_score;
     std::vector<Mat> lo_models;
@@ -94,10 +94,10 @@ public:
         return true;
     }
     Ptr<LocalOptimization> clone() const override {
-        return makePtr<InnerLocalOptimizationImpl>(*this);
+        return makePtr<InnerLocalOptimizationImpl>(estimator->clone(), quality->clone(),
+           lo_sampler->clone(), (int)inliers_of_best_model.size(), lo_inner_max_iterations);
     }
 };
-
 Ptr<InnerLocalOptimization> InnerLocalOptimization::create
 (const Ptr<Estimator> &estimator_, const Ptr<Quality> &quality_,
        const Ptr<Sampler> &lo_sampler_, int points_size, int lo_inner_iterations_) {

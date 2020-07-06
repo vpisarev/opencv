@@ -11,10 +11,11 @@
 namespace cv { namespace usac {
 class HomographyMinimalSolver4ptsGEMImpl : public HomographyMinimalSolver4ptsGEM {
 private:
+    const Mat * points_mat;
     const float * const points;
 public:
     explicit HomographyMinimalSolver4ptsGEMImpl (const Mat &points_) :
-        points ((float*) points_.data) {}
+        points_mat(&points_), points ((float*) points_.data) {}
 
     int estimate (const std::vector<int>& sample, std::vector<Mat> &models) const override {
         /*
@@ -214,18 +215,21 @@ public:
 
     int getMaxNumberOfSolutions () const override { return 1; }
     int getSampleSize() const override { return 4; }
+    Ptr<MinimalSolver> clone () const override {
+        return makePtr<HomographyMinimalSolver4ptsGEMImpl>(*points_mat);
+    }
 };
-
 Ptr<HomographyMinimalSolver4ptsGEM> HomographyMinimalSolver4ptsGEM::create(const Mat &points_) {
     return makePtr<HomographyMinimalSolver4ptsGEMImpl>(points_);
 }
 
 class HomographyNonMinimalSolverImpl : public HomographyNonMinimalSolver {
 private:
+    const Mat * points_mat;
     const Ptr<NormTransform> normTr;
 public:
     explicit HomographyNonMinimalSolverImpl (const Mat &points_) :
-        normTr (NormTransform::create(points_)) {}
+        points_mat(&points_), normTr (NormTransform::create(points_)) {}
 
     /*
      * Find Homography matrix using (weighted) non-minimal estimation.
@@ -332,8 +336,9 @@ public:
 
     int getMinimumRequiredSampleSize() const override { return 4; }
     int getMaxNumberOfSolutions () const override { return 1; }
-private:
-
+    Ptr<NonMinimalSolver> clone () const override {
+        return makePtr<HomographyNonMinimalSolverImpl>(*points_mat);
+    }
 };
 
 Ptr<HomographyNonMinimalSolver> HomographyNonMinimalSolver::create(const Mat &points_) {

@@ -60,38 +60,6 @@ Mat Math::getSkewSymmetric(const Mat &v_) {
             -v[1], v[0], 0);
 }
 
-Mat Math::cross(const Mat &a_, const Mat &b_) {
-    const auto * const a = (double *) a_.data;
-    const auto * const b = (double *) b_.data;
-    return (Mat_<double>(3,1) << a[1] * b[2] - a[2] * b[1],
-            a[2] * b[0] - a[0] * b[2],
-            a[0] * b[1] - a[1] * b[0]);
-}
-
-/*
- * Use Gauss Elimination Method to find rank
- */
-int Math::rank3x3 (const Mat &A_) {
-    Mat A;
-    A_.copyTo(A);
-    A.convertTo(A, CV_64F); // convert to double
-    std::vector<double> a ((double *) A.data, (double *) A.data+9);
-    const int m = 3, n = 3;
-
-    eliminateUpperTriangluar(a, m, n);
-
-    // find number of non zero rows
-    int rank = 0;
-    for (int r = 0; r < m; r++)
-        // check if row is zeros
-        for (int c = 0; c < n; c++)
-            if (fabs(a[r*n+c]) > FLT_EPSILON) {
-                rank++; // some value in the row is not zero -> increase the rank
-                break;
-            }
-
-    return rank;
-}
 /*
  * Eliminate matrix of m rows and n columns to be upper triangular.
  */
@@ -127,13 +95,13 @@ void Math::eliminateUpperTriangluar (std::vector<double> &a, int m, int n) {
 //////////////////////////////////////// RANDOM GENERATOR /////////////////////////////
 class UniformRandomGeneratorImpl : public UniformRandomGenerator {
 private:
-    int subset_size, max_range;
-    RNG &rng;
+    int subset_size = 0, max_range = 0;
+    RNG rng;
 public:
-    UniformRandomGeneratorImpl (RNG &rng_) : rng(rng_) {}
+    explicit UniformRandomGeneratorImpl (int state) : rng(state) {}
 
     // interval is <0; max_range);
-    UniformRandomGeneratorImpl (RNG &rng_, int max_range_, int subset_size_) : rng(rng_) {
+    UniformRandomGeneratorImpl (int state, int max_range_, int subset_size_) : rng(state) {
         assert(subset_size_ > 0);
         assert(subset_size_ <= max_range_);
         subset_size = subset_size_;
@@ -142,6 +110,10 @@ public:
 
     int getRandomNumber () override {
         return rng.uniform(0, max_range);
+    }
+
+    int getRandomNumber (int max_rng) override {
+        return rng.uniform(0, max_rng);
     }
 
     // closed range
@@ -201,14 +173,15 @@ public:
     void setSubsetSize (int subset_size_) override {
         subset_size = subset_size_;
     }
+    int getState () const override { return rng.state; }
 };
 
-Ptr<UniformRandomGenerator> UniformRandomGenerator::create (RNG &rng) {
-    return Ptr<UniformRandomGeneratorImpl>(new UniformRandomGeneratorImpl(rng));
+Ptr<UniformRandomGenerator> UniformRandomGenerator::create (int state) {
+    return Ptr<UniformRandomGeneratorImpl>(new UniformRandomGeneratorImpl(state));
 }
 Ptr<UniformRandomGenerator> UniformRandomGenerator::create
-        (RNG &rng, int max_range, int subset_size_) {
+        (int state, int max_range, int subset_size_) {
     return Ptr<UniformRandomGeneratorImpl>(
-            new UniformRandomGeneratorImpl(rng, max_range, subset_size_));
+            new UniformRandomGeneratorImpl(state, max_range, subset_size_));
 }
 }}

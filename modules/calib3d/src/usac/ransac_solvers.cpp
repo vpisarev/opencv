@@ -201,7 +201,7 @@ public:
                                 best_score = lo_score;
                                 lo_model.copyTo(best_model);
                                 quality.setBestScore(best_score.score);
-
+                                model_verifier.update(best_score.inlier_number);
                                 // update termination again
                                 termination_criteria.update(best_model, best_score.inlier_number);
                             }
@@ -272,22 +272,23 @@ Mat findHomography (InputArray srcPoints, InputArray dstPoints, int method, doub
     params->setPolisher(PolishingMethod ::LSQPolisher);
     params->setVerifier(VerificationMethod ::SprtVerifier);
 
-    RNG rng;
+    // https://docs.opencv.org/2.4/modules/core/doc/utility_and_system_functions_and_macros.html#getcputickcount
+    int state = 0;
     Ptr<Error> error = ReprojectionErrorForward::create(points);
     Ptr<Degeneracy> degeneracy = HomographyDegeneracy::create(points);
     Ptr<MinimalSolver> h_min = HomographyMinimalSolver4ptsGEM::create(points);
     Ptr<NonMinimalSolver> h_non_min = HomographyNonMinimalSolver::create(points);
     Ptr<Estimator> estimator = HomographyEstimator::create(h_min, h_non_min, degeneracy);
     Ptr<Quality> quality = MsacQuality::create(points_size, params->getThreshold(), error);
-    Ptr<ModelVerifier> verifier = SPRT::create(rng, error, points_size,
+    Ptr<ModelVerifier> verifier = SPRT::create(state++, error, points_size,
                   params->getThreshold(), params->getSPRTepsilon(), params->getSPRTdelta(),
-                  params->getTimeForModelEstimation(), params->getSPRTavgNumModels(), 2);
+                  params->getTimeForModelEstimation(), params->getSPRTavgNumModels(), 20);
     Ptr<FinalModelPolisher> polisher = LeastSquaresPolishing::create(estimator, quality, points_size);
-    Ptr<Sampler> sampler = UniformSampler::create(rng, params->getSampleSize(), points_size);
+    Ptr<Sampler> sampler = UniformSampler::create(state++, params->getSampleSize(), points_size);
     Ptr<TerminationCriteria> termination = StandardTerminationCriteria::create(
             params->getConfidence(), points_size, params->getSampleSize(), params->getMaxIters(), params->isTimeLimit());
 
-    Ptr<Sampler> lo_sampler = UniformSampler::create(rng, params->getMaxSampleSizeLO(), points_size);
+    Ptr<Sampler> lo_sampler = UniformSampler::create(state++, params->getMaxSampleSizeLO(), points_size);
     Ptr<LocalOptimization> inner_lo_rsc = InnerLocalOptimization::create(estimator, quality, lo_sampler, points_size);
 
     Ptr<RansacOutput> ransac_output;

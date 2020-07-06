@@ -37,7 +37,8 @@ public:
         return non_min_solver->getMinimumRequiredSampleSize();
     }
     Ptr<Estimator> clone() const override {
-        return makePtr<HomographyEstimatorImpl>(*this);
+        return makePtr<HomographyEstimatorImpl>(min_solver->clone(), non_min_solver->clone(),
+                degeneracy->clone());
     }
 };
 Ptr<HomographyEstimator> HomographyEstimator::create (const Ptr<MinimalSolver> &min_solver_,
@@ -49,12 +50,13 @@ Ptr<HomographyEstimator> HomographyEstimator::create (const Ptr<MinimalSolver> &
 // Symmetric Reprojection Error
 class ReprojectedErrorSymmetricImpl : public ReprojectionErrorSymmetric {
 private:
+    const Mat * points_mat;
     const float * const points;
     float m11, m12, m13, m21, m22, m23, m31, m32, m33;
     float minv11, minv12, minv13, minv21, minv22, minv23, minv31, minv32, minv33;
 public:
     explicit ReprojectedErrorSymmetricImpl (const Mat &points_) :
-            points ((float *) points_.data) {}
+            points_mat(&points_), points ((float *) points_.data) {}
 
     inline void setModelParameters (const Mat &model) override {
         const auto * const m = (double *) model.data;
@@ -84,6 +86,9 @@ public:
         return ((x2 - est_x2) * (x2 - est_x2) + (y2 - est_y2) * (y2 - est_y2) +
                 (x1 - est_x1) * (x1 - est_x1) + (y1 - est_y1) * (y1 - est_y1)) / 2;
     }
+    Ptr<Error> clone () const override {
+        return makePtr<ReprojectedErrorSymmetricImpl>(*points_mat);
+    }
 };
 Ptr<ReprojectionErrorSymmetric>
 ReprojectionErrorSymmetric::create(const Mat &points) {
@@ -93,11 +98,12 @@ ReprojectionErrorSymmetric::create(const Mat &points) {
 // Forward Reprojection Error
 class ReprojectedErrorForwardImpl : public ReprojectionErrorForward {
 private:
+    const Mat * points_mat;
     const float * const points;
     float m11, m12, m13, m21, m22, m23, m31, m32, m33;
 public:
     explicit ReprojectedErrorForwardImpl (const Mat &points_)
-            : points ((float *)points_.data) {}
+            : points_mat(&points_), points ((float *)points_.data) {}
 
     inline void setModelParameters (const Mat &model) override {
         const auto * const m = (double *) model.data;
@@ -115,6 +121,9 @@ public:
                     est_y2 = (m21 * x1 + m22 * y1 + m23) / est_z2;
 
         return (x2 - est_x2) * (x2 - est_x2) + (y2 - est_y2) * (y2 - est_y2);
+    }
+    Ptr<Error> clone () const override {
+        return makePtr<ReprojectedErrorForwardImpl>(*points_mat);
     }
 };
 Ptr<ReprojectionErrorForward>
