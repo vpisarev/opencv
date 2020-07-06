@@ -5,6 +5,10 @@
 #include "../precomp.hpp"
 #include "../usac.hpp"
 
+#if defined _MSC_VER
+  #pragma warning(disable:4800)
+#endif
+
 namespace cv { namespace usac {
 class RansacQualityImpl : public RansacQuality {
 private:
