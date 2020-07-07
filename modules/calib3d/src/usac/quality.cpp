@@ -424,6 +424,6 @@ Ptr<SPRT> SPRT::create (int state, const Ptr<Error> &err_, int points_size_,
 }
 }}
 
-#if defined(_MSC_VER)
-#   pragma warning(pop)
-#endif
+// #if defined(_MSC_VER)
+// #   pragma warning(pop)
+// #endif
