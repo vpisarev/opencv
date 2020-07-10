@@ -2,10 +2,6 @@
 // It is subject to the license terms in the LICENSE file found in the top-level directory
 // of this distribution and at http://opencv.org/license.html.
 
-#if defined(_MSC_VER)
-#   pragma warning(push)
-#   pragma warning(disable:4800)
-#endif
 #include "../precomp.hpp"
 #include "../usac.hpp"
 
@@ -74,7 +70,7 @@ public:
     }
 
     int getInliers (const Mat &model, std::vector<bool> &inliers_mask) const override {
-        std::fill(inliers_mask.begin(), inliers_mask.end(), 0);
+        std::fill(inliers_mask.begin(), inliers_mask.end(), false);
         error->setModelParameters(model);
         int num_inliers = 0;
         for (int point = 0; point < points_size; point++) {
@@ -158,7 +154,7 @@ public:
     }
 
     int getInliers (const Mat &model, std::vector<bool> &inliers_mask) const override {
-        std::fill(inliers_mask.begin(), inliers_mask.end(), 0);
+        std::fill(inliers_mask.begin(), inliers_mask.end(), false);
         error->setModelParameters(model);
         int num_inliers = 0;
         for (int point = 0; point < points_size; point++) {
@@ -423,7 +419,3 @@ Ptr<SPRT> SPRT::create (int state, const Ptr<Error> &err_, int points_size_,
                                                        score_type_));
 }
 }}
-
-// #if defined(_MSC_VER)
-// #   pragma warning(pop)
-// #endif
