@@ -21,18 +21,19 @@ double Utils::getCalibratedThreshold (double threshold, const Mat &K1, const Mat
 void Utils::calibratePoints (const Mat &K1, const Mat &K2, const Mat &points, Mat &norm_points) {
     const auto * const points_ = (float *) points.data;
     const auto * const k1 = (double *) K1.data;
-    const double inv1_k11 = 1 / k1[0]; // 1 / k11
-    const double inv1_k12 = -k1[1] / (k1[0]*k1[4]); // -k12 / (k11*k22)
-    const double inv1_k13 = (-k1[2]*k1[4] + k1[1]*k1[5]) / (k1[0]*k1[4]); // (-k13*k22 + k12*k23) / (k11*k22)
-    const double inv1_k22 = 1 / k1[4]; // 1 / k22
-    const double inv1_k23 = -k1[5] / k1[4]; // -k23 / k22
+    const float inv1_k11 = float(1 / k1[0]); // 1 / k11
+    const float inv1_k12 = float(-k1[1] / (k1[0]*k1[4])); // -k12 / (k11*k22)
+    // (-k13*k22 + k12*k23) / (k11*k22)
+    const float inv1_k13 = float((-k1[2]*k1[4] + k1[1]*k1[5]) / (k1[0]*k1[4]));
+    const float inv1_k22 = float(1 / k1[4]); // 1 / k22
+    const float inv1_k23 = float(-k1[5] / k1[4]); // -k23 / k22
 
     const auto * const k2 = (double *) K2.data;
-    const double inv2_k11 = 1 / k2[0];
-    const double inv2_k12 = -k2[1] / (k2[0]*k2[4]);
-    const double inv2_k13 = (-k2[2]*k2[4] + k2[1]*k2[5]) / (k2[0]*k2[4]);
-    const double inv2_k22 = 1 / k2[4];
-    const double inv2_k23 = -k2[5] / k2[4];
+    const float inv2_k11 = float(1 / k2[0]);
+    const float inv2_k12 = float(-k2[1] / (k2[0]*k2[4]));
+    const float inv2_k13 = float((-k2[2]*k2[4] + k2[1]*k2[5]) / (k2[0]*k2[4]));
+    const float inv2_k22 = float(1 / k2[4]);
+    const float inv2_k23 = float(-k2[5] / k2[4]);
 
     const int num_pts = points.rows;
     norm_points = Mat (num_pts, 4, points.type());

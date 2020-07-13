@@ -74,7 +74,6 @@ public:
         std::fill(inliers_mask.begin(), inliers_mask.end(), false);
         error->computeErrors(model);
         const auto &errors = error->getErrors();
-        error->setModelParameters(model);
         int num_inliers = 0;
         for (int point = 0; point < points_size; point++) {
             if (errors[point] < threshold) {
@@ -162,7 +161,6 @@ public:
         std::fill(inliers_mask.begin(), inliers_mask.end(), false);
         error->computeErrors(model);
         const auto &errors = error->getErrors();
-        error->setModelParameters(model);
         int num_inliers = 0;
         for (int point = 0; point < points_size; point++) {
             if (errors[point] < threshold) {
@@ -359,9 +357,9 @@ public:
         }
     }
     Ptr<ModelVerifier> clone (int state) const override {
-        return makePtr<SPRTImpl>(state, err->clone(), points_size, inlier_threshold, 
-            sprt_histories[current_sprt_idx].epsilon,
-            sprt_histories[current_sprt_idx].delta, t_M, m_S, score_type);
+        return makePtr<SPRTImpl>(state, err->clone(), points_size, inlier_threshold,
+            sprt_histories[current_sprt_idx].epsilon, sprt_histories[current_sprt_idx].delta,
+            t_M, m_S, score_type);
     }
 private:
 

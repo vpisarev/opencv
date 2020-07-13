@@ -116,7 +116,7 @@ public:
             params (params_), _estimator (estimator_), _quality (quality_), _sampler (sampler_),
             _termination_criteria (termination_criteria_), _model_verifier (model_verifier_),
             _degeneracy (degeneracy_), _local_optimization (local_optimization_),
-            model_polisher (model_polisher_), points_size (points_size_), state(state_), 
+            model_polisher (model_polisher_), points_size (points_size_), state(state_),
             parallel(parallel_) {}
 
     bool run(Ptr<RansacOutput> &ransac_output) {
@@ -219,7 +219,7 @@ public:
             std::atomic_int thread_cnt(0);
             std::vector<Score> best_scores(MAX_THREADS);
             std::vector<Mat> best_models(MAX_THREADS);
-            
+
             Mutex mutex; // only for prosac
 
             ///////////////////////////////////////////////////////////////////////////////////////////////////////

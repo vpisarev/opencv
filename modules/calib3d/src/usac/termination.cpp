@@ -91,7 +91,7 @@ public:
         double log_eta_lmin1 = 0;
 
         int total_number_of_tested_samples = 0;
-        const int sprts_size = sprt_histories.size();
+        const int sprts_size = static_cast<int>(sprt_histories.size());
         // compute log n(l-1), l is number of tests
         for (int test = 0; test < sprts_size-1; test++) {
             const double h = computeExponentH(sprt_histories[test].epsilon, epsilon,
