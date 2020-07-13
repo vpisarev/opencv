@@ -74,6 +74,7 @@ public:
         std::fill(inliers_mask.begin(), inliers_mask.end(), false);
         error->computeErrors(model);
         const auto &errors = error->getErrors();
+        error->setModelParameters(model);
         int num_inliers = 0;
         for (int point = 0; point < points_size; point++) {
             if (errors[point] < threshold) {
@@ -161,6 +162,7 @@ public:
         std::fill(inliers_mask.begin(), inliers_mask.end(), false);
         error->computeErrors(model);
         const auto &errors = error->getErrors();
+        error->setModelParameters(model);
         int num_inliers = 0;
         for (int point = 0; point < points_size; point++) {
             if (errors[point] < threshold) {
