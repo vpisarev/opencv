@@ -444,7 +444,8 @@ namespace cv
 enum { LMEDS  = 4,  //!< least-median of squares algorithm
        RANSAC = 8,  //!< RANSAC algorithm
        RHO    = 16, //!< RHO algorithm
-       USAC   = 32  //!< USAC algorithm
+       USAC_DEFAULT  = 32, //!< USAC algorithm, default settings
+       USAC_PARALLEL = 33  //!< USAC algorithm, parallel version
      };
 
 enum SolvePnPMethod {

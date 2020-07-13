@@ -2,10 +2,6 @@
 // It is subject to the license terms in the LICENSE file found in the top-level directory
 // of this distribution and at http://opencv.org/license.html.
 
-#if defined(_MSC_VER)
-#   pragma warning(push)
-#   pragma warning(disable:4800)
-#endif
 #include "../precomp.hpp"
 #include "../usac.hpp"
 
@@ -22,7 +18,6 @@ public:
         best_score = std::numeric_limits<double>::max();
     }
 
-    // use inline
     Score getScore (const Mat &model, double threshold_, bool get_inliers,
             std::vector<int> &inliers) const override {
         error->setModelParameters(model);
@@ -51,7 +46,8 @@ public:
     }
 
     void setBestScore(double best_score_) override {
-        best_score = best_score_;
+        if (best_score > best_score_)
+            best_score = best_score_;
     }
 
     Score getScore (const Mat &model, bool get_inliers, std::vector<int> &inliers) const override
@@ -65,20 +61,22 @@ public:
 
     // get inliers for given threshold
     int getInliers (const Mat &model, std::vector<int> &inliers, double thr) const override {
-        error->setModelParameters(model);
+        error->computeErrors(model);
+        const auto &errors = error->getErrors();
         int num_inliers = 0;
         for (int point = 0; point < points_size; point++)
-            if (error->getError(point) < thr)
+            if (errors[point] < thr)
                 inliers[num_inliers++] = point;
         return num_inliers;
     }
 
     int getInliers (const Mat &model, std::vector<bool> &inliers_mask) const override {
-        std::fill(inliers_mask.begin(), inliers_mask.end(), 0);
-        error->setModelParameters(model);
+        std::fill(inliers_mask.begin(), inliers_mask.end(), false);
+        error->computeErrors(model);
+        const auto &errors = error->getErrors();
         int num_inliers = 0;
         for (int point = 0; point < points_size; point++) {
-            if (error->getError(point) < threshold) {
+            if (errors[point] < threshold) {
                 inliers_mask[point] = true;
                 num_inliers++;
             }
@@ -136,7 +134,8 @@ public:
     }
 
     void setBestScore(double best_score_) override {
-        best_score = best_score_;
+        if (best_score > best_score_)
+            best_score = best_score_;
     }
 
     Score getScore (const Mat &model, bool get_inliers, std::vector<int> &inliers) const override
@@ -149,20 +148,22 @@ public:
 
     // get inliers for given threshold
     int getInliers (const Mat &model, std::vector<int> &inliers, double thr) const override {
-        error->setModelParameters(model);
+        error->computeErrors(model);
+        const auto &errors = error->getErrors();
         int num_inliers = 0;
         for (int point = 0; point < points_size; point++)
-            if (error->getError(point) < thr)
+            if (errors[point] < thr)
                 inliers[num_inliers++] = point;
         return num_inliers;
     }
 
     int getInliers (const Mat &model, std::vector<bool> &inliers_mask) const override {
-        std::fill(inliers_mask.begin(), inliers_mask.end(), 0);
-        error->setModelParameters(model);
+        std::fill(inliers_mask.begin(), inliers_mask.end(), false);
+        error->computeErrors(model);
+        const auto &errors = error->getErrors();
         int num_inliers = 0;
         for (int point = 0; point < points_size; point++) {
-            if (error->getError(point) < threshold) {
+            if (errors[point] < threshold) {
                 inliers_mask[point] = true;
                 num_inliers++;
             }
@@ -192,7 +193,7 @@ private:
     const int points_size;
     const double inlier_threshold, t_M, m_S;
 
-    // 10 - RANSAC, 20 - MSAC, for everything else is not computed
+    // 0 - RANSAC, 1 - MSAC, for everything else is not computed
     const int score_type;
 
     double current_epsilon, current_delta, current_A, delta_to_epsilon, complement_delta_to_complement_epsilon;
@@ -218,7 +219,7 @@ public:
         // fill values from 0 to points_size-1
         for (int i = 0; i < points_size; i++)
             points_random_pool[i] = i;
-        Utils::random_shuffle (rng, points_random_pool);
+        randShuffle(points_random_pool, 1, &rng);
         ///////////////////////////////
 
         // reserve (approximately) some space for sprt vector.
@@ -259,7 +260,7 @@ public:
         random_pool_idx = rng.uniform(0, points_size);
 
         int tested_point, tested_inliers = 0;
-        if (score_type == 20)
+        if (score_type == 1)
             for (tested_point = 0; tested_point < points_size; tested_point++) {
                 if (random_pool_idx >= points_size)
                     random_pool_idx = 0;
@@ -299,10 +300,10 @@ public:
         sprt_histories[current_sprt_idx].tested_samples++;
         if (last_model_is_good) {
             score.inlier_number = tested_inliers;
-            if (score_type == 20) {
+            if (score_type == 1) {
                 score.score = sum_errors;
                 lowest_sum_errors = sum_errors;
-            } else if (score_type == 10)
+            } else if (score_type == 0)
                 score.score = -static_cast<double>(tested_inliers);
 
             if (tested_inliers > highest_inlier_number) {
@@ -339,7 +340,7 @@ public:
     }
     inline bool getScore (Score &score_) const override {
         if (!last_model_is_good) return false;
-        if (score_type != 20 || score_type != 10)
+        if (score_type != 1 || score_type != 0)
             return false;
         score_ = score;
         return true;
@@ -350,15 +351,15 @@ public:
             highest_inlier_number = highest_inlier_number_;
             if (sprt_histories[current_sprt_idx].tested_samples == 0)
                 sprt_histories[current_sprt_idx].tested_samples = 1;
-
+            // save sprt test and create new one
             createTest(static_cast<double>(highest_inlier_number)
                        / points_size, current_delta);
         }
     }
-    Ptr<ModelVerifier> clone () const override {
-        return makePtr<SPRTImpl>(abs((int)rng.state)/3+3, err->clone(), points_size, inlier_threshold,
-                sprt_histories[current_sprt_idx].epsilon, sprt_histories[current_sprt_idx].delta,
-                t_M, m_S, score_type);
+    Ptr<ModelVerifier> clone (int state) const override {
+        return makePtr<SPRTImpl>(state, err->clone(), points_size, inlier_threshold, 
+            sprt_histories[current_sprt_idx].epsilon,
+            sprt_histories[current_sprt_idx].delta, t_M, m_S, score_type);
     }
 private:
 
@@ -418,12 +419,7 @@ private:
 Ptr<SPRT> SPRT::create (int state, const Ptr<Error> &err_, int points_size_,
       double inlier_threshold_, double prob_pt_of_good_model, double prob_pt_of_bad_model,
       double time_sample, double avg_num_models, int score_type_) {
-    return Ptr<SPRTImpl>(new SPRTImpl (state, err_, points_size_,
-    inlier_threshold_, prob_pt_of_good_model, prob_pt_of_bad_model, time_sample, avg_num_models,
-                                                       score_type_));
+    return makePtr<SPRTImpl>(state, err_, points_size_, inlier_threshold_,
+       prob_pt_of_good_model, prob_pt_of_bad_model, time_sample, avg_num_models, score_type_);
 }
 }}
-
-#if defined(_MSC_VER)
-#   pragma warning(pop)
-#endif

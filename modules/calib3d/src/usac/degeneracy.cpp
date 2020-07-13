@@ -44,7 +44,7 @@ public:
             return false;
         return true;
     }
-    Ptr<Degeneracy> clone() const override {
+    Ptr<Degeneracy> clone(int /*state*/) const override {
         return makePtr<HomographyDegeneracyImpl>(*points_mat);
     }
 };

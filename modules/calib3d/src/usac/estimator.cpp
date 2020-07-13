@@ -38,7 +38,7 @@ public:
     }
     Ptr<Estimator> clone() const override {
         return makePtr<HomographyEstimatorImpl>(min_solver->clone(), non_min_solver->clone(),
-                degeneracy->clone());
+                degeneracy->clone(0 /*we don't need state here*/));
     }
 };
 Ptr<HomographyEstimator> HomographyEstimator::create (const Ptr<MinimalSolver> &min_solver_,
@@ -54,9 +54,10 @@ private:
     const float * const points;
     float m11, m12, m13, m21, m22, m23, m31, m32, m33;
     float minv11, minv12, minv13, minv21, minv22, minv23, minv31, minv32, minv33;
+    std::vector<float> errors;
 public:
     explicit ReprojectedErrorSymmetricImpl (const Mat &points_) :
-            points_mat(&points_), points ((float *) points_.data) {}
+            points_mat(&points_), points ((float *) points_.data), errors(points_.rows) {}
 
     inline void setModelParameters (const Mat &model) override {
         const auto * const m = (double *) model.data;
@@ -74,18 +75,32 @@ public:
         const int smpl = 4*point_idx;
         const float x1=points[smpl  ], y1=points[smpl+1],
                     x2=points[smpl+2], y2=points[smpl+3];
-
         const float est_z2 =  m31 * x1 + m32 * y1 + m33,
                     est_x2 = (m11 * x1 + m12 * y1 + m13) / est_z2,
                     est_y2 = (m21 * x1 + m22 * y1 + m23) / est_z2;
-
         const float est_z1 =  minv31 * x2 + minv32 * y2 + minv33,
                     est_x1 = (minv11 * x2 + minv12 * y2 + minv13) / est_z1,
                     est_y1 = (minv21 * x2 + minv22 * y2 + minv23) / est_z1;
-
         return ((x2 - est_x2) * (x2 - est_x2) + (y2 - est_y2) * (y2 - est_y2) +
                 (x1 - est_x1) * (x1 - est_x1) + (y1 - est_y1) * (y1 - est_y1)) / 2;
     }
+    void computeErrors (const Mat &model) override {
+        setModelParameters(model);
+        for (int point_idx = 0; point_idx < points_mat->rows; point_idx++) {
+            const int smpl = 4*point_idx;
+            const float x1=points[smpl  ], y1=points[smpl+1],
+                        x2=points[smpl+2], y2=points[smpl+3];
+            const float est_z2 =  m31 * x1 + m32 * y1 + m33,
+                        est_x2 = (m11 * x1 + m12 * y1 + m13) / est_z2,
+                        est_y2 = (m21 * x1 + m22 * y1 + m23) / est_z2;
+            const float est_z1 =  minv31 * x2 + minv32 * y2 + minv33,
+                        est_x1 = (minv11 * x2 + minv12 * y2 + minv13) / est_z1,
+                        est_y1 = (minv21 * x2 + minv22 * y2 + minv23) / est_z1;
+            errors[point_idx] = ((x2 - est_x2) * (x2 - est_x2) + (y2 - est_y2) * (y2 - est_y2) +
+                                 (x1 - est_x1) * (x1 - est_x1) + (y1 - est_y1) * (y1 - est_y1))/2;
+        }
+    }
+    const std::vector<float> &getErrors () const override { return errors; }
     Ptr<Error> clone () const override {
         return makePtr<ReprojectedErrorSymmetricImpl>(*points_mat);
     }
@@ -101,9 +116,10 @@ private:
     const Mat * points_mat;
     const float * const points;
     float m11, m12, m13, m21, m22, m23, m31, m32, m33;
+    std::vector<float> errors;
 public:
     explicit ReprojectedErrorForwardImpl (const Mat &points_)
-            : points_mat(&points_), points ((float *)points_.data) {}
+        : points_mat(&points_), points ((float *)points_.data), errors(points_.rows) {}
 
     inline void setModelParameters (const Mat &model) override {
         const auto * const m = (double *) model.data;
@@ -115,13 +131,24 @@ public:
         const int smpl = 4*point_idx;
         const float x1 = points[smpl  ], y1 = points[smpl+1],
                     x2 = points[smpl+2], y2 = points[smpl+3];
-
         const float est_z2 =  m31 * x1 + m32 * y1 + m33,
                     est_x2 = (m11 * x1 + m12 * y1 + m13) / est_z2,
                     est_y2 = (m21 * x1 + m22 * y1 + m23) / est_z2;
-
         return (x2 - est_x2) * (x2 - est_x2) + (y2 - est_y2) * (y2 - est_y2);
     }
+    void computeErrors (const Mat &model) override {
+        setModelParameters(model);
+        for (int point_idx = 0; point_idx < points_mat->rows; point_idx++) {
+            const int smpl = 4*point_idx;
+            const float x1=points[smpl  ], y1=points[smpl+1],
+                        x2=points[smpl+2], y2=points[smpl+3];
+            const float est_z2 =  m31 * x1 + m32 * y1 + m33,
+                        est_x2 = (m11 * x1 + m12 * y1 + m13) / est_z2,
+                        est_y2 = (m21 * x1 + m22 * y1 + m23) / est_z2;
+            errors[point_idx] = (x2 - est_x2) * (x2 - est_x2) + (y2 - est_y2) * (y2 - est_y2);
+        }
+    }
+    const std::vector<float> &getErrors () const override { return errors; }
     Ptr<Error> clone () const override {
         return makePtr<ReprojectedErrorForwardImpl>(*points_mat);
     }
@@ -140,7 +167,7 @@ public:
 
     // Compute normalized points and transformation matrices.
     void getNormTransformation (Mat& norm_points, const std::vector<int> &sample,
-                                int sample_size, Mat &T1, Mat &T2) const override {
+                                int sample_size, Matx33d &T1, Matx33d &T2) const override {
         double mean_pts1_x = 0, mean_pts1_y = 0, mean_pts2_x = 0, mean_pts2_y = 0;
 
         // find average of each coordinate of points.
@@ -186,23 +213,22 @@ public:
         const double transl_x2 = -mean_pts2_x * avg_dist2, transl_y2 = -mean_pts2_y * avg_dist2;
 
         // transformation matrices
-        T1 = (Mat_<double>(3, 3) << avg_dist1, 0, transl_x1,
-                0, avg_dist1, transl_y1,
-                0, 0, 1);
-        T2 = (Mat_<double>(3, 3) << avg_dist2, 0, transl_x2,
-                0, avg_dist2, transl_y2,
-                0, 0, 1);
+        T1 = Matx33d (avg_dist1, 0, transl_x1,0, avg_dist1, transl_y1,0, 0, 1);
+        T2 = Matx33d (avg_dist2, 0, transl_x2,0, avg_dist2, transl_y2,0, 0, 1);
 
         norm_points = Mat_<float>(sample_size, 4); // normalized points Nx4 matrix
         auto * norm_points_ptr = (float *) norm_points.data;
 
         // Normalize points: Npts = T*pts    3x3 * 3xN
+        const float avg_dist1f = (float)avg_dist1, avg_dist2f = (float)avg_dist2;
+        const float transl_x1f = (float)transl_x1, transl_y1f = (float)transl_y1;
+        const float transl_x2f = (float)transl_x2, transl_y2f = (float)transl_y2;
         for (int i = 0; i < sample_size; i++) {
             smpl = 4 * sample[i];
-            (*norm_points_ptr++) = static_cast<float>(avg_dist1 * points[smpl    ] + transl_x1);
-            (*norm_points_ptr++) = static_cast<float>(avg_dist1 * points[smpl + 1] + transl_y1);
-            (*norm_points_ptr++) = static_cast<float>(avg_dist2 * points[smpl + 2] + transl_x2);
-            (*norm_points_ptr++) = static_cast<float>(avg_dist2 * points[smpl + 3] + transl_y2);
+            (*norm_points_ptr++) = avg_dist1f * points[smpl    ] + transl_x1f;
+            (*norm_points_ptr++) = avg_dist1f * points[smpl + 1] + transl_y1f;
+            (*norm_points_ptr++) = avg_dist2f * points[smpl + 2] + transl_x2f;
+            (*norm_points_ptr++) = avg_dist2f * points[smpl + 3] + transl_y2f;
         }
     }
 };

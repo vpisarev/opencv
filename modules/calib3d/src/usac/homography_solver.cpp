@@ -18,49 +18,6 @@ public:
         points_mat(&points_), points ((float*) points_.data) {}
 
     int estimate (const std::vector<int>& sample, std::vector<Mat> &models) const override {
-        /*
-          IMPORTANT: READ BEFORE DOWNLOADING, COPYING, INSTALLING OR USING.
-
-          By downloading, copying, installing or using the software you agree to this license.
-          If you do not agree to this license, do not download, install,
-          copy or use the software.
-                                  BSD 3-Clause License
-
-         Copyright (C) 2014, Olexa Bilaniuk, Hamid Bazargani & Robert Laganiere, all rights reserved.
-
-         Redistribution and use in source and binary forms, with or without modification,
-         are permitted provided that the following conditions are met:
-
-           * Redistribution's of source code must retain the above copyright notice,
-             this list of conditions and the following disclaimer.
-
-           * Redistribution's in binary form must reproduce the above copyright notice,
-             this list of conditions and the following disclaimer in the documentation
-             and/or other materials provided with the distribution.
-
-           * The name of the copyright holders may not be used to endorse or promote products
-             derived from this software without specific prior written permission.
-
-         This software is provided by the copyright holders and contributors "as is" and
-         any express or implied warranties, including, but not limited to, the implied
-         warranties of merchantability and fitness for a particular purpose are disclaimed.
-         In no event shall the Intel Corporation or contributors be liable for any direct,
-         indirect, incidental, special, exemplary, or consequential damages
-         (including, but not limited to, procurement of substitute goods or services;
-         loss of use, data, or profits; or business interruption) however caused
-         and on any theory of liability, whether in contract, strict liability,
-         or tort (including negligence or otherwise) arising in any way out of
-         the use of this software, even if advised of the possibility of such damage.
-        */
-
-        /**
-         * Bilaniuk, Olexa, Hamid Bazargani, and Robert Laganiere. "Fast Target
-         * Recognition on Mobile Devices: Revisiting Gaussian Elimination for the
-         * Estimation of Planar Homographies." In Computer Vision and Pattern
-         * Recognition Workshops (CVPRW), 2014 IEEE Conference on, pp. 119-125.
-         * IEEE, 2014.
-         */
-
         const int smpl0 = 4*sample[0], smpl1 = 4*sample[1], smpl2 = 4*sample[2], smpl3 = 4*sample[3];
         const auto x0 = points[smpl0], y0 = points[smpl0+1], X0 = points[smpl0+2], Y0 = points[smpl0+3];
         const auto x1 = points[smpl1], y1 = points[smpl1+1], X1 = points[smpl1+2], Y1 = points[smpl1+3];
@@ -77,7 +34,6 @@ public:
         double major[3][8] = {{x2X2-x0X0, x2X2-x1X1, -x2X2, x2X2-x3X3, x2Y2-x0Y0, x2Y2-x1Y1, -x2Y2, x2Y2-x3Y3},
                               {y2X2-y0X0, y2X2-y1X1, -y2X2, y2X2-y3X3, y2Y2-y0Y0, y2Y2-y1Y1, -y2Y2, y2Y2-y3Y3},
                               {X0-X2    , X1-X2    , X2   , X3-X2    , Y0-Y2    , Y1-Y2    , Y2   , Y3-Y2    }};
-
         /**
          * int i;
          * for(i=0;i<8;i++) major[2][i]=-major[2][i];
@@ -240,7 +196,8 @@ public:
         if (sample_size < getMinimumRequiredSampleSize())
             return 0;
 
-        Mat T1, T2, norm_points_;
+        Matx33d T1, T2;
+        Mat norm_points_;
         normTr->getNormTransformation(norm_points_, sample, sample_size, T1, T2);
 
         /*

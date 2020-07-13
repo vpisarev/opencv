@@ -6,14 +6,44 @@
 #include "../usac.hpp"
 
 namespace cv { namespace usac {
-// Performs Fisher-Yates shuffle
-void Utils::random_shuffle (RNG &rng, std::vector<int>& array) {
-    const int array_size = static_cast<int>(array.size());
-    int temp_size = static_cast<int>(array.size());
-    for (int i = 0; i < array_size; i++) {
-        const int rand_idx = rng.uniform(0, temp_size); // get random index of array of temp size
-        // decrease temp size and swap values of random index to the end (temp size)
-        std::swap(array[rand_idx], array[--temp_size]);
+double Utils::getCalibratedThreshold (double threshold, const Mat &K1, const Mat &K2) {
+    return threshold / ((K1.at<double>(0, 0) + K1.at<double>(1, 1) +
+                         K2.at<double>(0, 0) + K2.at<double>(1, 1)) / 4.0);
+}
+
+/*
+ * K1, K2 are 3x3 intrinsics matrices
+ * points is matrix of size |N| x 4
+ * Assume K = [k11 k12 k13
+ *              0  k22 k23
+ *              0   0   1]
+ */
+void Utils::calibratePoints (const Mat &K1, const Mat &K2, const Mat &points, Mat &norm_points) {
+    const auto * const points_ = (float *) points.data;
+    const auto * const k1 = (double *) K1.data;
+    const double inv1_k11 = 1 / k1[0]; // 1 / k11
+    const double inv1_k12 = -k1[1] / (k1[0]*k1[4]); // -k12 / (k11*k22)
+    const double inv1_k13 = (-k1[2]*k1[4] + k1[1]*k1[5]) / (k1[0]*k1[4]); // (-k13*k22 + k12*k23) / (k11*k22)
+    const double inv1_k22 = 1 / k1[4]; // 1 / k22
+    const double inv1_k23 = -k1[5] / k1[4]; // -k23 / k22
+
+    const auto * const k2 = (double *) K2.data;
+    const double inv2_k11 = 1 / k2[0];
+    const double inv2_k12 = -k2[1] / (k2[0]*k2[4]);
+    const double inv2_k13 = (-k2[2]*k2[4] + k2[1]*k2[5]) / (k2[0]*k2[4]);
+    const double inv2_k22 = 1 / k2[4];
+    const double inv2_k23 = -k2[5] / k2[4];
+
+    const int num_pts = points.rows;
+    norm_points = Mat (num_pts, 4, points.type());
+    auto * norm_points_ = (float *) norm_points.data;
+
+    for (int i = 0; i < num_pts; i++) {
+        const int idx = 4*i;
+        (*norm_points_++) = inv1_k11 * points_[idx  ] + inv1_k12 * points_[idx+1] + inv1_k13;
+        (*norm_points_++) =                             inv1_k22 * points_[idx+1] + inv1_k23;
+        (*norm_points_++) = inv2_k11 * points_[idx+2] + inv2_k12 * points_[idx+3] + inv2_k13;
+        (*norm_points_++) =                             inv2_k22 * points_[idx+3] + inv2_k23;
     }
 }
 
@@ -53,11 +83,10 @@ bool Math::haveCollinearPoints(const Mat &points_, const std::vector<int>& sampl
     return false;
 }
 
-Mat Math::getSkewSymmetric(const Mat &v_) {
-    const auto * const v = (double *) v_.data;
-    return (Mat_<double>(3,3) << 0, -v[2], v[1],
-            v[2], 0, -v[0],
-            -v[1], v[0], 0);
+Matx33d Math::getSkewSymmetric(const Vec3d &v) {
+     return Matx33d(0,    -v[2], v[1],
+                   v[2],  0,    -v[0],
+                  -v[1],  v[0], 0);
 }
 
 /*
@@ -102,8 +131,8 @@ public:
 
     // interval is <0; max_range);
     UniformRandomGeneratorImpl (int state, int max_range_, int subset_size_) : rng(state) {
-        assert(subset_size_ > 0);
-        assert(subset_size_ <= max_range_);
+        CV_CheckGT(subset_size_, 0, "UniformRandomGenerator. Subset size must be higher than 0!");
+        CV_CheckLE(subset_size_, max_range_, "RandomGenerator. Subset size must be LE than range!");
         subset_size = subset_size_;
         max_range = max_range_;
     }
@@ -118,7 +147,7 @@ public:
 
     // closed range
     void resetGenerator (int max_range_) override {
-        assert(0 <= max_range_);
+        CV_CheckGE(0, max_range_, "max range must be greater than 0");
         max_range = max_range_;
     }
 
@@ -144,7 +173,7 @@ public:
          * if subset size is bigger than range then array cannot be unique,
          * so function has infinite loop.
          */
-        assert(subset_size <= max_range_);
+        CV_CheckLE(subset_size, max_range_, "RandomGenerator. Subset size must be LE than range!");
         int num, j;
         sample[0] = rng.uniform(0, max_range_);
         for (int i = 1; i < subset_size;) {
@@ -158,7 +187,7 @@ public:
 
     // interval is <0, max_range)
     void generateUniqueRandomSet (std::vector<int>& sample, int subset_size_, int max_range_) override {
-        assert(subset_size_ <= max_range_);
+        CV_CheckLE(subset_size_, max_range_, "RandomGenerator. Subset size must be LE than range!");
         int num, j;
         sample[0] = rng.uniform(0, max_range_);
         for (int i = 1; i < subset_size_;) {
@@ -173,7 +202,6 @@ public:
     void setSubsetSize (int subset_size_) override {
         subset_size = subset_size_;
     }
-    int getState () const override { return abs((int)rng.state); }
 };
 
 Ptr<UniformRandomGenerator> UniformRandomGenerator::create (int state) {

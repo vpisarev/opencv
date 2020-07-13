@@ -2,6 +2,49 @@
 // It is subject to the license terms in the LICENSE file found in the top-level directory
 // of this distribution and at http://opencv.org/license.html.
 
+// ---------------------------- License for homography solver -------------------------------------
+/*
+  IMPORTANT: READ BEFORE DOWNLOADING, COPYING, INSTALLING OR USING.
+
+  By downloading, copying, installing or using the software you agree to this license.
+  If you do not agree to this license, do not download, install,
+  copy or use the software.
+                          BSD 3-Clause License
+
+ Copyright (C) 2014, Olexa Bilaniuk, Hamid Bazargani & Robert Laganiere, all rights reserved.
+
+ Redistribution and use in source and binary forms, with or without modification,
+ are permitted provided that the following conditions are met:
+
+   * Redistribution's of source code must retain the above copyright notice,
+     this list of conditions and the following disclaimer.
+
+   * Redistribution's in binary form must reproduce the above copyright notice,
+     this list of conditions and the following disclaimer in the documentation
+     and/or other materials provided with the distribution.
+
+   * The name of the copyright holders may not be used to endorse or promote products
+     derived from this software without specific prior written permission.
+
+ This software is provided by the copyright holders and contributors "as is" and
+ any express or implied warranties, including, but not limited to, the implied
+ warranties of merchantability and fitness for a particular purpose are disclaimed.
+ In no event shall the Intel Corporation or contributors be liable for any direct,
+ indirect, incidental, special, exemplary, or consequential damages
+ (including, but not limited to, procurement of substitute goods or services;
+ loss of use, data, or profits; or business interruption) however caused
+ and on any theory of liability, whether in contract, strict liability,
+ or tort (including negligence or otherwise) arising in any way out of
+ the use of this software, even if advised of the possibility of such damage.
+
+ * Bilaniuk, Olexa, Hamid Bazargani, and Robert Laganiere. "Fast Target
+ * Recognition on Mobile Devices: Revisiting Gaussian Elimination for the
+ * Estimation of Planar Homographies." In Computer Vision and Pattern
+ * Recognition Workshops (CVPRW), 2014 IEEE Conference on, pp. 119-125.
+ * IEEE, 2014.
+ */
+//-------------------------------------------------------------------------------------------------
+
 #ifndef OPENCV_USAC_USAC_HPP
 #define OPENCV_USAC_USAC_HPP
 
@@ -13,6 +56,8 @@ public:
     virtual void setModelParameters (const Mat &model) = 0;
     // returns error of point wih @point_idx w.r.t. model
     virtual float getError (int point_idx) const = 0;
+    virtual void computeErrors (const Mat &model) = 0;
+    virtual const std::vector<float> &getErrors () const = 0;
     virtual Ptr<Error> clone () const = 0;
 };
 
@@ -38,7 +83,7 @@ public:
      * @T1, T2 are output transformation matrices
      */
     virtual void getNormTransformation (Mat &norm_points, const std::vector<int> &sample,
-                                        int sample_number, Mat &T1, Mat &T2) const = 0;
+                                        int sample_number, Matx33d &T1, Matx33d &T2) const = 0;
     static Ptr<NormTransform> create (const Mat &points);
 };
 
@@ -95,7 +140,7 @@ public:
         score = score_;
     }
     // Compare two scores. Objective is minimization of score. Lower score is better.
-    inline bool better(const Score &score2) const {
+    inline bool isBetter (const Score &score2) const {
         return score < score2.score;
     }
 };
@@ -170,7 +215,7 @@ public:
                           Mat &/*non_degenerate_model*/, Score &/*non_degenerate_model_score*/) {
         return false;
     }
-    virtual Ptr<Degeneracy> clone() const = 0;
+    virtual Ptr<Degeneracy> clone(int /*state*/) const { return makePtr<Degeneracy>(); }
 };
 
 class HomographyDegeneracy : public Degeneracy {
@@ -227,8 +272,9 @@ public:
     virtual bool getScore(Score &score) const = 0;
     // update verifier by given inlier number
     virtual void update (int highest_inlier_number) = 0;
-    virtual Ptr<ModelVerifier> clone () const = 0;
+    virtual Ptr<ModelVerifier> clone (int state) const = 0;
 };
+
 struct SPRT_history {
     /*
      * delta:
@@ -268,33 +314,63 @@ public:
        double prob_pt_of_bad_model, double time_sample, double avg_num_models, int score_type_);
 };
 
+//////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////// SAMPLER ///////////////////////////////////////
+class Sampler : public Algorithm {
+public:
+    virtual ~Sampler() override = default;
+    // set new points size
+    virtual void setNewPointsSize (int points_size) = 0;
+    // generate sample. Fill @sample with indices of points.
+    virtual void generateSample (std::vector<int> &sample) = 0;
+    // generate sample for given points size
+    virtual void generateSample (std::vector<int> &sample, int points_size) = 0;
+    // return sample size
+    virtual int getSampleSize () const = 0;
+    virtual Ptr<Sampler> clone (int state) const = 0;
+};
+
+////////////////////////////////////// UNIFORM SAMPLER ////////////////////////////////////////////
+class UniformSampler : public Sampler {
+public:
+    static Ptr<UniformSampler> create(int state, int sample_size_, int points_size_);
+};
+
 /////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////// TERMINATION ///////////////////////////////////////////
 class TerminationCriteria : public Algorithm {
 public:
-    // return true if RANSAC can terminate by given @current_iteration number
-    virtual bool terminate(int current_iteration) const = 0;
-    // termination starts measure time. Should be called in the beginning of RANSAC.
-    virtual void startMeasureTime() = 0;
     // update termination object by given @model and @inlier number.
-    virtual void update(const Mat &model, int inlier_number) = 0;
-    // return predicted number of iterations required for RANSAC
-    virtual int getPredictedNumberIterations() const = 0;
+    // and return maximum number of predicted iteration
+    virtual int update(const Mat &model, int inlier_number) = 0;
+    // clone termination
+    virtual Ptr<TerminationCriteria> clone () const = 0;
 };
 
 //////////////////////////////// STANDARD TERMINATION ///////////////////////////////////////////
 class StandardTerminationCriteria : public TerminationCriteria {
 public:
     static Ptr<StandardTerminationCriteria> create(double confidence, int points_size_,
-               int sample_size_, int max_iterations_, bool is_time_limit_,
-               int max_time_mcs_ = std::numeric_limits<int>::max());
+               int sample_size_, int max_iterations_);
+};
+
+///////////////////////////////////// SPRT TERMINATION //////////////////////////////////////////
+class SPRTTermination : public TerminationCriteria {
+public:
+    static Ptr<SPRTTermination> create(const std::vector<SPRT_history> &sprt_histories_,
+               double confidence, int points_size_, int sample_size_, int max_iterations_);
 };
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////// UTILS ////////////////////////////////////////////////
 namespace Utils {
-    // randomly shuffle vector.
-    void random_shuffle (RNG &rng, std::vector<int> &array);
+    /*
+     * calibrate points: [x'; 1] = K^-1 [x; 1]
+     * @points is matrix N x 4.
+     * @norm_points is output matrix N x 4 with calibrated points.
+     */
+    void calibratePoints (const Mat &K1, const Mat &K2, const Mat &points, Mat &norm_points);
+    double getCalibratedThreshold (double threshold, const Mat &K1, const Mat &K2);
 }
 namespace Math {
     /*
@@ -305,7 +381,7 @@ namespace Math {
     bool haveCollinearPoints(const Mat &points, const std::vector<int> &sample,
             double threshold=1);
     // return skew symmetric matrix
-    Mat getSkewSymmetric(const Mat &v_);
+    Matx33d getSkewSymmetric(const Vec3d &v_);
     // eliminate matrix with m rows and n columns to be upper triangular.
     void eliminateUpperTriangluar (std::vector<double> &a, int m, int n);
 }
@@ -329,44 +405,12 @@ public:
     virtual int getRandomNumber () = 0;
     // return random number from <0, max_rng)
     virtual int getRandomNumber (int max_rng) = 0;
-    virtual int getState () const = 0;
 };
 
 class UniformRandomGenerator : public RandomGenerator {
 public:
     static Ptr<UniformRandomGenerator> create (int state);
     static Ptr<UniformRandomGenerator> create (int state, int max_range, int subset_size_);
-};
-
-//////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////// SAMPLER ///////////////////////////////////////
-class Sampler : public Algorithm {
-public:
-    virtual ~Sampler() override = default;
-    // set new points size
-    virtual void setNewPointsSize (int points_size) = 0;
-    // generate sample. Fill @sample with indices of points.
-    virtual void generateSample (std::vector<int> &sample) = 0;
-    // generate sample for given points size
-    virtual void generateSample (std::vector<int> &sample, int points_size) = 0;
-    // return sample size
-    virtual int getSampleSize () const = 0;
-    virtual Ptr<Sampler> clone () const = 0;
-};
-
-////////////////////////////////////// UNIFORM SAMPLER ////////////////////////////////////////////
-class UniformSampler : public Sampler {
-public:
-    static Ptr<UniformSampler> create(int state, int sample_size_, int points_size_);
-};
-
-////////////////////////////////////// P-NAPSAC SAMPLER /////////////////////////////////////////
-class ProgressiveNapsac : public Sampler {
-public:
-    static Ptr<ProgressiveNapsac> create(int state, const Mat &points, int points_size_,
-       int sample_size_, const std::vector<int> &grid_cell_number_per_layer,
-       int img1_width, int img1_height, int img2_width, int img2_height,
-       int sampler_length_=10);
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -383,7 +427,7 @@ public:
      */
     virtual bool refineModel (const Mat &best_model, const Score &best_model_score,
                               Mat &new_model, Score &new_model_score) = 0;
-    virtual Ptr<LocalOptimization> clone() const = 0;
+    virtual Ptr<LocalOptimization> clone(int state) const = 0;
 };
 
 //////////////////////////////////// INNER LO ///////////////////////////////////////
@@ -477,7 +521,6 @@ public:
     virtual ScoreMethod getScore () const = 0;
     virtual int getMaxIters () const = 0;
     virtual double getConfidence () const = 0;
-    virtual bool isTimeLimit () const = 0;
     virtual double getThreshold () const = 0;
     virtual VerificationMethod getVerifier () const = 0;
     virtual SamplingMethod getSampler () const = 0;
@@ -491,7 +534,6 @@ public:
     virtual int getCellSize () const = 0;
     virtual bool isSampleLimit () const = 0;
     virtual double getRelaxCoef () const = 0;
-    virtual int getMaxTimeMcs() const = 0;
 
     virtual int getSamplerLengthPNAPSAC () const = 0;
     virtual int getFinalLSQIterations () const = 0;
@@ -510,10 +552,8 @@ public:
     virtual int getMaxSampleSizeLOiterative () const = 0;
 
     virtual const std::vector<int> &getGridCellNumber () const = 0;
-    virtual int getImage1Width () const = 0;
-    virtual int getImage1Height () const = 0;
-    virtual int getImage2Width () const = 0;
-    virtual int getImage2Height () const = 0;
+    virtual Size2i getImage1Size () const = 0;
+    virtual Size2i getImage2Size () const = 0;
 
     // setters
     virtual void setLocalOptimization (LocalOptimMethod lo_) = 0;
@@ -538,8 +578,6 @@ public:
     static Ptr<Model> create(double threshold_, EstimationMethod estimator_, SamplingMethod sampler_,
          double confidence_=0.95, int max_iterations_=5000, ScoreMethod score_ =ScoreMethod::MSAC);
 };
-
-int mergePoints (const Mat &pts1, const Mat &pts2, Mat &pts);
 
 Mat findHomography(InputArray srcPoints, InputArray dstPoints, int method = 0,
                    double ransacReprojThreshold = 3, OutputArray mask = noArray(),

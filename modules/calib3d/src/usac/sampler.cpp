@@ -43,7 +43,7 @@ public:
      * to avoid filling array with points.
      */
     void generateSample (std::vector<int> &sample, int points_size_) override {
-        assert(sample_size <= points_size_);
+        CV_Assert(sample_size <= points_size_);
 
         int num, j;
         sample[0] = rng.uniform(0, points_size_);
@@ -56,12 +56,12 @@ public:
         }
     }
     int getSampleSize () const override { return sample_size; }
-    Ptr<Sampler> clone () const override {
-        return makePtr<UniformSamplerImpl>(abs((int)rng.state)/10+10, sample_size, points_size);
+    Ptr<Sampler> clone (int state) const override {
+        return makePtr<UniformSamplerImpl>(state, sample_size, points_size);
     }
 private:
     void setPointsSize (int points_size_) {
-        assert (sample_size <= points_size_);
+        CV_Assert (sample_size <= points_size_);
 
         if (points_size_ > points_size)
             points_random_pool = std::vector<int>(points_size_);
@@ -74,7 +74,6 @@ private:
         }
     }
 };
-
 Ptr<UniformSampler> UniformSampler::create(int state, int sample_size_, int points_size_) {
     return Ptr<UniformSamplerImpl>(new UniformSamplerImpl(state, sample_size_, points_size_));
 }
