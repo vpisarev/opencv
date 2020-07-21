@@ -356,7 +356,7 @@ cv::Mat cv::findHomography( InputArray _points1, InputArray _points2,
     CV_INSTRUMENT_REGION();
 
     if (method == USAC_DEFAULT || method == USAC_PARALLEL)
-        return usac::findHomography(_points1, _points2, method, ransacReprojThreshold, 
+        return usac::findHomography(_points1, _points2, method, ransacReprojThreshold,
             _mask, maxIters, confidence);
 
     const double defaultRANSACReprojThreshold = 3;

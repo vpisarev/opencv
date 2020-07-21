@@ -20,7 +20,7 @@ public:
      *         false - otherwise.
      */
     inline bool isModelValid(const Mat &F, const std::vector<int> &sample) const override {
-        const int sample_size_ = sample.size();
+        const int sample_size_ = static_cast<int>(sample.size());
         Mat ec;
         epipole(ec, F);
         const auto * const F_ptr = (double *) F.data;
@@ -243,13 +243,13 @@ public:
         return is_model_degenerate;
     }
     Ptr<Degeneracy> clone(int state) const override {
-        return makePtr<FundamentalDegeneracyImpl>(state, quality->clone(), *points_mat, 
+        return makePtr<FundamentalDegeneracyImpl>(state, quality->clone(), *points_mat,
             points_size, sample_size, homography_threshold);
     }
 private:
     // RANSAC with plane-and-parallax to find new Fundamental matrix
     Score planeAndParallaxRANSAC (const Matx33d &H, Mat &best_F) {
-        int max_iters = 1e2;
+        int max_iters = 100; // with 95% confidence assume at least 17% of inliers
         Score best_score;
         for (int iters = 0; iters < max_iters; iters++) {
             // draw two random points

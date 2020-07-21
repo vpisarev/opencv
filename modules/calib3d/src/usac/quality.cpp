@@ -356,7 +356,7 @@ public:
         }
     }
     Ptr<ModelVerifier> clone (int state) const override {
-        return makePtr<SPRTImpl>(state, err->clone(), points_size, inlier_threshold, 
+        return makePtr<SPRTImpl>(state, err->clone(), points_size, inlier_threshold,
             sprt_histories[current_sprt_idx].epsilon,
             sprt_histories[current_sprt_idx].delta, t_M, m_S, score_type);
     }

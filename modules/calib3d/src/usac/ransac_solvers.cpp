@@ -251,7 +251,7 @@ public:
                     best_model_thread.copyTo(best_models[thread_rng_id]);
                     best_score_all_threads = best_score_thread;
                 };
-                
+
                 for (iters = 0; iters < max_iters; iters++) {
                     if (success) break; // avoid using atomic variable, so define one more break
                     // const int hyp = num_hypothesis_tested++;
@@ -385,7 +385,7 @@ int mergePoints (InputArray pts1_, InputArray pts2_, Mat &pts) {
     Mat pts1 = pts1_.getMat(), pts2 = pts2_.getMat();
     auto convert_pts = [] (InputArray pts_, Mat &points) {
         if (pts_.isVector()) // reshape vector of Point2f to Mat
-            points = points.reshape(0, pts_.total()); // points are in rows
+            points = points.reshape(0, (int)pts_.total()); // points are in rows
         else if (points.cols > points.rows)
             points = points.t(); // transpose so points will be in rows
         points.convertTo(points, CV_32F); // use float precision
