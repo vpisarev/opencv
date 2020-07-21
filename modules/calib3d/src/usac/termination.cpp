@@ -70,7 +70,7 @@ public:
      * log n(l) = sum from i = 0 to l k(i) * ( 1 - P_g (1 - A(i)^(-h(i))) )
      *
      *        log (n0) - log (n(l-1))
-     * k(l) = -----------------------
+     * k(l) = -----------------------  (9)
      *          log (1 - P_g*A(l)^-1)
      *
      * A is decision threshold
@@ -80,7 +80,6 @@ public:
      * this equation does not have to be evaluated before nR < n0
      * nR = (1 - P_g)^k
      */
-
     int update (const Mat &/*model*/, int inlier_size) override {
         if (sprt_histories.empty())
             return std::min(MAX_ITERATIONS, getStandardUpperBound(inlier_size));
@@ -91,37 +90,32 @@ public:
         double log_eta_lmin1 = 0;
 
         int total_number_of_tested_samples = 0;
-        const int sprts_size = static_cast<int>(sprt_histories.size());
+        const int sprts_size_min1 = static_cast<int>(sprt_histories.size())-1;
+        if (sprts_size_min1 < 0) return getStandardUpperBound(inlier_size);
         // compute log n(l-1), l is number of tests
-        for (int test = 0; test < sprts_size-1; test++) {
-            const double h = computeExponentH(sprt_histories[test].epsilon, epsilon,
-                    sprt_histories[test].delta);
-            log_eta_lmin1 += log (1 - P_g * (1 - pow (sprt_histories[test].A, -h)))
-                                    * sprt_histories[test].tested_samples;
+        for (int test = 0; test < sprts_size_min1; test++) {
+            log_eta_lmin1 += log (1 - P_g * (1 - pow (sprt_histories[test].A,
+             -computeExponentH(sprt_histories[test].epsilon, epsilon,sprt_histories[test].delta))))
+                         * sprt_histories[test].tested_samples;
             total_number_of_tested_samples += sprt_histories[test].tested_samples;
         }
 
+        // Implementation note: since η > ηR the equation (9) does not have to be evaluated
+        // before ηR < η0 is satisfied.
         if (std::pow(1 - P_g, total_number_of_tested_samples) < log_eta_0)
             return std::min(MAX_ITERATIONS, getStandardUpperBound(inlier_size));
-
-        double numerator = log_eta_0 - log_eta_lmin1;
-        // denominator is always negative, so numerator must also be negative
-        if (numerator >= 0)
-            return 0;
-
         // use decision threshold A for last test (l-th)
-        double denominator = log (1 - P_g * (1 - 1 / sprt_histories[sprts_size-1].A));
+        const double predicted_iters_sprt = (log_eta_0 - log_eta_lmin1) /
+                log (1 - P_g * (1 - 1 / sprt_histories[sprts_size_min1].A)); // last A
+        if (std::isnan(predicted_iters_sprt) || std::isinf(predicted_iters_sprt))
+            return getStandardUpperBound(inlier_size);
 
-        // if denominator is nan or almost zero then return max integer
-        if (std::isnan(denominator) || fabs (denominator) < std::numeric_limits<double>::max())
-            return std::min(MAX_ITERATIONS, getStandardUpperBound(inlier_size));
-
-        // predicted number of iterations of SPRT
-        int predicted_iterations = std::min(MAX_ITERATIONS,
-                static_cast<int>(ceil(numerator / denominator)));
-
-        // compare with standard termination criterion
-        return std::min(predicted_iterations, getStandardUpperBound(inlier_size));
+        if (predicted_iters_sprt < 0) return 0;
+        // compare with standard upper bound
+        if (predicted_iters_sprt < MAX_ITERATIONS)
+            return std::min(static_cast<int>(predicted_iters_sprt),
+                    getStandardUpperBound(inlier_size));
+        return getStandardUpperBound(inlier_size);
     }
 
     Ptr<TerminationCriteria> clone () const override {

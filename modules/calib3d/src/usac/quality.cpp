@@ -273,7 +273,7 @@ public:
                     sum_errors += inlier_threshold;
                     lambda *= complement_delta_to_complement_epsilon;
                 }
-                if (lambda > current_A || sum_errors > lowest_sum_errors /* no case it would be better */) {
+                if (lambda > current_A || sum_errors > lowest_sum_errors /* can't be better */) {
                     last_model_is_good = false;
                     tested_point++;
                     break;
@@ -289,7 +289,7 @@ public:
                     lambda *= delta_to_epsilon;
                 } else
                     lambda *= complement_delta_to_complement_epsilon;
-                if (lambda > current_A || (tested_inliers + (points_size - tested_point)) < highest_inlier_number) {
+                if (lambda > current_A || (tested_inliers + points_size - tested_point) < highest_inlier_number) {
                     last_model_is_good = false;
                     tested_point++;
                     break;
@@ -306,15 +306,15 @@ public:
             } else if (score_type == 0)
                 score.score = -static_cast<double>(tested_inliers);
 
-            if (tested_inliers > highest_inlier_number) {
+            const double new_epsilon = static_cast<double>(tested_inliers) / points_size;
+            if (new_epsilon > current_epsilon) {
                 highest_inlier_number = tested_inliers; // update max inlier number
                 /*
                  * Model accepted and the largest support so far:
                  * design (i+1)-th test (εi + 1= εˆ, δi+1 = δ, i := i + 1).
                  * Store the current model parameters θ
                  */
-                createTest(static_cast<double>(tested_inliers)
-                         / points_size, current_delta);
+                createTest(new_epsilon, current_delta);
             }
         } else {
             /*
@@ -322,7 +322,7 @@ public:
              * δ can be estimated as the average fraction of consistent data points
              * in rejected models.
              */
-            double delta_estimated = static_cast<double> (tested_inliers) / tested_point;
+            const double delta_estimated = static_cast<double> (tested_inliers) / tested_point;
             if (delta_estimated > 0 && fabs(current_delta - delta_estimated)
                                        / current_delta > 0.05)
                 /*
@@ -346,29 +346,31 @@ public:
         return true;
     }
     void update (int highest_inlier_number_) override {
-        if (highest_inlier_number_ > highest_inlier_number) {
-            // update probability of point belonging to good model and create new test.
+        const double new_epsilon = static_cast<double>(highest_inlier_number_) / points_size;
+        if (new_epsilon > current_epsilon) {
             highest_inlier_number = highest_inlier_number_;
             if (sprt_histories[current_sprt_idx].tested_samples == 0)
                 sprt_histories[current_sprt_idx].tested_samples = 1;
             // save sprt test and create new one
-            createTest(static_cast<double>(highest_inlier_number)
-                       / points_size, current_delta);
+            createTest(new_epsilon, current_delta);
         }
     }
     Ptr<ModelVerifier> clone (int state) const override {
-        return makePtr<SPRTImpl>(state, err->clone(), points_size, inlier_threshold,
-            sprt_histories[current_sprt_idx].epsilon, sprt_histories[current_sprt_idx].delta,
-            t_M, m_S, score_type);
+        return makePtr<SPRTImpl>(state, err->clone(), points_size, inlier_threshold, 
+            sprt_histories[current_sprt_idx].epsilon,
+            sprt_histories[current_sprt_idx].delta, t_M, m_S, score_type);
     }
 private:
 
     // Saves sprt test to sprt history and update current epsilon, delta and threshold.
     void createTest (double epsilon, double delta) {
         // if epsilon is closed to 1 then set them to 0.99 to avoid numerical problems
-        if (epsilon > 0.999999) epsilon = 0.99;
+        if (epsilon > 0.999999) epsilon = 0.999;
+        // delta can't be higher than epsilon, because ratio delta / epsilon will be greater than 1
+        if (epsilon < delta) delta = epsilon-0.01;
         // avoid delta going too high as it is very unlikely
-        if (delta   > 0.8) delta = 0.8;
+        // e.g., 30% of points are consistent with bad model is not very real
+        if (delta   > 0.3) delta = 0.3;
 
         SPRT_history new_sprt_history;
         new_sprt_history.epsilon = epsilon;

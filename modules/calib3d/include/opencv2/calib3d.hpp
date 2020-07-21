@@ -445,7 +445,8 @@ enum { LMEDS  = 4,  //!< least-median of squares algorithm
        RANSAC = 8,  //!< RANSAC algorithm
        RHO    = 16, //!< RHO algorithm
        USAC_DEFAULT  = 32, //!< USAC algorithm, default settings
-       USAC_PARALLEL = 33  //!< USAC algorithm, parallel version
+       USAC_PARALLEL = 33, //!< USAC, parallel version
+       USAC_FM_8PTS = 34   //!< USAC, fundamental matrix 8 points
      };
 
 enum SolvePnPMethod {

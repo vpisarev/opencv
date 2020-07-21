@@ -356,7 +356,8 @@ cv::Mat cv::findHomography( InputArray _points1, InputArray _points2,
     CV_INSTRUMENT_REGION();
 
     if (method == USAC_DEFAULT || method == USAC_PARALLEL)
-        return usac::findHomography(_points1, _points2, method, ransacReprojThreshold, _mask, maxIters, confidence);
+        return usac::findHomography(_points1, _points2, method, ransacReprojThreshold, 
+            _mask, maxIters, confidence);
 
     const double defaultRANSACReprojThreshold = 3;
     bool result = false;
@@ -817,6 +818,10 @@ cv::Mat cv::findFundamentalMat( InputArray _points1, InputArray _points2,
                                 int maxIters, OutputArray _mask )
 {
     CV_INSTRUMENT_REGION();
+
+    if (method == USAC_DEFAULT || method == USAC_PARALLEL || method == USAC_FM_8PTS)
+        return usac::findFundamentalMat(_points1, _points2, method,
+            ransacReprojThreshold, confidence, maxIters, _mask);
 
     Mat points1 = _points1.getMat(), points2 = _points2.getMat();
     Mat m1, m2, F;

@@ -6,11 +6,6 @@
 #include "../usac.hpp"
 
 namespace cv { namespace usac {
-/*
-* Uniform Sampler:
-* Choose uniformly m (sample size) points from N (points size).
-* Uses Fisher-Yates shuffle.
-*/
 class UniformSamplerImpl : public UniformSampler {
 private:
     std::vector<int> points_random_pool;

@@ -46,6 +46,55 @@ Ptr<HomographyEstimator> HomographyEstimator::create (const Ptr<MinimalSolver> &
     return makePtr<HomographyEstimatorImpl>(min_solver_, non_min_solver_, degeneracy_);
 }
 
+/////////////////////////////////////////////////////////////////////////
+class FundamentalEstimatorImpl : public FundamentalEstimator {
+private:
+    const Ptr<MinimalSolver> min_solver;
+    const Ptr<NonMinimalSolver> non_min_solver;
+    const Ptr<Degeneracy> degeneracy;
+public:
+    FundamentalEstimatorImpl (const Ptr<MinimalSolver> &min_solver_,
+            const Ptr<NonMinimalSolver> &non_min_solver_, const Ptr<Degeneracy> &degeneracy_) :
+         min_solver (min_solver_), non_min_solver (non_min_solver_), degeneracy (degeneracy_) {}
+
+    inline int
+    estimateModels(const std::vector<int> &sample, std::vector<Mat> &models) const override {
+        std::vector<Mat> F;
+        const int models_count = min_solver->estimate(sample, F);
+        int valid_models_count = 0;
+
+        for (int i = 0; i < models_count; i++)
+            if (degeneracy->isModelValid(F[i], sample))
+                models[valid_models_count++] = F[i];
+
+        return valid_models_count;
+    }
+    int estimateModelNonMinimalSample(const std::vector<int> &sample, int sample_size,
+            std::vector<Mat> &models, const std::vector<double> &weights) const override {
+        return non_min_solver->estimate(sample, sample_size, models, weights);
+    }
+    int getMaxNumSolutions () const override {
+        return min_solver->getMaxNumberOfSolutions();
+    }
+    int getMinimalSampleSize () const override {
+        return min_solver->getSampleSize();
+    }
+    int getNonMinimalSampleSize () const override {
+        return non_min_solver->getMinimumRequiredSampleSize();
+    }
+    int getMaxNumSolutionsNonMinimal () const override {
+        return non_min_solver->getMaxNumberOfSolutions();
+    }
+    Ptr<Estimator> clone() const override {
+        return makePtr<FundamentalEstimatorImpl>(min_solver->clone(), non_min_solver->clone(),
+                degeneracy->clone(0));
+    }
+};
+Ptr<FundamentalEstimator> FundamentalEstimator::create (const Ptr<MinimalSolver> &min_solver_,
+        const Ptr<NonMinimalSolver> &non_min_solver_, const Ptr<Degeneracy> &degeneracy_) {
+    return makePtr<FundamentalEstimatorImpl>(min_solver_, non_min_solver_, degeneracy_);
+}
+
 ///////////////////////////////////////////// ERROR /////////////////////////////////////////
 // Symmetric Reprojection Error
 class ReprojectedErrorSymmetricImpl : public ReprojectionErrorSymmetric {
@@ -73,8 +122,7 @@ public:
     }
     inline float getError (int point_idx) const override {
         const int smpl = 4*point_idx;
-        const float x1=points[smpl  ], y1=points[smpl+1],
-                    x2=points[smpl+2], y2=points[smpl+3];
+        const float x1=points[smpl], y1=points[smpl+1], x2=points[smpl+2], y2=points[smpl+3];
         const float est_z2 =  m31 * x1 + m32 * y1 + m33,
                     est_x2 = (m11 * x1 + m12 * y1 + m13) / est_z2,
                     est_y2 = (m21 * x1 + m22 * y1 + m23) / est_z2;
@@ -88,8 +136,7 @@ public:
         setModelParameters(model);
         for (int point_idx = 0; point_idx < points_mat->rows; point_idx++) {
             const int smpl = 4*point_idx;
-            const float x1=points[smpl  ], y1=points[smpl+1],
-                        x2=points[smpl+2], y2=points[smpl+3];
+            const float x1=points[smpl], y1=points[smpl+1], x2=points[smpl+2], y2=points[smpl+3];
             const float est_z2 =  m31 * x1 + m32 * y1 + m33,
                         est_x2 = (m11 * x1 + m12 * y1 + m13) / est_z2,
                         est_y2 = (m21 * x1 + m22 * y1 + m23) / est_z2;
@@ -129,8 +176,7 @@ public:
     }
     inline float getError (int point_idx) const override {
         const int smpl = 4*point_idx;
-        const float x1 = points[smpl  ], y1 = points[smpl+1],
-                    x2 = points[smpl+2], y2 = points[smpl+3];
+        const float x1 = points[smpl], y1 = points[smpl+1], x2 = points[smpl+2], y2 = points[smpl+3];
         const float est_z2 =  m31 * x1 + m32 * y1 + m33,
                     est_x2 = (m11 * x1 + m12 * y1 + m13) / est_z2,
                     est_y2 = (m21 * x1 + m22 * y1 + m23) / est_z2;
@@ -140,8 +186,7 @@ public:
         setModelParameters(model);
         for (int point_idx = 0; point_idx < points_mat->rows; point_idx++) {
             const int smpl = 4*point_idx;
-            const float x1=points[smpl  ], y1=points[smpl+1],
-                        x2=points[smpl+2], y2=points[smpl+3];
+            const float x1=points[smpl], y1=points[smpl+1], x2=points[smpl+2], y2=points[smpl+3];
             const float est_z2 =  m31 * x1 + m32 * y1 + m33,
                         est_x2 = (m11 * x1 + m12 * y1 + m13) / est_z2,
                         est_y2 = (m21 * x1 + m22 * y1 + m23) / est_z2;
@@ -156,6 +201,68 @@ public:
 Ptr<ReprojectionErrorForward>
 ReprojectionErrorForward::create(const Mat &points) {
     return makePtr<ReprojectedErrorForwardImpl>(points);
+}
+
+class SampsonErrorImpl : public SampsonError {
+private:
+    const Mat * points_mat;
+    const float * const points;
+    float m11, m12, m13, m21, m22, m23, m31, m32, m33;
+    std::vector<float> errors;
+public:
+    explicit SampsonErrorImpl (const Mat &points_) :
+            points_mat(&points_), points ((float *) points_.data), errors(points_.rows) {}
+
+    inline void setModelParameters (const Mat &model) override {
+        const auto * const m = (double *) model.data;
+        m11=static_cast<float>(m[0]); m12=static_cast<float>(m[1]); m13=static_cast<float>(m[2]);
+        m21=static_cast<float>(m[3]); m22=static_cast<float>(m[4]); m23=static_cast<float>(m[5]);
+        m31=static_cast<float>(m[6]); m32=static_cast<float>(m[7]); m33=static_cast<float>(m[8]);
+    }
+
+    /*
+     *                                       (pt2^t * F * pt1)^2)
+     * Sampson error = ------------------------------------------------------------------------
+     *                  (((F⋅pt1)(0))^2 + ((F⋅pt1)(1))^2 + ((F^t⋅pt2)(0))^2 + ((F^t⋅pt2)(1))^2)
+     *
+     * [ x2 y2 1 ] * [ F(1,1)  F(1,2)  F(1,3) ]   [ x1 ]
+     *               [ F(2,1)  F(2,2)  F(2,3) ] * [ y1 ]
+     *               [ F(3,1)  F(3,2)  F(3,3) ]   [ 1  ]
+     *
+     */
+    inline float getError (int point_idx) const override {
+        const int smpl = 4*point_idx;
+        const float x1=points[smpl], y1=points[smpl+1], x2=points[smpl+2], y2=points[smpl+3];
+        const float F_pt1_x = m11 * x1 + m12 * y1 + m13,
+                    F_pt1_y = m21 * x1 + m22 * y1 + m23;
+        const float pt2_F_x = x2 * m11 + y2 * m21 + m31,
+                    pt2_F_y = x2 * m12 + y2 * m22 + m32;
+        const float pt2_F_pt1 = x2 * F_pt1_x + y2 * F_pt1_y + m31 * x1 + m32 * y1 + m33;
+        return (pt2_F_pt1 * pt2_F_pt1) / (F_pt1_x * F_pt1_x + F_pt1_y * F_pt1_y +
+                                          pt2_F_x * pt2_F_x + pt2_F_y * pt2_F_y);
+    }
+    void computeErrors (const Mat &model) override {
+        setModelParameters(model);
+        for (int point_idx = 0; point_idx < points_mat->rows; point_idx++) {
+            const int smpl = 4*point_idx;
+            const float x1=points[smpl], y1=points[smpl+1], x2=points[smpl+2], y2=points[smpl+3];
+            const float F_pt1_x = m11 * x1 + m12 * y1 + m13,
+                        F_pt1_y = m21 * x1 + m22 * y1 + m23;
+            const float pt2_F_x = x2 * m11 + y2 * m21 + m31,
+                        pt2_F_y = x2 * m12 + y2 * m22 + m32;
+            const float pt2_F_pt1 = x2 * F_pt1_x + y2 * F_pt1_y + m31 * x1 + m32 * y1 + m33;
+            errors[point_idx] = (pt2_F_pt1 * pt2_F_pt1) / (F_pt1_x * F_pt1_x + F_pt1_y * F_pt1_y +
+                                                           pt2_F_x * pt2_F_x + pt2_F_y * pt2_F_y);
+        }
+    }
+    const std::vector<float> &getErrors () const override { return errors; }
+    Ptr<Error> clone () const override {
+        return makePtr<SampsonErrorImpl>(*points_mat);
+    }
+};
+Ptr<SampsonError>
+SampsonError::create(const Mat &points) {
+    return makePtr<SampsonErrorImpl>(points);
 }
 
 ////////////////////////////////////// NORMALIZING TRANSFORMATION /////////////////////////

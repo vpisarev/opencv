@@ -73,6 +73,12 @@ public:
     static Ptr<ReprojectionErrorForward> create(const Mat &points);
 };
 
+// Sampson Error for Fundamental matrix
+class SampsonError : public Error {
+public:
+    static Ptr<SampsonError> create(const Mat &points);
+};
+
 // Normalizing transformation of data points
 class NormTransform : public Algorithm {
 public:
@@ -106,6 +112,17 @@ public:
     static Ptr<HomographyMinimalSolver4ptsGEM> create(const Mat &points_);
 };
 
+//-------------------------- FUNDAMENTAL MATRIX -----------------------
+class FundamentalMinimalSolver7pts : public MinimalSolver {
+public:
+    static Ptr<FundamentalMinimalSolver7pts> create(const Mat &points_);
+};
+
+class FundamentalMinimalSolver8pts : public MinimalSolver {
+public:
+    static Ptr<FundamentalMinimalSolver8pts> create(const Mat &points_);
+};
+
 //////////////////////////////////////// NON MINIMAL SOLVER ///////////////////////////////////////
 class NonMinimalSolver : public Algorithm {
 public:
@@ -123,6 +140,12 @@ public:
 class HomographyNonMinimalSolver : public NonMinimalSolver {
 public:
     static Ptr<HomographyNonMinimalSolver> create(const Mat &points_);
+};
+
+//-------------------------- FUNDAMENTAL MATRIX -----------------------
+class FundamentalNonMinimalSolver : public NonMinimalSolver {
+public:
+    static Ptr<FundamentalNonMinimalSolver> create(const Mat &points_);
 };
 
 //////////////////////////////////////////////////////////////////////////////////////////////
@@ -218,9 +241,22 @@ public:
     virtual Ptr<Degeneracy> clone(int /*state*/) const { return makePtr<Degeneracy>(); }
 };
 
+class EpipolarGeometryDegeneracy : public Degeneracy {
+public:
+    static void recoverRank (Mat &model);
+    static Ptr<EpipolarGeometryDegeneracy> create (const Mat &points_, int sample_size_);
+};
+
 class HomographyDegeneracy : public Degeneracy {
 public:
     static Ptr<HomographyDegeneracy> create(const Mat &points_);
+};
+
+class FundamentalDegeneracy : public EpipolarGeometryDegeneracy {
+public:
+    // threshold for homography is squared so is around 2.236 pixels
+    static Ptr<FundamentalDegeneracy> create (int state, const Ptr<Quality> &quality_,
+    const Mat &points_, int points_size_, int sample_size_, double homography_threshold_=5);
 };
 
 /////////////////////////////////////////////////////////////////////////////////////
@@ -258,6 +294,12 @@ public:
 class HomographyEstimator : public Estimator {
 public:
     static Ptr<HomographyEstimator> create (const Ptr<MinimalSolver> &min_solver_,
+            const Ptr<NonMinimalSolver> &non_min_solver_, const Ptr<Degeneracy> &degeneracy_);
+};
+
+class FundamentalEstimator : public Estimator {
+public:
+    static Ptr<FundamentalEstimator> create (const Ptr<MinimalSolver> &min_solver_,
             const Ptr<NonMinimalSolver> &non_min_solver_, const Ptr<Degeneracy> &degeneracy_);
 };
 
@@ -582,6 +624,10 @@ public:
 Mat findHomography(InputArray srcPoints, InputArray dstPoints, int method = 0,
                    double ransacReprojThreshold = 3, OutputArray mask = noArray(),
                    const int maxIters = 2000, const double confidence = 0.995);
+
+Mat findFundamentalMat( InputArray points1, InputArray points2,
+    int method, double ransacReprojThreshold, double confidence,
+    int maxIters, OutputArray mask);
 }}
 
 #endif //OPENCV_USAC_USAC_HPP
