@@ -409,7 +409,7 @@ cv::Mat cv::findEssentialMat( InputArray _points1, InputArray _points2, InputArr
 {
     CV_INSTRUMENT_REGION();
 
-    if (method == USAC_DEFAULT || method == USAC_PARALLEL) 
+    if (method == USAC_DEFAULT || method == USAC_PARALLEL)
         return usac::findEssentialMat(_points1, _points2, _cameraMatrix, _cameraMatrix,
             method, prob, threshold, 1000, _mask);
 
@@ -470,7 +470,7 @@ cv::Mat cv::findEssentialMat( InputArray _points1, InputArray _points2,
           int method, double prob, double threshold, int maxIters,
           OutputArray mask) {
     CV_INSTRUMENT_REGION();
-    if (method == USAC_DEFAULT || method == USAC_PARALLEL)    
+    if (method == USAC_DEFAULT || method == USAC_PARALLEL)
         return usac::findEssentialMat(_points1, _points2, cameraMatrix1, cameraMatrix2,
             method, prob, threshold, maxIters, mask);
     else return Mat();

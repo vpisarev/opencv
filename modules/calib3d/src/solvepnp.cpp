@@ -49,6 +49,8 @@
 #include "ippe.hpp"
 #include "calib3d_c_api.h"
 
+#include "usac.hpp"
+
 namespace cv
 {
 #if defined _DEBUG || defined CV_STATIC_ANALYSIS
@@ -200,6 +202,11 @@ bool solvePnPRansac(InputArray _opoints, InputArray _ipoints,
                     OutputArray _inliers, int flags)
 {
     CV_INSTRUMENT_REGION();
+
+    if (flags == USAC_DEFAULT || flags == USAC_PARALLEL)
+        return usac::solvePnPRansac(_opoints, _ipoints, _cameraMatrix, _distCoeffs,
+            _rvec, _tvec, useExtrinsicGuess, iterationsCount, reprojectionError,
+            confidence, _inliers, flags);
 
     Mat opoints0 = _opoints.getMat(), ipoints0 = _ipoints.getMat();
     Mat opoints, ipoints;

@@ -303,4 +303,21 @@ TEST(usac_Essential, accuracy) {
                 cpts1_3d.rowRange(0,2), cpts2_3d.rowRange(0,2), E, mask);
     }
 }
+TEST(usac_P3P, accuracy) {
+    std::vector<int> gt_inliers;
+    const int pts_size = 4000;
+    cv::Mat img_pts, obj_pts, K1, K2;
+    cv::RNG &rng = cv::theRNG();
+    for (double inl_ratio = 0.1; inl_ratio < 0.9; inl_ratio += 0.01) {
+        int inl_size = generatePoints(rng, img_pts, obj_pts, K1, K2, false /*two calib*/,
+                 pts_size, TestSolver ::PnP, inl_ratio, 0.2 /*noise std*/, gt_inliers);
+        const double conf = 0.99, thr = 2., max_iters = 1.3 * log(1 - conf) /
+                   log(1 - pow(inl_ratio, 3 /* sample size */));
+        cv::Mat rvec, tvec, mask, R, P;
+        CV_Assert(cv::solvePnPRansac(obj_pts, img_pts, K1, cv::noArray(), rvec, tvec, false, (int)max_iters, (float)thr, conf, mask, USAC_DEFAULT));
+        cv::Rodrigues(rvec, R);
+        cv::hconcat(K1 * R, K1 * tvec, P);
+        checkInliersMask(TestSolver ::PnP, inl_size, thr, img_pts, obj_pts, P, mask);
+    }
+}
 }

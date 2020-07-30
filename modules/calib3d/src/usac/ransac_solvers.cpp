@@ -616,7 +616,6 @@ bool solvePnPRansac( InputArray objectPoints, InputArray imagePoints,
 
     Ptr<Sampler> lo_sampler = UniformSampler::create(state++, params->getMaxSampleSizeLO(), points_size);
     Ptr<LocalOptimization> inner_lo_rsc = InnerLocalOptimization::create(estimator, quality, lo_sampler, points_size, 3);
-//    Ptr<LocalOptimization> inner_lo_rsc;
 
     Ransac ransac (params, points_size, estimator, quality, sampler,
                     termination, verifier, degeneracy, inner_lo_rsc, polisher, flags == USAC_PARALLEL, state);
