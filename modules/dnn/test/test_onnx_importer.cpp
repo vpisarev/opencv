@@ -114,6 +114,17 @@ TEST_P(Test_ONNX_layers, Convolution)
     testONNXModels("convolution");
 }
 
+TEST_P(Test_ONNX_layers, Gather)
+{
+    if (backend == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019 && target == DNN_TARGET_MYRIAD)
+        applyTestTag(CV_TEST_TAG_DNN_SKIP_IE_MYRIAD, CV_TEST_TAG_DNN_SKIP_IE_NN_BUILDER);
+    testONNXModels("gather");
+    // GPU plugin unsupported slice for constant
+    if (backend == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH && (target == DNN_TARGET_OPENCL || target == DNN_TARGET_OPENCL_FP16))
+        applyTestTag(CV_TEST_TAG_DNN_SKIP_IE_OPENCL, CV_TEST_TAG_DNN_SKIP_IE_OPENCL_FP16, CV_TEST_TAG_DNN_SKIP_IE_NGRAPH);
+    testONNXModels("gather_scalar", npy, 0, 0, false, false);
+}
+
 TEST_P(Test_ONNX_layers, Convolution3D)
 {
 #if defined(INF_ENGINE_RELEASE) && INF_ENGINE_VER_MAJOR_LT(2019010000)
@@ -740,6 +751,13 @@ TEST_P(Test_ONNX_nets, TinyYolov2)
         l1 = 0.018;
         lInf = 0.16;
     }
+#if defined(INF_ENGINE_RELEASE) && INF_ENGINE_VER_MAJOR_EQ(2020040000)
+    if (backend == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH && target == DNN_TARGET_OPENCL_FP16)
+    {
+        l1 = 0.018f; lInf = 0.16f;
+    }
+#endif
+
     testONNXModels("tiny_yolo2", pb, l1, lInf);
 }
 
@@ -823,6 +841,13 @@ TEST_P(Test_ONNX_nets, Emotion_ferplus)
         l1 = 2.4e-4;
         lInf = 6e-4;
     }
+#if defined(INF_ENGINE_RELEASE) && INF_ENGINE_VER_MAJOR_EQ(2020040000)
+    if (backend == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH && target == DNN_TARGET_OPENCL_FP16)
+    {
+        l1 = 0.012f; lInf = 0.035f;
+    }
+#endif
+
     testONNXModels("emotion_ferplus", pb, l1, lInf);
 }
 

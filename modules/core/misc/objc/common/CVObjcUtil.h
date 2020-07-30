@@ -6,16 +6,16 @@
 
 #pragma once
 
-typedef union { double d; int64_t l; } V64;
-typedef union { float f; int32_t i; } V32;
-
-#define DOUBLE_TO_BITS(x)  ((V64){ .d = x }).l
-#define FLOAT_TO_BITS(x)  ((V32){ .f = x }).i
+#ifndef CV_EXPORTS
+#ifdef __cplusplus
+#define CV_EXPORTS __attribute__ ((visibility ("default")))
+#else
+#define CV_EXPORTS
+#endif
+#endif
 
 #ifdef __cplusplus
 #import <vector>
-
-#define MAKE_PTR(t) (*((cv::Ptr<t>*)self.nativePtr))
 
 template <typename CV, typename OBJC> std::vector<CV> objc2cv(NSArray<OBJC*>* _Nonnull array, CV& (* _Nonnull converter)(OBJC* _Nonnull)) {
     std::vector<CV> ret;

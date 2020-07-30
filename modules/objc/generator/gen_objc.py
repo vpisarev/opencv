@@ -83,6 +83,8 @@ method_dict = {
     ("Mat", "dot") : "-dot:"
 }
 
+modules = []
+
 def read_contents(fname):
     with open(fname, 'r') as f:
         data = f.read()
@@ -124,7 +126,7 @@ class GeneralInfo():
 
             docstring += sanitize_documentation_string(doc, type)
         elif type == "class":
-            docstring += "/**\n* The " + self.name + " module\n*/\n"
+            docstring += "/**\n * The " + self.name + " module\n */\n"
 
         self.docstring = docstring
 
@@ -199,6 +201,19 @@ def cast_to(t):
         return type_dict[t]["cast_to"]
     return t
 
+def gen_class_doc(docstring, module, members, enums):
+    lines = docstring.splitlines()
+    lines.insert(len(lines)-1, " *")
+    if len(members) > 0:
+        lines.insert(len(lines)-1, " * Member classes: " + ", ".join([("`" + m + "`") for m in members]))
+        lines.insert(len(lines)-1, " *")
+    else:
+        lines.insert(len(lines)-1, " * Member of `" + module + "`")
+    if len(enums) > 0:
+        lines.insert(len(lines)-1, " * Member enums: " + ", ".join([("`" + m + "`") for m in enums]))
+
+    return "\n".join(lines)
+
 class ClassPropInfo():
     def __init__(self, decl): # [f_ctype, f_name, '', '/RW']
         self.ctype = decl[0]
@@ -231,8 +246,14 @@ class ClassInfo(GeneralInfo):
                 self.objc_name = m[1:]
         self.base = ''
         self.is_base_class = True
+        self.native_ptr_name = "nativePtr"
+        self.member_classes = [] # Only relevant for modules
+        self.member_enums = [] # Only relevant for modules
         if decl[1]:
             self.base = re.sub(r"^.*:", "", decl[1].split(",")[0]).strip().replace(self.objc_name, "")
+            if self.base:
+                self.is_base_class = False
+                self.native_ptr_name = "nativePtr" + self.objc_name
 
     def __repr__(self):
         return Template("CLASS $namespace::$classpath.$name : $base").substitute(**self.__dict__)
@@ -296,7 +317,6 @@ class ClassInfo(GeneralInfo):
         if self.base:
             self.objc_header_template = T_OBJC_CLASS_HEADER
             self.objc_body_template = T_OBJC_CLASS_BODY
-            self.is_base_class = False
         else:
             self.base = "NSObject"
             if self.name != Module:
@@ -326,26 +346,25 @@ class ClassInfo(GeneralInfo):
                             nativePointerHandling = Template(
 """
 #ifdef __cplusplus
-@property(readonly)$cName* nativePtr;
+@property(readonly)cv::Ptr<$cName> $native_ptr_name;
 #endif
 
-- (void)dealloc;
-
 #ifdef __cplusplus
-- (instancetype)initWithNativePtr:($cName*)nativePtr;
-+ (instancetype)fromNative:($cName*)nativePtr;
+- (instancetype)initWithNativePtr:(cv::Ptr<$cName>)nativePtr;
++ (instancetype)fromNative:(cv::Ptr<$cName>)nativePtr;
 #endif
 """
                             ).substitute(
-                                cName = self.fullName(isCPP=True)
-                            ) if self.is_base_class else "",
+                                cName = self.fullName(isCPP=True),
+                                native_ptr_name = self.native_ptr_name
+                            ),
                             manualMethodDeclations = "",
                             methodDeclarations = self.method_declarations.getvalue(),
                             name = self.name,
                             objcName = self.objc_name,
                             cName = self.cname,
                             imports = "\n".join(self.getImports(M)),
-                            docs = self.docstring,
+                            docs = gen_class_doc(self.docstring, M, self.member_classes, self.member_enums),
                             base = self.base)
 
     def generateObjcBodyCode(self, m, M):
@@ -353,35 +372,31 @@ class ClassInfo(GeneralInfo):
                             module = M,
                             nativePointerHandling=Template(
 """
-- (void)dealloc {
-    if (_nativePtr != NULL) {
-        delete _nativePtr;
-    }
-}
-
-- (instancetype)initWithNativePtr:($cName*)nativePtr {
-    self = [super init];
+- (instancetype)initWithNativePtr:(cv::Ptr<$cName>)nativePtr {
+    self = [super $init_call];
     if (self) {
-        _nativePtr = nativePtr;
+        _$native_ptr_name = nativePtr;
     }
     return self;
 }
 
-+ (instancetype)fromNative:($cName*)nativePtr {
++ (instancetype)fromNative:(cv::Ptr<$cName>)nativePtr {
     return [[$objcName alloc] initWithNativePtr:nativePtr];
 }
 """
                             ).substitute(
-                                cName=self.fullName(isCPP=True),
-                                objcName=self.objc_name
-                            ) if self.is_base_class else "",
+                                cName = self.fullName(isCPP=True),
+                                objcName = self.objc_name,
+                                native_ptr_name = self.native_ptr_name,
+                                init_call = "init" if self.is_base_class else "initWithNativePtr:nativePtr"
+                            ),
                             manualMethodDeclations = "",
                             methodImplementations = self.method_implementations.getvalue(),
                             name = self.name,
                             objcName = self.objc_name,
                             cName = self.cname,
                             imports = "\n".join(self.getImports(M)),
-                            docs = self.docstring,
+                            docs = gen_class_doc(self.docstring, M, self.member_classes, self.member_enums),
                             base = self.base)
 
 class ArgInfo():
@@ -559,11 +574,13 @@ class ObjectiveCWrapperGenerator(object):
         self.skipped_func_list = []
         self.def_args_hist = {} # { def_args_cnt : funcs_cnt }
 
-    def add_class(self, decl):
+    def add_class(self, decl, module):
         classinfo = ClassInfo(decl, namespaces=self.namespaces)
         if classinfo.name in class_ignore_list:
             logging.info('ignored: %s', classinfo)
             return
+        if classinfo.name != module:
+            self.classes[module].member_classes.append(classinfo.name)
         name = classinfo.name
         if self.isWrapped(name) and not classinfo.base:
             logging.warning('duplicated: %s', classinfo)
@@ -576,7 +593,7 @@ class ObjectiveCWrapperGenerator(object):
             type_dict.setdefault(name, {}).update(
                 { "objc_type" : classinfo.objc_name + "*",
                   "from_cpp" : "[" + classinfo.objc_name + " fromNative:%(n)s]",
-                  "to_cpp" : "*(" + classinfo.namespace.replace(".", "::") + "::" + classinfo.objc_name +  "*)(%(n)s.nativePtr)" }
+                  "to_cpp" : "*(%(n)s." + classinfo.native_ptr_name + ")" }
             )
 
         # missing_consts { Module : { public : [[name, val],...], private : [[]...] } }
@@ -596,7 +613,7 @@ class ObjectiveCWrapperGenerator(object):
             type_dict.setdefault("Ptr_"+name, {}).update(
                 { "objc_type" : classinfo.objc_name + "*",
                   "c_type" : name,
-                  "to_cpp": "%(n)s.nativePtr",
+                  "to_cpp": "%(n)s." + classinfo.native_ptr_name,
                   "from_cpp_ptr": "[" + name + " fromNativePtr:%(n)s]"}
             )
         logging.info('ok: class %s, name: %s, base: %s', classinfo, name, classinfo.base)
@@ -622,7 +639,7 @@ class ObjectiveCWrapperGenerator(object):
                 ci.addConst(constinfo)
                 logging.info('ok: %s', constinfo)
 
-    def add_enum(self, decl, scope): # [ "enum cname", "", [], [] ]
+    def add_enum(self, decl): # [ "enum cname", "", [], [] ]
         enumType = decl[0].rsplit(" ", 1)[1]
         if enumType.endswith("<unnamed>"):
             enumType = None
@@ -643,10 +660,12 @@ class ObjectiveCWrapperGenerator(object):
                                      "objc_type": objc_type,
                                      "is_enum": True,
                                      "import_module": import_module}
+            self.classes[self.Module].member_enums.append(objc_type)
+
         const_decls = decl[3]
 
         for decl in const_decls:
-            self.add_const(decl, scope, enumType)
+            self.add_const(decl, self.Module, enumType)
 
     def add_func(self, decl):
         fi = FuncInfo(decl, namespaces=self.namespaces)
@@ -690,7 +709,7 @@ class ObjectiveCWrapperGenerator(object):
         # TODO: support UMat versions of declarations (implement UMat-wrapper for Java)
         parser = hdr_parser.CppHeaderParser(generate_umat_decls=False)
 
-        self.add_class( ['class ' + self.Module, '', [], []] ) # [ 'class/struct cname', ':bases', [modlist] [props] ]
+        self.add_class( ['class ' + self.Module, '', [], []], self.Module ) # [ 'class/struct cname', ':bases', [modlist] [props] ]
 
         # scan the headers and build more descriptive maps of classes, consts, functions
         includes = []
@@ -710,12 +729,12 @@ class ObjectiveCWrapperGenerator(object):
                 logging.info("\n--- Incoming ---\n%s", pformat(decl[:5], 4)) # without docstring
                 name = decl[0]
                 if name.startswith("struct") or name.startswith("class"):
-                    self.add_class(decl)
+                    self.add_class(decl, self.Module)
                 elif name.startswith("const"):
                     self.add_const(decl)
                 elif name.startswith("enum"):
                     # enum
-                    self.add_enum(decl, self.Module)
+                    self.add_enum(decl)
                 else: # function
                     self.add_func(decl)
 
@@ -934,19 +953,19 @@ class ObjectiveCWrapperGenerator(object):
             elif ret_type.startswith("Ptr_"):
                 cpp_type = type_dict[ret_type]["c_type"]
                 namespace_prefix = self.get_namespace_prefix(cpp_type)
-                ret_val = namespace_prefix + cpp_type + "* retVal = "
+                ret_val = "cv::Ptr<" + namespace_prefix + cpp_type + "> retVal = "
                 ret = "return [" + type_dict[ret_type]["objc_type"][:-1] + " fromNative:retVal];"
             elif ret_type == "void":
                 ret_val = ""
                 ret = ""
             elif ret_type == "": # c-tor
                 constructor = True
-                ret_val = "return [self initWithNativePtr:new "
-                tail = "]"
+                ret_val = "return [self initWithNativePtr:cv::Ptr<" + fi.fullClass(isCPP=True) + ">(new "
+                tail = ")]"
                 ret = ""
             elif self.isWrapped(ret_type): # wrapped class
                 namespace_prefix = self.get_namespace_prefix(ret_type)
-                ret_val = namespace_prefix + ret_type + "* retVal = new " + namespace_prefix + ret_type + "("
+                ret_val = "cv::Ptr<" + namespace_prefix + ret_type + "> retVal = new " + namespace_prefix + ret_type + "("
                 tail = ")"
                 ret_type_dict = type_dict[ret_type]
                 from_cpp = ret_type_dict["from_cpp_ptr"] if ret_type_dict.has_key("from_cpp_ptr") else ret_type_dict["from_cpp"]
@@ -993,7 +1012,7 @@ class ObjectiveCWrapperGenerator(object):
                     prologue = "\n    " + "\n    ".join(prologue) if prologue else "",
                     epilogue = "\n    " + "\n    ".join(epilogue) if epilogue else "",
                     static = "+" if static else "-",
-                    obj_deref =  ("MAKE_PTR(" + fi.fullClass(isCPP=True) + ")->" if not ci.is_base_class else "_nativePtr->") if not static and not constructor else "",
+                    obj_deref = ("self." + ci.native_ptr_name + "->") if not static and not constructor else "",
                     cv_name = fi.cv_name if static else fi.fullClass(isCPP=True) if constructor else fi.name,
                     cv_args = ", ".join(cv_args),
                     tail = tail
@@ -1068,7 +1087,7 @@ typedef NS_ENUM(int, {2}) {{
             objc_type = type_data.get("objc_type", pi.ctype)
             ci.addImports(pi.ctype, False)
             ci.method_declarations.write("@property " + ("(readonly) " if not pi.rw else "") + objc_type + " " + pi.name + ";\n")
-            ptr_ref = "MAKE_PTR(" + ci.fullName(isCPP=True) + ")->" if not ci.is_base_class else "_nativePtr->"
+            ptr_ref = "self." + ci.native_ptr_name + "->" if not ci.is_base_class else "self.nativePtr->"
             if type_data.has_key("v_type"):
                 vector_type = type_data["v_type"]
                 full_cpp_type = (self.get_namespace_prefix(vector_type) if (vector_type.find("::") == -1) else "") + vector_type
@@ -1141,14 +1160,18 @@ typedef NS_ENUM(int, {2}) {{
 
     def finalize(self, output_objc_path):
         opencv_header_file = os.path.join(output_objc_path, framework_name + ".h")
-        self.save(opencv_header_file, '\n'.join(['#import "%s"' % os.path.basename(f) for f in self.header_files if os.path.basename(f) != "CVObjcUtil.h"]))
+        self.save(opencv_header_file, '\n'.join(['#import "%s"' % os.path.basename(f) for f in self.header_files]))
         cmakelist_template = read_contents(os.path.join(SCRIPT_DIR, 'templates/cmakelists.template'))
         cmakelist = Template(cmakelist_template).substitute(modules = ";".join(modules), framework = framework_name)
         self.save(os.path.join(dstdir, "CMakeLists.txt"), cmakelist)
         mkdir_p("./framework_build")
         mkdir_p("./test_build")
         mkdir_p("./doc_build")
-        copyfile(os.path.join(SCRIPT_DIR, '../doc/README.md'), "./doc_build/README.md")
+        with open(os.path.join(SCRIPT_DIR, '../doc/README.md')) as readme_in:
+            readme_body = readme_in.read()
+        readme_body += "\n\n\n##Modules\n\n" + ", ".join(["`" + m.capitalize() + "`" for m in modules])
+        with open("./doc_build/README.md", "w") as readme_out:
+            readme_out.write(readme_body)
         if framework_name != "OpenCV":
             for dirname, dirs, files in os.walk(os.path.join(testdir, "test")):
                 for filename in files:
@@ -1307,7 +1330,6 @@ if __name__ == "__main__":
     generator = ObjectiveCWrapperGenerator()
 
     gen_dict_files = []
-    modules = []
     framework_name = args.framework
 
     print("Objective-C: Processing OpenCV modules: %d" % len(config['modules']))
