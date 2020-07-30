@@ -10,62 +10,62 @@ class EpipolarGeometryDegeneracyImpl : public EpipolarGeometryDegeneracy {
 private:
     const Mat *points_mat;
     const float * const points; // i-th row xi1 yi1 xi2 yi2
-    const int sample_size;
+    const int min_sample_size;
 public:
     explicit EpipolarGeometryDegeneracyImpl (const Mat &points_, int sample_size_) :
-            points_mat(&points_), points ((float*) points_.data), sample_size (sample_size_) {}
+        points_mat(&points_), points ((float*) points_.data), min_sample_size (sample_size_) {}
     /*
      * Do oriented constraint to verify if epipolar geometry is in front or behind the camera.
      * Return: true if all points are in front of the camers w.r.t. tested epipolar geometry - satisfies constraint.
      *         false - otherwise.
      */
     inline bool isModelValid(const Mat &F, const std::vector<int> &sample) const override {
-        const int sample_size_ = static_cast<int>(sample.size());
-        Mat ec;
-        epipole(ec, F);
-        const auto * const F_ptr = (double *) F.data;
-        const auto * const ec_ptr = (double *) ec.data;
-
-        // without loss of generality, let the first point in sample be in front of the camera.
-        double sig1 = getorisig(F_ptr, ec_ptr, 4*sample[0]);
-
-        for (int i = 1; i < sample_size_; i++)
-            // if signum of first point and tested point differs
-            // then two points are on different sides of the camera.
-            if (sig1 * getorisig(F_ptr, ec_ptr, 4*sample[i]) < 0)
-                return false;
-        return true;
+        return isModelValid(F, sample, min_sample_size);
     }
-    Ptr<Degeneracy> clone(int /*state*/) const override {
-        return makePtr<EpipolarGeometryDegeneracyImpl>(*points_mat, sample_size);
-    }
-private:
+
     /* Oriented constraint:
      * x'^T F x = 0
      * e' × x' ~+ Fx   <=>  λe' × x' = Fx, λ > 0
      * e  × x ~+ x'^T F
      */
-    inline void epipole(Mat &ec, const Mat &F) const {
+    inline bool isModelValid(const Mat &F_, const std::vector<int> &sample, int sample_size_) const override {
         // F is of rank 2, taking cross product of two rows we obtain null vector of F
-        ec = F.row(0).cross(F.row(2));
-        const auto * const ec_ = (double *) ec.data; // of size 3x1
-
-        // if e_i is not zero then return
-        if ((ec_[0] > 1.9984e-15) || (ec_[0] < -1.9984e-15)) return;
-        if ((ec_[1] > 1.9984e-15) || (ec_[1] < -1.9984e-15)) return;
-        if ((ec_[2] > 1.9984e-15) || (ec_[2] < -1.9984e-15)) return;
+        Mat ec_mat = F_.row(0).cross(F_.row(2));
+        const auto * const ec = (double *) ec_mat.data; // of size 3x1
 
         // e is zero vector, recompute e
-        ec = F.row(1).cross(F.row(2));
-    }
+        if (ec[0] <= 1.9984e-15 && ec[0] >= -1.9984e-15 &&
+            ec[1] <= 1.9984e-15 && ec[1] >= -1.9984e-15 &&
+            ec[2] <= 1.9984e-15 && ec[2] >= -1.9984e-15)
+            ec_mat = F_.row(1).cross(F_.row(2));
 
-    // F is 9x1 row-major ordered F matrix. ec is 3x1
-    inline double getorisig(const double * const F, const double * const ec, int pt_idx) const {
+        // F is 9x1 row-major ordered F matrix. ec is 3x1
+        const auto * const F = (double *) F_.data;
+
+        // without loss of generality, let the first point in sample be in front of the camera.
+        int pt = 4*sample[0];
         // s1 = F11 * x2 + F21 * y2 + F31 * 1
         // s2 = e'_2 * 1 - e'_3 * y1
-        // return: s1 * s2
-        return (F[0] * points[pt_idx+2] + F[3] * points[pt_idx+3] + F[6]) *
-               (ec[1] - ec[2] * points[pt_idx+1]);
+        // sign1 = s1 * s2
+        const double sign1 = (F[0]*points[pt+2]+F[3]*points[pt+3]+F[6])*(ec[1]-ec[2]*points[pt+1]);
+
+        int num_pts_behind = 0;
+        for (int i = 1; i < sample_size_; i++) {
+            pt = 4 * sample[i];
+            // if signum of the first point and tested point differs
+            // then two points are on different sides of the camera.
+            if (sign1*(F[0]*points[pt+2]+F[3]*points[pt+3]+F[6])*(ec[1]-ec[2]*points[pt+1])<0)
+                // if 3 points are behind the camera for non-minimal sample then model is
+                // not valid. Testing by one point as in case for minimal sample is not very
+                // precise. The number 3 was chosen experimentally.
+                if (min_sample_size == sample_size_ || ++num_pts_behind >= 3)
+                    return false;
+        }
+        return true;
+    }
+
+    Ptr<Degeneracy> clone(int /*state*/) const override {
+        return makePtr<EpipolarGeometryDegeneracyImpl>(*points_mat, min_sample_size);
     }
 };
 void EpipolarGeometryDegeneracy::recoverRank (Mat &model) {
@@ -76,8 +76,7 @@ void EpipolarGeometryDegeneracy::recoverRank (Mat &model) {
     Matx33d U, Vt;
     Vec3d w;
     SVD::compute(model, w, U, Vt, SVD::FULL_UV + SVD::MODIFY_A);
-    Matx33d W (w(0), 0, 0, 0, w(1), 0, 0, 0, 0);
-    model = Mat(U * W * Vt);
+    model = Mat(U * Matx33d(w(0), 0, 0, 0, w(1), 0, 0, 0, 0) * Vt);
 }
 Ptr<EpipolarGeometryDegeneracy> EpipolarGeometryDegeneracy::create (const Mat &points_,
         int sample_size_) {
@@ -120,6 +119,23 @@ public:
         if ((cd_cross_x * x2 + cd_cross_y * y2 + cd_cross_z) *
             (CD_cross_x * X2 + CD_cross_y * Y2 + CD_cross_z) < 0)
             return false;
+
+        // Checks if points are not collinear
+        // If area of triangle constructed with 3 points is less then threshold then points are collinear:
+        //           |x1 y1 1|             |x1      y1      1|
+        // (1/2) det |x2 y2 1| = (1/2) det |x2-x1   y2-y1   0| = (1/2) det |x2-x1   y2-y1| < threshold
+        //           |x3 y3 1|             |x3-x1   y3-y1   0|             |x3-x1   y3-y1|
+        // for point on the first image
+        if (fabsf((x2-x1) * (y3-y1) - (y2-y1) * (x3-x1)) * 0.5 < FLT_EPSILON) return false; //1,2,3
+        if (fabsf((x2-x1) * (y4-y1) - (y2-y1) * (x4-x1)) * 0.5 < FLT_EPSILON) return false; //1,2,4
+        if (fabsf((x3-x1) * (y4-y1) - (y3-y1) * (x4-x1)) * 0.5 < FLT_EPSILON) return false; //1,3,4
+        if (fabsf((x3-x2) * (y4-y2) - (y3-y2) * (x4-x2)) * 0.5 < FLT_EPSILON) return false; //2,3,4
+        // for point on the second image
+        if (fabsf((X2-X1) * (Y3-Y1) - (Y2-Y1) * (X3-X1)) * 0.5 < FLT_EPSILON) return false; //1,2,3
+        if (fabsf((X2-X1) * (Y4-Y1) - (Y2-Y1) * (X4-X1)) * 0.5 < FLT_EPSILON) return false; //1,2,4
+        if (fabsf((X3-X1) * (Y4-Y1) - (Y3-Y1) * (X4-X1)) * 0.5 < FLT_EPSILON) return false; //1,3,4
+        if (fabsf((X3-X2) * (Y4-Y2) - (Y3-Y2) * (X4-X2)) * 0.5 < FLT_EPSILON) return false; //2,3,4
+
         return true;
     }
     Ptr<Degeneracy> clone(int /*state*/) const override {
@@ -162,6 +178,9 @@ public:
     }
     inline bool isModelValid(const Mat &F, const std::vector<int> &sample) const override {
         return ep_deg.isModelValid(F, sample);
+    }
+    inline bool isModelValid(const Mat &F, const std::vector<int> &sample, int sample_size_) const override {
+        return ep_deg.isModelValid(F, sample, sample_size_);
     }
 
     // fix degenerate Fundamental matrix.
@@ -291,5 +310,24 @@ Ptr<FundamentalDegeneracy> FundamentalDegeneracy::create (int state, const Ptr<Q
         const Mat &points_, int points_size_, int sample_size_, double homography_threshold_) {
     return makePtr<FundamentalDegeneracyImpl>(state, quality_, points_, points_size_, sample_size_,
             homography_threshold_);
+}
+
+class EssentialDegeneracyImpl : public EssentialDegeneracy {
+private:
+    const Mat * points_mat;
+    const int sample_size;
+    const EpipolarGeometryDegeneracyImpl ep_deg;
+public:
+    explicit EssentialDegeneracyImpl (const Mat &points, int sample_size_) :
+            points_mat(&points), sample_size(sample_size_), ep_deg (points, sample_size_) {}
+    inline bool isModelValid(const Mat &E, const std::vector<int> &sample) const override {
+        return ep_deg.isModelValid(E, sample);
+    }
+    Ptr<Degeneracy> clone(int /*state*/) const override {
+        return makePtr<EssentialDegeneracyImpl>(*points_mat, sample_size);
+    }
+};
+Ptr<EssentialDegeneracy> EssentialDegeneracy::create (const Mat &points_, int sample_size_) {
+    return makePtr<EssentialDegeneracyImpl>(points_, sample_size_);
 }
 }}

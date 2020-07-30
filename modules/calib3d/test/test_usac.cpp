@@ -93,15 +93,23 @@ int generatePoints (cv::RNG &rng, cv::Mat &pts1, cv::Mat &pts2, cv::Mat &K1, cv:
         //pts1 are image points, pts2 are object points
         pts2.create(3, inl_size, pts_type); // 3D inliers
         rng.fill(pts2, cv::RNG::UNIFORM, 0, 1);
-        cv::Mat pts_outliers = cv::Mat(5, out_size, pts2.type());
-        rng.fill(pts_outliers, cv::RNG::UNIFORM, 0, 1000);
 
-        // project 3D points on image plane
+        // Make sure the shape is in front of the camera
+        cv::Mat points3d_transformed = R * pts2 + t * cv::Mat::ones(1, pts2.cols, pts2.type());
+        double min_dist, max_dist;
+        cv::minMaxIdx(points3d_transformed.row(2), &min_dist, &max_dist);
+        if (min_dist < 0) t(2) -= min_dist + 1.0;
+
+        // project 3D points (pts2) on image plane (pts1)
         pts1 = K1 * (R * pts2 + t * cv::Mat::ones(1, pts2.cols, pts2.type()));
         cv::divide(pts1.row(0), pts1.row(2), pts1.row(0));
         cv::divide(pts1.row(1), pts1.row(2), pts1.row(1));
         // make 2D points
         pts1 = pts1.rowRange(0,2);
+
+        // create random outliers
+        cv::Mat pts_outliers = cv::Mat(5, out_size, pts2.type());
+        rng.fill(pts_outliers, cv::RNG::UNIFORM, 0, 1000);
 
         // merge inliers with random image points = outliers
         cv::hconcat(pts1, pts_outliers.rowRange(0,2), pts1);
@@ -111,6 +119,7 @@ int generatePoints (cv::RNG &rng, cv::Mat &pts1, cv::Mat &pts2, cv::Mat &K1, cv:
         // add Gaussian noise to image points
         cv::Mat noise (pts1.rows, pts1.cols, pts1.type());
         rng.fill(noise, cv::RNG::NORMAL, 0, noise_std); pts1 += noise;
+        return inl_size;
     } else
         CV_Error(1, "Unknown solver!");
 
@@ -171,13 +180,13 @@ double getError (TestSolver test_case, int pt_idx, const cv::Mat &pts1, const cv
         cv::Mat l1 = model.t() * pt2;
         if (test_case == TestSolver::Fundam) // sampson error
             return pow(pt2.dot(l2),2) / (pow(l1.at<double>(0), 2) + pow(l1.at<double>(1), 2) +
-                                        pow(l2.at<double>(0), 2) + pow(l2.at<double>(1), 2));
+                                         pow(l2.at<double>(0), 2) + pow(l2.at<double>(1), 2));
         else // symmetric geometric distance
             return (fabs(pt1.dot(l1)) / sqrt(pow(l1.at<double>(0),2) + pow(l1.at<double>(1),2)) +
                     fabs(pt2.dot(l2)) / sqrt(pow(l2.at<double>(0),2) + pow(l2.at<double>(1),2)))/2;
     } else
     if (test_case == TestSolver::PnP) { // PnP, reprojection error
-        cv::Mat img_pt = model * pt2; img_pt /= img_pt.at<double>(3);
+        cv::Mat img_pt = model * pt2; img_pt /= img_pt.at<double>(2);
         return cv::norm(pt1 - img_pt);
     } else
         CV_Error(1, "undefined test_case");
@@ -217,7 +226,7 @@ TEST(usac_Homography, accuracy) {
            pts_size, TestSolver ::Homogr, inl_ratio, 0.1 /*noise std*/, gt_inliers);
         // compute max_iters with standard upper bound rule for RANSAC with 1.2x tolerance
         const double conf = 0.99, thr = 2., max_iters = 1.2 * log(1 - conf) /
-                 log(1 - pow(static_cast<float>(inl_size) / pts_size, 4 /* sample size */));
+                 log(1 - pow(inl_ratio, 4 /* sample size */));
         cv::Mat mask, H = cv::findHomography(pts1, pts2,USAC_DEFAULT, thr, mask,
                                                    int(max_iters), conf);
         checkInliersMask(TestSolver::Homogr, inl_size, thr, pts1, pts2, H, mask);
@@ -233,7 +242,7 @@ TEST(usac_Homography_parallel, accuracy) {
         int inl_size = generatePoints(rng,pts1, pts2, K1, K2, false /*two calib*/,
           pts_size, TestSolver ::Homogr, inl_ratio, 0.2 /*noise std*/, gt_inliers);
         const double conf = 0.99, thr = 2., max_iters = 1.5 * log(1 - conf) /
-                  log(1 - pow(static_cast<float>(inl_size) / pts_size, 4 /* sample size */));
+                  log(1 - pow(inl_ratio, 4 /* sample size */));
         cv::Mat mask, H = cv::findHomography(pts1, pts2,USAC_PARALLEL, thr, mask,
                                                    int(max_iters), conf);
         checkInliersMask(TestSolver::Homogr, inl_size, thr, pts1, pts2, H, mask);
@@ -250,7 +259,7 @@ TEST(usac_Fundamental, accuracy) {
         int inl_size = generatePoints(rng,pts1, pts2, K1, K2, false /*two calib*/,
           pts_size, TestSolver ::Fundam, inl_ratio, 0.1 /*noise std*/, gt_inliers);
         const double conf = 0.99, thr = 1., max_iters = 1.2 * log(1 - conf) /
-                    log(1 - pow(static_cast<float>(inl_size) / pts_size, 7 /* sample size */));
+                    log(1 - pow(inl_ratio, 7 /* sample size */));
         cv::Mat mask, F = cv::findFundamentalMat(pts1, pts2,USAC_DEFAULT, thr, conf,
                              int(max_iters), mask);
         checkInliersMask(TestSolver::Fundam, inl_size, thr, pts1, pts2, F, mask);
@@ -266,10 +275,32 @@ TEST(usac_Fundamental8pts, accuracy) {
         int inl_size = generatePoints(rng,pts1, pts2, K1, K2, false /*two calib*/,
                       pts_size, TestSolver ::Fundam, inl_ratio, 0.1 /*noise std*/, gt_inliers);
         const double conf = 0.99, thr = 1., max_iters = 1.2 * log(1 - conf) /
-            log(1 - pow(static_cast<float>(inl_size) / pts_size, 8 /* sample size */));
+            log(1 - pow(inl_ratio, 8 /* sample size */));
         cv::Mat mask, F = cv::findFundamentalMat(pts1, pts2,USAC_FM_8PTS, thr, conf,
                                                        int(max_iters), mask);
         checkInliersMask(TestSolver::Fundam, inl_size, thr, pts1, pts2, F, mask);
+    }
+}
+
+TEST(usac_Essential, accuracy) {
+    std::vector<int> gt_inliers;
+    const int pts_size = 2000;
+    cv::RNG &rng = cv::theRNG();
+    // findEssentilaMat has by default number of maximum iterations equal to 1000.
+    // It means that with 99% confidence we assume at least 34.08% of inliers
+    for (double inl_ratio = 0.35; inl_ratio < 0.91; inl_ratio += 0.01) {
+        cv::Mat pts1, pts2, K1, K2;
+        int inl_size = generatePoints(rng,pts1, pts2, K1, K2, false /*two calib*/,
+          pts_size, TestSolver ::Fundam, inl_ratio, 0.01 /*noise std, works bad with high noise*/, gt_inliers);
+        const double conf = 0.99, thr = 1.;
+        cv::Mat mask, E = cv::findEssentialMat(pts1, pts2, K1, USAC_DEFAULT, conf, thr, mask);
+        // calibrate points
+        cv::Mat cpts1_3d, cpts2_3d;
+        cv::vconcat(pts1, cv::Mat::ones(1, pts1.cols, pts1.type()), cpts1_3d);
+        cv::vconcat(pts2, cv::Mat::ones(1, pts2.cols, pts2.type()), cpts2_3d);
+        cpts1_3d = K1.inv() * cpts1_3d; cpts2_3d = K1.inv() * cpts2_3d;
+        checkInliersMask(TestSolver::Essen, inl_size, thr / ((K1.at<double>(0,0) + K1.at<double>(1,1)) / 2)+1e-5,
+                cpts1_3d.rowRange(0,2), cpts2_3d.rowRange(0,2), E, mask);
     }
 }
 }

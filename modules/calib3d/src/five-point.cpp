@@ -31,6 +31,8 @@
 
 #include "precomp.hpp"
 
+#include "usac.hpp"
+
 namespace cv
 {
 
@@ -407,6 +409,10 @@ cv::Mat cv::findEssentialMat( InputArray _points1, InputArray _points2, InputArr
 {
     CV_INSTRUMENT_REGION();
 
+    if (method == USAC_DEFAULT || method == USAC_PARALLEL) 
+        return usac::findEssentialMat(_points1, _points2, _cameraMatrix, _cameraMatrix,
+            method, prob, threshold, 1000, _mask);
+
     Mat points1, points2, cameraMatrix;
     _points1.getMat().convertTo(points1, CV_64F);
     _points2.getMat().convertTo(points2, CV_64F);
@@ -456,6 +462,18 @@ cv::Mat cv::findEssentialMat( InputArray _points1, InputArray _points2, double f
 
     Mat cameraMatrix = (Mat_<double>(3,3) << focal, 0, pp.x, 0, focal, pp.y, 0, 0, 1);
     return cv::findEssentialMat(_points1, _points2, cameraMatrix, method, prob, threshold, _mask);
+}
+
+
+cv::Mat cv::findEssentialMat( InputArray _points1, InputArray _points2,
+          InputArray cameraMatrix1, InputArray cameraMatrix2,
+          int method, double prob, double threshold, int maxIters,
+          OutputArray mask) {
+    CV_INSTRUMENT_REGION();
+    if (method == USAC_DEFAULT || method == USAC_PARALLEL)    
+        return usac::findEssentialMat(_points1, _points2, cameraMatrix1, cameraMatrix2,
+            method, prob, threshold, maxIters, mask);
+    else return Mat();
 }
 
 cv::Mat cv::findEssentialMat( InputArray _points1, InputArray _points2,

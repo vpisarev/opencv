@@ -18,27 +18,15 @@ public:
         best_score = std::numeric_limits<double>::max();
     }
 
-    Score getScore (const Mat &model, double threshold_, bool get_inliers,
-            std::vector<int> &inliers) const override {
+    Score getScore (const Mat &model) const override {
         error->setModelParameters(model);
         int inlier_number = 0;
 
-        if (get_inliers) {
-            for (int point = 0; point < points_size; point++) {
-                if (error->getError(point) < threshold_)
-                    inliers[inlier_number++] = point;
-                // if current number of inliers plus all possible are less than
-                // max number of inliers then break evaluation.
-                if (inlier_number + (points_size - point) < -best_score)
-                    break;
-            }
-        } else {
-            for (int point = 0; point < points_size; point++) {
-                if (error->getError(point) < threshold_)
-                    inlier_number++;
-                if (inlier_number + (points_size - point) < -best_score)
-                    break;
-            }
+        for (int point = 0; point < points_size; point++) {
+            if (error->getError(point) < threshold)
+                inlier_number++;
+            if (inlier_number + (points_size - point) < -best_score)
+                break;
         }
 
         // score is negative inlier number! If less then better
@@ -49,12 +37,6 @@ public:
         if (best_score > best_score_)
             best_score = best_score_;
     }
-
-    Score getScore (const Mat &model, bool get_inliers, std::vector<int> &inliers) const override
-    { return getScore (model, threshold, get_inliers, inliers); }
-    inline Score getScore (const Mat &model) const override
-    { std::vector<int> inliers_;
-    return getScore (model, threshold, false, inliers_); }
 
     int getInliers (const Mat &model, std::vector<int> &inliers) const override
     { return getInliers (model, inliers, threshold); }
@@ -111,21 +93,18 @@ public:
         best_score = std::numeric_limits<double>::max();
     }
 
-    inline Score getScore (const Mat &model, double threshold_, bool get_inliers,
-            std::vector<int> &inliers) const override {
+    inline Score getScore (const Mat &model) const override {
         error->setModelParameters(model);
 
         double err, sum_errors = 0;
         int inlier_number = 0;
         for (int point = 0; point < points_size; point++) {
             err = error->getError(point);
-            if (err < threshold_) {
-                if (get_inliers)
-                    inliers[inlier_number] = point;
+            if (err < threshold) {
                 sum_errors += err;
                 inlier_number++;
             } else
-                sum_errors += threshold_;
+                sum_errors += threshold;
 
             if (sum_errors > best_score)
                 break;
@@ -137,11 +116,6 @@ public:
         if (best_score > best_score_)
             best_score = best_score_;
     }
-
-    Score getScore (const Mat &model, bool get_inliers, std::vector<int> &inliers) const override
-    { return getScore (model, threshold, get_inliers, inliers); }
-    inline Score getScore (const Mat &model) const override
-    { std::vector<int> inliers_; return getScore (model, threshold, false, inliers_); }
 
     int getInliers (const Mat &model, std::vector<int> &inliers) const override
     { return getInliers (model, inliers, threshold); }
@@ -367,7 +341,7 @@ private:
         // if epsilon is closed to 1 then set them to 0.99 to avoid numerical problems
         if (epsilon > 0.999999) epsilon = 0.999;
         // delta can't be higher than epsilon, because ratio delta / epsilon will be greater than 1
-        if (epsilon < delta) delta = epsilon-0.01;
+        if (epsilon < delta) delta = epsilon-0.0001;
         // avoid delta going too high as it is very unlikely
         // e.g., 30% of points are consistent with bad model is not very real
         if (delta   > 0.3) delta = 0.3;
@@ -385,7 +359,6 @@ private:
 
         delta_to_epsilon = delta / epsilon;
         complement_delta_to_complement_epsilon = (1 - delta) / (1 - epsilon);
-
         current_sprt_idx = static_cast<int>(sprt_histories.size()) - 1;
     }
 
@@ -404,7 +377,7 @@ private:
     double estimateThresholdA (double epsilon, double delta) {
         const double C = (1 - delta) * log ((1 - delta) / (1 - epsilon)) +
                          delta * (log(delta / epsilon));
-        // K = K1/K2 + 1 = (t_M / P_g) / (m_S / (C * P_g)) + 1 = (t_M * S)/m_S + 1
+        // K = K1/K2 + 1 = (t_M / P_g) / (m_S / (C * P_g)) + 1 = (t_M * C)/m_S + 1
         const double K = (t_M * C) / m_S + 1;
         double An, An_1 = K;
         // compute A using a recursive relation

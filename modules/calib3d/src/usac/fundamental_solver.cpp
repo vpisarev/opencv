@@ -309,10 +309,10 @@ public:
         // extract the last nullspace
         Eigen::Map<Eigen::Matrix<double, 9, 1>>((double *)models[0].data) = svd.matrixV().col(8);
 #else
-        Matx<double, 9, 9> AtA_(AtA);
-        Mat W, U, Vt;
+        Matx<double, 9, 9> AtA_(AtA), U, Vt;
+        Vec<double, 9> W;
         SVD::compute(AtA_, W, U, Vt, SVD::FULL_UV + SVD::MODIFY_A);
-        models = std::vector<Mat> { Vt.row(8).reshape(0 /* same num of channels*/, 3) };
+        models = std::vector<Mat> { Mat(Vt.row(8).reshape<3,3>()) };
 #endif
 
         // Transpose T2 (in T2 the lower diagonal is zero)

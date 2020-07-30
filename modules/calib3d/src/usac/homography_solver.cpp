@@ -278,13 +278,10 @@ public:
         // extract the last nullspace
         Eigen::Map<Eigen::Matrix<double, 9, 1>>((double *)H.data) = Q.col(8);
 #else
-        Matx<double, 9, 9> AtA_ (AtA);
-        Mat D, Vt;
-        eigen(AtA_, D, Vt);
-//        Mat U, W, Vt;
-//        SVD::compute(AtA_, W, U, Vt, SVD::FULL_UV + SVD::MODIFY_A);
-        if (Vt.rows != 9) return 0;
-        Mat H = Vt.row(Vt.rows-1).reshape(0 /* same num of channels*/, 3);
+        Matx<double, 9, 9> AtA_ (AtA), Vt;
+        Vec<double, 9> D;
+        if (! eigen(AtA_, D, Vt)) return 0;
+        Mat H = Mat(Vt.row(8).reshape<3,3>());
 #endif
 
         models = std::vector<Mat>{ T2.inv() * H * T1 };

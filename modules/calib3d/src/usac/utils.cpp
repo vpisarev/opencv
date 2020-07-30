@@ -21,19 +21,19 @@ double Utils::getCalibratedThreshold (double threshold, const Mat &K1, const Mat
 void Utils::calibratePoints (const Mat &K1, const Mat &K2, const Mat &points, Mat &norm_points) {
     const auto * const points_ = (float *) points.data;
     const auto * const k1 = (double *) K1.data;
-    const float inv1_k11 = float(1 / k1[0]); // 1 / k11
-    const float inv1_k12 = float(-k1[1] / (k1[0]*k1[4])); // -k12 / (k11*k22)
+    const auto inv1_k11 = float(1 / k1[0]); // 1 / k11
+    const auto inv1_k12 = float(-k1[1] / (k1[0]*k1[4])); // -k12 / (k11*k22)
     // (-k13*k22 + k12*k23) / (k11*k22)
-    const float inv1_k13 = float((-k1[2]*k1[4] + k1[1]*k1[5]) / (k1[0]*k1[4]));
-    const float inv1_k22 = float(1 / k1[4]); // 1 / k22
-    const float inv1_k23 = float(-k1[5] / k1[4]); // -k23 / k22
+    const auto inv1_k13 = float((-k1[2]*k1[4] + k1[1]*k1[5]) / (k1[0]*k1[4]));
+    const auto inv1_k22 = float(1 / k1[4]); // 1 / k22
+    const auto inv1_k23 = float(-k1[5] / k1[4]); // -k23 / k22
 
     const auto * const k2 = (double *) K2.data;
-    const float inv2_k11 = float(1 / k2[0]);
-    const float inv2_k12 = float(-k2[1] / (k2[0]*k2[4]));
-    const float inv2_k13 = float((-k2[2]*k2[4] + k2[1]*k2[5]) / (k2[0]*k2[4]));
-    const float inv2_k22 = float(1 / k2[4]);
-    const float inv2_k23 = float(-k2[5] / k2[4]);
+    const auto inv2_k11 = float(1 / k2[0]);
+    const auto inv2_k12 = float(-k2[1] / (k2[0]*k2[4]));
+    const auto inv2_k13 = float((-k2[2]*k2[4] + k2[1]*k2[5]) / (k2[0]*k2[4]));
+    const auto inv2_k22 = float(1 / k2[4]);
+    const auto inv2_k23 = float(-k2[5] / k2[4]);
 
     const int num_pts = points.rows;
     norm_points = Mat (num_pts, 4, points.type());
@@ -48,40 +48,53 @@ void Utils::calibratePoints (const Mat &K1, const Mat &K2, const Mat &points, Ma
     }
 }
 
-////////////////////////////////////////////////////////////////////////
-bool Math::haveCollinearPoints(const Mat &points_, const std::vector<int>& sample,
-                                      double threshold) {
-    const auto * const points = (float *) points_.data;
-    // Checks if no more than 2 points are on the same line
-    // If area of triangle constructed with 3 points is less then threshold then points are collinear:
-    //           |x1 y1 1|             |x1      y1      1|
-    // (1/2) det |x2 y2 1| = (1/2) det |x2-x1   y2-y1   0| = (1/2) det |x2-x1   y2-y1| < threshold
-    //           |x3 y3 1|             |x3-x1   y3-y1   0|             |x3-x1   y3-y1|
-    double x1, y1, x2, y2, x3, y3, X1, Y1, X2, Y2, X3, Y3;
-    int pt_idx, sample_size = static_cast<int>(sample.size());
-    for (int i1 = 0; i1 < sample_size-2; i1++) {
-        pt_idx = 4*sample[i1];
-        x1 = points[pt_idx  ]; y1 = points[pt_idx+1];
-        X1 = points[pt_idx+2]; Y1 = points[pt_idx+3];
+/*
+ * K is 3x3 intrinsic matrix
+ * points is matrix of size |N| x 5, first two columns are image points [u_i, v_i]
+ * calib_norm_pts are  K^-1 [u v 1]^T / ||K^-1 [u v 1]^T||
+ */
+void Utils::calibrateAndNormalizePointsPnP (const Mat &K, const Mat &pts, Mat &calib_norm_pts) {
+    const auto * const points = (float *) pts.data;
+    const auto * const k = (double *) K.data;
+    const auto inv_k11 = float(1 / k[0]);
+    const auto inv_k12 = float(-k[1] / (k[0]*k[4]));
+    const auto inv_k13 = float((-k[2]*k[4] + k[1]*k[5]) / (k[0]*k[4]));
+    const auto inv_k22 = float(1 / k[4]);
+    const auto inv_k23 = float(-k[5] / k[4]);
 
-        for (int i2 = i1+1; i2 < sample_size-1; i2++){
-            pt_idx = 4*sample[i2];
-            x2 = points[pt_idx  ]; y2 = points[pt_idx+1];
-            X2 = points[pt_idx+2]; Y2 = points[pt_idx+3];
+    const int num_pts = pts.rows;
+    calib_norm_pts = Mat (num_pts, 3, pts.type());
+    auto * calib_norm_pts_ = (float *) calib_norm_pts.data;
 
-            for (int i3 = i2+1; i3 < sample_size; i3++) {
-                pt_idx = 4*sample[i3];
-                x3 = points[pt_idx  ]; y3 = points[pt_idx+1];
-                X3 = points[pt_idx+2]; Y3 = points[pt_idx+3];
-
-                if (fabs((x2 - x1) * (y3 - y1) - (y2 - y1) * (x3 - x1)) / 2 < threshold)
-                    return true;
-                if (fabs((X2 - X1) * (Y3 - Y1) - (Y2 - Y1) * (X3 - X1)) / 2 < threshold)
-                    return true;
-            }
-        }
+    for (int i = 0; i < num_pts; i++) {
+        const int idx = 5 * i;
+        const float k_inv_u = inv_k11 * points[idx] + inv_k12 * points[idx+1] + inv_k13;
+        const float k_inv_v =                         inv_k22 * points[idx+1] + inv_k23;
+        const float norm = 1.f / sqrtf(powf(k_inv_u, 2) + powf(k_inv_v, 2) + 1);
+        (*calib_norm_pts_++) = k_inv_u * norm;
+        (*calib_norm_pts_++) = k_inv_v * norm;
+        (*calib_norm_pts_++) =           norm;
     }
-    return false;
+}
+
+/*
+ * decompose Projection Matrix to calibration, rotation and translation
+ * Assume K = [fx  0   tx
+ *             0   fy  ty
+ *             0   0   1]
+ */
+void Utils::decomposeProjection (const Mat &P, Mat &K_, Mat &R, Mat &t) {
+    const Mat M = P.colRange(0,3);
+    double scale = norm(M.row(2)); scale *= scale;
+    Matx33d K = Matx33d::eye();
+    K(1,2) = M.row(1).dot(M.row(2)) / scale;
+    K(0,2) = M.row(0).dot(M.row(2)) / scale;
+    K(1,1) = sqrt(M.row(1).dot(M.row(1)) / scale - K(1,2)*K(1,2));
+    K(0,0) = sqrt(M.row(0).dot(M.row(0)) / scale - K(0,2)*K(0,2));
+    R = K.inv() * M / sqrt(scale);
+    if (determinant(M) < 0) R *= -1;
+    t = R * M.inv() * P.col(3);
+    K_ = Mat(K);
 }
 
 Matx33d Math::getSkewSymmetric(const Vec3d &v) {

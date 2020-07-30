@@ -7,7 +7,7 @@
 #include <atomic>
 
 namespace cv { namespace usac {
-int mergePoints (InputArray pts1_, InputArray pts2_, Mat &pts);
+int mergePoints (InputArray pts1_, InputArray pts2_, Mat &pts, bool ispnp);
 void saveMask (OutputArray mask, const std::vector<bool> &inliers_mask);
 
 class RansacOutputImpl : public RansacOutput {
@@ -156,7 +156,8 @@ public:
                     if (is_magsac) {
                         if (best_model.empty())
                             models[i].copyTo(best_model);
-                        _local_optimization->refineModel(best_model, best_score, models[i], current_score);
+                        _local_optimization->refineModel
+                                      (best_model, best_score, models[i], current_score);
                     } else if (!_model_verifier->getScore(current_score))
                         current_score = _quality->getScore(models[i]);
 
@@ -183,21 +184,24 @@ public:
                         _quality->setBestScore(best_score.score);
 
                         // update upper bound of iterations
-                        max_iters = _termination_criteria->update(best_model, best_score.inlier_number);
+                        max_iters = _termination_criteria->update
+                                (best_model, best_score.inlier_number);
                         if (iters > max_iters)
                             break;
 
                         if (LO && !is_magsac) {
                             // update model by Local optimization
                             Mat lo_model;
-                            if (_local_optimization->refineModel(best_model, best_score, lo_model, lo_score))
+                            if (_local_optimization->refineModel
+                                            (best_model, best_score, lo_model, lo_score))
                                 if (lo_score.isBetter(best_score)) {
                                     best_score = lo_score;
                                     lo_model.copyTo(best_model);
                                     // update quality and verifier and termination again
                                     _quality->setBestScore(best_score.score);
                                     _model_verifier->update(best_score.inlier_number);
-                                    max_iters = _termination_criteria->update(best_model, best_score.inlier_number);
+                                    max_iters = _termination_criteria->update
+                                            (best_model, best_score.inlier_number);
                                     if (iters > max_iters)
                                         break;
                                 }
@@ -208,7 +212,6 @@ public:
 
             final_iters = iters;
         } else {
-            const int MAX_ITERS = params->getMaxIters();
             const int MAX_THREADS = getNumThreads();
             const bool is_prosac = params->getSampler() == SamplingMethod::Prosac;
 
@@ -241,7 +244,7 @@ public:
                       best_score_all_threads;
                 std::vector<int> sample(estimator->getMinimalSampleSize());
                 std::vector<Mat> models(estimator->getMaxNumSolutions());
-                int iters, max_iters = MAX_ITERS;
+                int iters, max_iters = params->getMaxIters();
                 auto update_best = [&] (const Score &new_score, const Mat &new_model) {
                     // copy new score to best score
                     best_score_thread = new_score;
@@ -252,11 +255,8 @@ public:
                     best_score_all_threads = best_score_thread;
                 };
 
-                for (iters = 0; iters < max_iters; iters++) {
-                    if (success) break; // avoid using atomic variable, so define one more break
-                    // const int hyp = num_hypothesis_tested++;
+                for (iters = 0; iters < max_iters && !success; iters++) {
                     success = num_hypothesis_tested++ > max_iters;
-                    if (success) break;
 
                     if (iters % 10) {
                         // Synchronize threads. just to speed verification of model.
@@ -285,12 +285,13 @@ public:
                     const int number_of_models = estimator->estimateModels(sample, models);
                     for (int i = 0; i < number_of_models; i++) {
                         if (!model_verifier->isModelGood(models[i]))
-                            continue;
+                           continue;
 
                         if (is_magsac) {
                             if (best_model_thread.empty())
                                 models[i].copyTo(best_model_thread);
-                            local_optimization->refineModel(best_model_thread, best_score_thread, models[i], current_score);
+                            local_optimization->refineModel(best_model_thread, best_score_thread,
+                                    models[i], current_score);
                         } else if (!model_verifier->getScore(current_score))
                             current_score = quality->getScore(models[i]);
 
@@ -308,20 +309,24 @@ public:
                                 update_best(current_score, models[i]);
 
                             // update upper bound of iterations
-                            max_iters = termination_criteria->update(best_model_thread, best_score_thread.inlier_number);
+                            max_iters = termination_criteria->update
+                                    (best_model_thread, best_score_thread.inlier_number);
                             if (num_hypothesis_tested > max_iters) {
                                 success = true; break;
                             }
 
                             if (LO && !is_magsac) {
                                 // update model by Local optimizaion
-                                if (local_optimization->refineModel(best_model_thread, best_score_thread, lo_model, lo_score))
+                                if (local_optimization->refineModel
+                                       (best_model_thread, best_score_thread, lo_model, lo_score))
                                     if (lo_score.isBetter(best_score_thread)) {
                                         update_best(lo_score, lo_model);
                                         // update termination again
-                                        max_iters = termination_criteria->update(best_model_thread, best_score_thread.inlier_number);
+                                        max_iters = termination_criteria->update
+                                                (best_model_thread, best_score_thread.inlier_number);
                                         if (num_hypothesis_tested > max_iters) {
-                                            success = true; break;
+                                            success = true;
+                                            break;
                                         }
                                     }
                             }
@@ -330,7 +335,6 @@ public:
                 } // end of loop over iters
             }}); // end parallel
             ///////////////////////////////////////////////////////////////////////////////////////////////////////
-
             // find best model from all threads' models
             best_score = best_scores[0];
             int best_thread_idx = 0;
@@ -362,7 +366,7 @@ public:
 
         // ================= here is ending ransac main implementation ===========================
         std::vector<bool> inliers_mask;
-        if (params->getTrace() >= 1) {
+        if (params->isMaskRequired() >= 1) {
             inliers_mask = std::vector<bool>(points_size);
             // get final inliers from the best model
             _quality->getInliers(best_model, inliers_mask);
@@ -378,29 +382,32 @@ public:
 
 /*
  * pts1, pts2 are matrices either N x a, N x b or a x N or b x N, where N > a and N > b
+ * pts1 are image points, if pnp pts2 are object points otherwise - image points as well.
  * output is matrix of size N x (a + b)
  * return points_size = N
  */
-int mergePoints (InputArray pts1_, InputArray pts2_, Mat &pts) {
+int mergePoints (InputArray pts1_, InputArray pts2_, Mat &pts, bool ispnp) {
     Mat pts1 = pts1_.getMat(), pts2 = pts2_.getMat();
-    auto convert_pts = [] (InputArray pts_, Mat &points) {
-        if (pts_.isVector()) // reshape vector of Point2f to Mat
-            points = points.reshape(0, (int)pts_.total()); // points are in rows
-        else if (points.cols > points.rows)
-            points = points.t(); // transpose so points will be in rows
-        points.convertTo(points, CV_32F); // use float precision
+    auto convertPoints = [] (Mat &points, bool is_vector, int pt_dim) {
+        points.convertTo(points, CV_32F); // convert points to have float precision
+        if (is_vector)
+            points = Mat(points.total(), pt_dim, CV_32F, points.data);
+        else {
+            if (points.channels() > 1)
+                points = points.reshape(1, points.total()); // convert point to have 1 channel
+            if (points.rows < points.cols)
+                transpose(points, points); // transpose so points will be in rows
+            CV_CheckGE(points.cols, pt_dim, "Invalid dimension of point");
+            if (points.cols != pt_dim) // in case when image points are 3D convert them to 2D
+                points = points.colRange(0, pt_dim);
+        }
     };
-    convert_pts(pts1_, pts1);
-    convert_pts(pts2_, pts2);
 
-    CV_CheckEQ(pts1.rows, pts2.rows, "Input points must have same number of rows / cols");
-    CV_CheckEQ(pts1.cols, pts2.cols, "Input points must have same number of cols / rows");
+    convertPoints(pts1, pts1_.isVector(), 2); // pts1 are always image points
+    convertPoints(pts2, pts2_.isVector(), ispnp ? 3 : 2); // for PnP points are 3D
 
-    // if points are 3D convert 2D
-    if (pts1.cols == 3) pts1 = pts1.colRange(0,2);
-    if (pts2.cols == 3) pts2 = pts2.colRange(0,2);
-
-    // points are of size [Nx2 Nx2] = Nx4
+    // points are of size [Nx2 Nx2] = Nx4 for H, F, E
+    // points are of size [Nx2 Nx3] = Nx5 for PnP
     hconcat(pts1, pts2, pts);
     return pts.rows;
 }
@@ -419,12 +426,12 @@ Mat findHomography (InputArray srcPoints, InputArray dstPoints, int method, doub
     OutputArray mask, const int maxIters, const double confidence) {
 
     Mat points;
-    int points_size = mergePoints(srcPoints, dstPoints, points);
+    int points_size = mergePoints(srcPoints, dstPoints, points, false);
 
     Ptr<Model> params = Model::create(thr, EstimationMethod ::Homography,
                   SamplingMethod::Uniform, confidence, maxIters, ScoreMethod::MSAC);
 
-    params->setTrace(mask.needed());
+    params->maskRequired(mask.needed());
     params->setLocalOptimization(LocalOptimMethod ::InLORsc);
     params->setPolisher(PolishingMethod ::LSQPolisher);
     params->setVerifier(VerificationMethod ::SprtVerifier);
@@ -446,14 +453,13 @@ Mat findHomography (InputArray srcPoints, InputArray dstPoints, int method, doub
     Ptr<Sampler> lo_sampler = UniformSampler::create
             (state++, params->getMaxSampleSizeLO(), points_size);
     Ptr<LocalOptimization> inner_lo_rsc = InnerLocalOptimization::create
-            (estimator, quality, lo_sampler, points_size);
+            (estimator, quality, lo_sampler, points_size, 10 /*lo iters*/);
 
     Ptr<RansacOutput> ransac_output;
     Ransac ransac (params, points_size, estimator, quality, sampler,
        termination, verifier, degeneracy, inner_lo_rsc, polisher, method == USAC_PARALLEL, state);
 
     if (!ransac.run(ransac_output)) return Mat();
-//    std::cout << "iters " << ransac_output->getNumberOfMainIterations() << " time " << ransac_output->getTimeMicroSeconds() << "\n";
 
     saveMask(mask, ransac_output->getInliersMask());
     return ransac_output->getModel() / ransac_output->getModel().at<double>(2,2);
@@ -463,14 +469,14 @@ Mat findFundamentalMat( InputArray points1, InputArray points2,
         int method, double ransacReprojThreshold, double confidence,
         int maxIters, OutputArray mask ) {
     Mat points;
-    int points_size = mergePoints(points1, points2, points);
+    int points_size = mergePoints(points1, points2, points, false);
 
     Ptr<Model> params = Model::create(ransacReprojThreshold,
          (method == USAC_DEFAULT || method == USAC_PARALLEL) ? EstimationMethod ::Fundamental :
                                                               EstimationMethod ::Fundamental8,
         SamplingMethod::Uniform, confidence, maxIters, ScoreMethod::MSAC);
 
-    params->setTrace(mask.needed());
+    params->maskRequired(mask.needed());
     params->setLocalOptimization(LocalOptimMethod ::InLORsc);
     params->setPolisher(PolishingMethod ::LSQPolisher);
     params->setVerifier(VerificationMethod ::SprtVerifier);
@@ -493,7 +499,7 @@ Mat findFundamentalMat( InputArray points1, InputArray points2,
 
     Ptr<Sampler> lo_sampler = UniformSampler::create(state, params->getMaxSampleSizeLO(), points_size);
     Ptr<LocalOptimization> inner_lo_rsc = InnerLocalOptimization::create
-            (estimator, quality, lo_sampler, points_size);
+            (estimator, quality, lo_sampler, points_size, 10 /*lo iters*/);
 
     Ransac ransac (params, points_size, estimator, quality, sampler,
        termination, verifier, degeneracy, inner_lo_rsc, polisher, method == USAC_PARALLEL, state);
@@ -503,6 +509,135 @@ Mat findFundamentalMat( InputArray points1, InputArray points2,
 
     saveMask(mask, ransac_output->getInliersMask());
     return ransac_output->getModel();
+}
+
+Mat findEssentialMat( InputArray points1, InputArray points2, InputArray cameraMatrix1,
+        InputArray cameraMatrix2, int method, double prob, double threshold, int maxIters,
+        OutputArray mask) {
+
+    Mat points;
+    int points_size = mergePoints(points1, points2, points, false);
+
+    Mat K1 = cameraMatrix1.getMat(), K2 = cameraMatrix2.getMat();
+    K1.convertTo(K1, CV_64F); K1.convertTo(K2, CV_64F);
+
+    Mat calibrated_pts;
+    Utils::calibratePoints(K1, K2, points, calibrated_pts);
+    const double cal_thr = Utils::getCalibratedThreshold(threshold, K1, K2);
+
+    Ptr<Model> params = Model::create(cal_thr, EstimationMethod ::Essential,
+           SamplingMethod::Uniform, prob, maxIters, ScoreMethod::MSAC);
+
+    params->maskRequired(mask.needed());
+    params->setLocalOptimization(LocalOptimMethod ::InLORsc);
+    params->setPolisher(PolishingMethod ::LSQPolisher);
+    params->setVerifier(VerificationMethod ::SprtVerifier);
+
+    int state = 0;
+    Ptr<Error> error = SymmetricGeometricDistance::create(calibrated_pts);
+    Ptr<Degeneracy> degeneracy = EssentialDegeneracy::create(calibrated_pts, params->getSampleSize());
+    Ptr<MinimalSolver> h_min = EssentialMinimalSolverStewenius5pts::create(calibrated_pts);
+    Ptr<NonMinimalSolver> h_non_min = EssentialNonMinimalSolver::create(points);
+    Ptr<Estimator> estimator = EssentialEstimator::create(h_min, h_non_min, degeneracy);
+    Ptr<Quality> quality = MsacQuality::create(points_size, params->getThreshold(), error);
+    Ptr<ModelVerifier> verifier = SPRT::create(state++, error, points_size,
+                   params->getThreshold(), params->getSPRTepsilon(), params->getSPRTdelta(),
+                   params->getTimeForModelEstimation(), params->getSPRTavgNumModels(), 1);
+    Ptr<FinalModelPolisher> polisher = LeastSquaresPolishing::create(estimator, quality, points_size);
+    Ptr<Sampler> sampler = UniformSampler::create(state++, params->getSampleSize(), points_size);
+    Ptr<TerminationCriteria> termination = StandardTerminationCriteria::create(
+            params->getConfidence(), points_size, params->getSampleSize(), params->getMaxIters());
+
+    Ptr<Sampler> lo_sampler = UniformSampler::create(state++, params->getMaxSampleSizeLO(), points_size);
+    Ptr<LocalOptimization> inner_lo_rsc = InnerLocalOptimization::create(estimator,
+            quality, lo_sampler, points_size, 7 /*lo iters*/);
+
+    Ransac ransac (params, points_size, estimator, quality, sampler,
+                   termination, verifier, degeneracy, inner_lo_rsc, polisher, method==USAC_PARALLEL, state);
+
+    Ptr<RansacOutput> ransac_output;
+    if (!ransac.run (ransac_output)) return Mat();
+
+    saveMask(mask, ransac_output->getInliersMask());
+    return ransac_output->getModel();
+}
+
+bool solvePnPRansac( InputArray objectPoints, InputArray imagePoints,
+         InputArray cameraMatrix, InputArray distCoeffs,
+         OutputArray rvec, OutputArray tvec,
+         bool /*useExtrinsicGuess*/, int iterationsCount,
+         float reprojectionError, double confidence,
+         OutputArray inliers, int flags) {
+    Mat points, undistored_pts;
+    int points_size;
+    if (! distCoeffs.empty()) {
+        undistortPoints(imagePoints, undistored_pts, cameraMatrix, distCoeffs);
+        points_size = mergePoints(undistored_pts, objectPoints, points, true);
+    } else
+        points_size = mergePoints(imagePoints, objectPoints, points, true);
+
+    Ptr<Model> params;
+    Ptr<MinimalSolver> min_solver;
+    Ptr<NonMinimalSolver> non_min;
+
+    Mat K = cameraMatrix.getMat(), calib_norm_points;
+    if (cameraMatrix.empty()) {
+        params = Model::create(reprojectionError, EstimationMethod ::P6P,
+          SamplingMethod::Uniform, confidence, iterationsCount, ScoreMethod::MSAC);
+        min_solver = PnPMinimalSolver6Pts::create(points);
+        non_min = PnPNonMinimalSolver::create(points);
+    } else {
+        params = Model::create(reprojectionError, EstimationMethod ::P3P,
+          SamplingMethod::Uniform, confidence, iterationsCount, ScoreMethod::MSAC);
+        K.convertTo(K, CV_64F);
+        Utils::calibrateAndNormalizePointsPnP(K, points, calib_norm_points);
+        min_solver = P3PSolver::create(points, calib_norm_points, K);
+        non_min = DLSPnP::create(points, calib_norm_points, K);
+    }
+
+    params->maskRequired(inliers.needed());
+    params->setLocalOptimization(LocalOptimMethod ::InLORsc);
+    params->setPolisher(PolishingMethod ::LSQPolisher);
+    params->setVerifier(VerificationMethod ::SprtVerifier);
+
+    int state = 0;
+    Ptr<Error> error = ReprojectionErrorPmatrix::create(points);
+    Ptr<Degeneracy> degeneracy = makePtr<Degeneracy>();
+    Ptr<Estimator> estimator = PnPEstimator::create(min_solver, non_min, degeneracy);
+    Ptr<Quality> quality = MsacQuality::create(points_size, params->getThreshold(), error);
+    Ptr<ModelVerifier> verifier = SPRT::create(state++, error, points_size,
+            params->getThreshold(), params->getSPRTepsilon(), params->getSPRTdelta(),
+            params->getTimeForModelEstimation(), params->getSPRTavgNumModels(), 1);
+
+    Ptr<FinalModelPolisher> polisher = LeastSquaresPolishing::create(estimator, quality, points_size);
+    Ptr<Sampler> sampler = UniformSampler::create(state++, params->getSampleSize(), points_size);
+    Ptr<TerminationCriteria> termination = StandardTerminationCriteria::create(
+            params->getConfidence(), points_size, params->getSampleSize(), params->getMaxIters());
+
+    Ptr<Sampler> lo_sampler = UniformSampler::create(state++, params->getMaxSampleSizeLO(), points_size);
+    Ptr<LocalOptimization> inner_lo_rsc = InnerLocalOptimization::create(estimator, quality, lo_sampler, points_size, 3);
+//    Ptr<LocalOptimization> inner_lo_rsc;
+
+    Ransac ransac (params, points_size, estimator, quality, sampler,
+                    termination, verifier, degeneracy, inner_lo_rsc, polisher, flags == USAC_PARALLEL, state);
+
+    Ptr<RansacOutput> ransac_output;
+    if (!ransac.run (ransac_output)) return false;
+
+    saveMask(inliers, ransac_output->getInliersMask());
+
+    if (! cameraMatrix.empty()) {
+        Mat Rt = K.inv() * ransac_output->getModel();
+        Rt.col(3).copyTo(tvec);
+        Rodrigues(Rt.colRange(0,3), rvec);
+    } else {
+        Mat R, t;
+        Utils::decomposeProjection (ransac_output->getModel(), K, R, t);
+        t.copyTo(tvec);
+        Rodrigues(R, rvec);
+    }
+
+    return true;
 }
 
 class ModelImpl : public Model {
@@ -526,7 +661,7 @@ private:
 
     // Local Optimization parameters
     LocalOptimMethod lo = LocalOptimMethod ::NullLO;
-    int lo_sample_size=14, lo_inner_iterations=15, lo_iterative_iterations=5,
+    int lo_sample_size=14, lo_inner_iterations=10, lo_iterative_iterations=5,
             lo_threshold_multiplier=4, lo_iter_sample_size = 30;
     bool sample_size_limit = true; // parameter for Iterative LO-RANSAC
 
@@ -561,7 +696,7 @@ private:
     //for final least squares polisher
     int final_lsq_iters = 3;
 
-    int trace = 2;
+    bool need_mask = true;
 
     // magsac parameters for H, F, E
     int DoF = 4;
@@ -585,7 +720,7 @@ public:
             default: CV_Assert(0 && "Estimator has not implemented yet!");
         }
 
-        sprt_eps = 0.02; // lower bound estimate is 1% of inliers
+        sprt_eps = 0.011; // lower bound estimate is 1.1% of inliers
         sprt_delta = 0.01; avg_num_models = 1;
         time_for_model_est = 100;
         // for lower time sprt becomes super strict, so for the same iteration number
@@ -595,21 +730,21 @@ public:
             // epipolar geometry usually have more inliers
             if (sample_size == 7) { // F seven points
                 avg_num_models = 2.38;
-                time_for_model_est = 200;
+                time_for_model_est = 125;
             } else if (sample_size == 5) { // E five points
-                avg_num_models = 4;
-                time_for_model_est = 400;
+                avg_num_models = 4.5;
+                time_for_model_est = 150;
             } else if (sample_size == 6) { // E six points
                 avg_num_models = 5;
             } else if (sample_size == 8) {
                 avg_num_models = 1;
             }
         } else if (estimator_ == EstimationMethod::P3P) {
-            avg_num_models = 2;
-            time_for_model_est = 300;
+            avg_num_models = 1.4;
+            time_for_model_est = 150;
         } else if (estimator_ == EstimationMethod::P6P) {
             avg_num_models = 1;
-            time_for_model_est = 250;
+            time_for_model_est = 150;
         }
 
         /*
@@ -650,8 +785,8 @@ public:
     void setResetRandomGenerator (bool reset) override {
         reset_random_generator = reset;
     }
-    void setTrace (int trace_) override { trace = trace_; }
-    int getTrace () const override { return trace; }
+    void maskRequired (bool need_mask_) override { need_mask = need_mask_; }
+    bool isMaskRequired () const override { return need_mask; }
     void setSPRT (double sprt_eps_ = 0.005, double sprt_delta_ = 0.0025,
                   double avg_num_models_ = 1, double time_for_model_est_ = 5e2) override {
         sprt_eps = sprt_eps_; sprt_delta = sprt_delta_;

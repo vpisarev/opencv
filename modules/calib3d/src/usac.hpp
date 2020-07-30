@@ -79,6 +79,18 @@ public:
     static Ptr<SampsonError> create(const Mat &points);
 };
 
+// Symmetric Geometric Distance (to epipolar lines) for Fundamental and Essential matrix
+class SymmetricGeometricDistance : public Error {
+public:
+    static Ptr<SymmetricGeometricDistance> create(const Mat &points);
+};
+
+// Reprojection Error for Projection matrix
+class ReprojectionErrorPmatrix : public Error {
+public:
+    static Ptr<ReprojectionErrorPmatrix> create(const Mat &points);
+};
+
 // Normalizing transformation of data points
 class NormTransform : public Algorithm {
 public:
@@ -123,6 +135,23 @@ public:
     static Ptr<FundamentalMinimalSolver8pts> create(const Mat &points_);
 };
 
+//-------------------------- ESSENTIAL MATRIX -----------------------
+class EssentialMinimalSolverStewenius5pts : public MinimalSolver {
+public:
+    static Ptr<EssentialMinimalSolverStewenius5pts> create(const Mat &points_);
+};
+
+//-------------------------- PNP -----------------------
+class PnPMinimalSolver6Pts : public MinimalSolver {
+public:
+    static Ptr<PnPMinimalSolver6Pts> create(const Mat &points_);
+};
+
+class P3PSolver : public MinimalSolver {
+public:
+    static Ptr<P3PSolver> create(const Mat &points_, const Mat &calib_norm_pts, const Mat &K);
+};
+
 //////////////////////////////////////// NON MINIMAL SOLVER ///////////////////////////////////////
 class NonMinimalSolver : public Algorithm {
 public:
@@ -146,6 +175,23 @@ public:
 class FundamentalNonMinimalSolver : public NonMinimalSolver {
 public:
     static Ptr<FundamentalNonMinimalSolver> create(const Mat &points_);
+};
+
+//-------------------------- ESSENTIAL MATRIX -----------------------
+class EssentialNonMinimalSolver : public NonMinimalSolver {
+public:
+    static Ptr<EssentialNonMinimalSolver> create(const Mat &points_);
+};
+
+//-------------------------- PNP -----------------------
+class PnPNonMinimalSolver : public NonMinimalSolver {
+public:
+    static Ptr<PnPNonMinimalSolver> create(const Mat &points_);
+};
+
+class DLSPnP : public NonMinimalSolver {
+public:
+    static Ptr<DLSPnP> create(const Mat &points_, const Mat &calib_norm_pts, const Mat &K);
 };
 
 //////////////////////////////////////////////////////////////////////////////////////////////
@@ -176,19 +222,14 @@ public:
      * Calculates number of inliers and score of the @model.
      * return Score with calculated inlier_number and score.
      * @model: Mat current model, e.g., H matrix.
-     * @get_inliers: if true inliers will be stored to @inliers.
-     * @inliers: vector containing inlier indices, which are stored from the beginning of array.
-     * Note, @inliers must be of size of number of points.
      */
-    virtual Score getScore (const Mat &model, double threshold, bool get_inliers,
-                            std::vector<int> &inliers) const = 0;
-    virtual Score getScore (const Mat &model,bool get_inliers,std::vector<int> &inliers) const = 0;
     virtual Score getScore (const Mat &model) const = 0;
     // return true if point with given @point_idx is inliers, false-otherwise
     virtual bool isInlier (int point_idx) const = 0;
     // set @model for function isInlier()
     virtual void setModel (const Mat &model) const = 0;
     // get @inliers of the @model. Assume threshold is given
+    // @inliers must be preallocated to maximum points size.
     virtual int getInliers (const Mat &model, std::vector<int> &inliers) const = 0;
     // get @inliers of the @model for given threshold
     virtual int getInliers (const Mat &model, std::vector<int> &inliers, double thr) const = 0;
@@ -230,6 +271,9 @@ public:
     virtual bool isModelValid (const Mat &/*model*/, const std::vector<int> &/*sample*/) const {
         return true;
     }
+    virtual bool isModelValid (const Mat &/*model*/, const std::vector<int> &/*sample*/, int /*sample_size*/) const {
+        return true;
+    }
     /*
      * Fix degenerate model.
      * Return true if model is degenerate, false - otherwise
@@ -245,6 +289,11 @@ class EpipolarGeometryDegeneracy : public Degeneracy {
 public:
     static void recoverRank (Mat &model);
     static Ptr<EpipolarGeometryDegeneracy> create (const Mat &points_, int sample_size_);
+};
+
+class EssentialDegeneracy : public EpipolarGeometryDegeneracy {
+public:
+    static Ptr<EssentialDegeneracy>create (const Mat &points, int sample_size);
 };
 
 class HomographyDegeneracy : public Degeneracy {
@@ -300,6 +349,18 @@ public:
 class FundamentalEstimator : public Estimator {
 public:
     static Ptr<FundamentalEstimator> create (const Ptr<MinimalSolver> &min_solver_,
+            const Ptr<NonMinimalSolver> &non_min_solver_, const Ptr<Degeneracy> &degeneracy_);
+};
+
+class EssentialEstimator : public Estimator {
+public:
+    static Ptr<EssentialEstimator> create (const Ptr<MinimalSolver> &min_solver_,
+            const Ptr<NonMinimalSolver> &non_min_solver_, const Ptr<Degeneracy> &degeneracy_);
+};
+
+class PnPEstimator : public Estimator {
+public:
+    static Ptr<PnPEstimator> create (const Ptr<MinimalSolver> &min_solver_,
             const Ptr<NonMinimalSolver> &non_min_solver_, const Ptr<Degeneracy> &degeneracy_);
 };
 
@@ -412,16 +473,11 @@ namespace Utils {
      * @norm_points is output matrix N x 4 with calibrated points.
      */
     void calibratePoints (const Mat &K1, const Mat &K2, const Mat &points, Mat &norm_points);
+    void calibrateAndNormalizePointsPnP (const Mat &K, const Mat &pts, Mat &calib_norm_pts);
+    void decomposeProjection (const Mat &P, Mat &K_, Mat &R, Mat &t);
     double getCalibratedThreshold (double threshold, const Mat &K1, const Mat &K2);
 }
 namespace Math {
-    /*
-     * @points Nx4 array: x1 y1 x2 y2
-     * @sample Mx1 array
-     * return true if any 3 out of M points in sample are collinear
-     */
-    bool haveCollinearPoints(const Mat &points, const std::vector<int> &sample,
-            double threshold=1);
     // return skew symmetric matrix
     Matx33d getSkewSymmetric(const Vec3d &v_);
     // eliminate matrix with m rows and n columns to be upper triangular.
@@ -477,7 +533,7 @@ class InnerLocalOptimization : public LocalOptimization {
 public:
     static Ptr<InnerLocalOptimization>
     create(const Ptr<Estimator> &estimator_, const Ptr<Quality> &quality_,
-           const Ptr<Sampler> &lo_sampler_, int points_size, int lo_inner_iterations_=15);
+           const Ptr<Sampler> &lo_sampler_, int points_size, int lo_inner_iterations_);
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -608,9 +664,8 @@ public:
     virtual void setPolisher (PolishingMethod polisher_) = 0;
     virtual void setError (ErrorMetric error_) = 0;
 
-    // 0 - no trace, 1 - inlier mask, 2 - full trace (e.g., time, num iters etc)
-    virtual void setTrace (int trace) = 0;
-    virtual int getTrace () const = 0;
+    virtual void maskRequired (bool required) = 0;
+    virtual bool isMaskRequired () const = 0;
 
     virtual void setSPRT (double sprt_eps_ = 0.005, double sprt_delta_ = 0.0025,
                           double avg_num_models_ = 1, double time_for_model_est_ = 5e2) = 0;
@@ -627,7 +682,20 @@ Mat findHomography(InputArray srcPoints, InputArray dstPoints, int method = 0,
 
 Mat findFundamentalMat( InputArray points1, InputArray points2,
     int method, double ransacReprojThreshold, double confidence,
-    int maxIters, OutputArray mask);
+    int maxIters, OutputArray mask=noArray());
+
+bool solvePnPRansac( InputArray objectPoints, InputArray imagePoints,
+         InputArray cameraMatrix, InputArray distCoeffs,
+         OutputArray rvec, OutputArray tvec,
+         bool useExtrinsicGuess = false, int iterationsCount = 100,
+         float reprojectionError = 8.0, double confidence = 0.99,
+         OutputArray inliers = noArray(), int flags = RANSAC);
+
+Mat findEssentialMat( InputArray points1, InputArray points2,
+                      InputArray cameraMatrix1, InputArray cameraMatrix2,
+                      int method = RANSAC, double prob = 0.999,
+                      double threshold = 1.0, int maxIters = 1000,
+                      OutputArray mask = noArray() );
 }}
 
 #endif //OPENCV_USAC_USAC_HPP

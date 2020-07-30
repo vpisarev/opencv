@@ -2576,6 +2576,17 @@ CV_EXPORTS_W Mat findEssentialMat( InputArray points1, InputArray points2,
                                  double prob = 0.999, double threshold = 1.0,
                                  OutputArray mask = noArray() );
 
+
+/*
+Estimates essential matrix as is described above.
+Assume two different calibration matrices and @maxIters - maximum iterations for RANSAC.
+*/
+CV_EXPORTS_W Mat findEssentialMat( InputArray points1, InputArray points2,
+                                  InputArray cameraMatrix1, InputArray cameraMatrix2,
+                                  int method = RANSAC, double prob = 0.999,
+                                  double threshold = 1.0, int maxIters = 2000,
+                                  OutputArray mask = noArray() );
+
 /** @brief Decompose an essential matrix to possible rotations and translation.
 
 @param E The input essential matrix.

@@ -136,7 +136,7 @@ public:
 
         // several all-inlier least-squares refines model better than only one but for
         // big amount of points may be too time-consuming.
-        for (int norm = 0; norm < lsq_iterations; norm++) {
+        for (int lsq_iter = 0; lsq_iter < lsq_iterations; lsq_iter++) {
             bool model_updated = false;
 
             // estimate non minimal models with all inliers
@@ -159,14 +159,14 @@ public:
                 // if model was not updated at the first iteration then return false
                 // otherwise if all-inliers LSQ has not updated model then no sense
                 // to do it again -> return true (model was updated before).
-                return norm > 0;
+                return lsq_iter > 0;
 
             // if number of inliers doesn't increase more than 5% then break
             if (fabs(static_cast<double>(out_score.inlier_number) - static_cast<double>
-            (best_model_score.inlier_number)) / best_model_score.inlier_number < 0.05)
+                (best_model_score.inlier_number)) / best_model_score.inlier_number < 0.05)
                 return true;
 
-            if (norm != lsq_iterations - 1)
+            if (lsq_iter != lsq_iterations - 1)
                 // if not the last LSQ normalization then get inliers for next normalization
                 inlier_number = quality->getInliers(new_model, inliers);
         }

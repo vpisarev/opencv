@@ -62,16 +62,20 @@ public:
         std::vector<Mat> F;
         const int models_count = min_solver->estimate(sample, F);
         int valid_models_count = 0;
-
         for (int i = 0; i < models_count; i++)
             if (degeneracy->isModelValid(F[i], sample))
                 models[valid_models_count++] = F[i];
-
         return valid_models_count;
     }
     int estimateModelNonMinimalSample(const std::vector<int> &sample, int sample_size,
             std::vector<Mat> &models, const std::vector<double> &weights) const override {
-        return non_min_solver->estimate(sample, sample_size, models, weights);
+        std::vector<Mat> Fs;
+        const int num_est_models = non_min_solver->estimate(sample, sample_size, Fs, weights);
+        int valid_models_count = 0;
+        for (int i = 0; i < num_est_models; i++)
+            if (degeneracy->isModelValid (Fs[i], sample, sample_size))
+                models[valid_models_count++] = Fs[i];
+        return valid_models_count;
     }
     int getMaxNumSolutions () const override {
         return min_solver->getMaxNumberOfSolutions();
@@ -93,6 +97,100 @@ public:
 Ptr<FundamentalEstimator> FundamentalEstimator::create (const Ptr<MinimalSolver> &min_solver_,
         const Ptr<NonMinimalSolver> &non_min_solver_, const Ptr<Degeneracy> &degeneracy_) {
     return makePtr<FundamentalEstimatorImpl>(min_solver_, non_min_solver_, degeneracy_);
+}
+
+/////////////////////////////////////////////////////////////////////////
+class EssentialEstimatorImpl : public EssentialEstimator {
+private:
+    const Ptr<MinimalSolver> min_solver;
+    const Ptr<NonMinimalSolver> non_min_solver;
+    const Ptr<Degeneracy> degeneracy;
+public:
+    explicit EssentialEstimatorImpl (const Ptr<MinimalSolver> &min_solver_,
+        const Ptr<NonMinimalSolver> &non_min_solver_, const Ptr<Degeneracy> &degeneracy_) :
+        min_solver (min_solver_), non_min_solver (non_min_solver_), degeneracy (degeneracy_) {}
+
+    inline int
+    estimateModels(const std::vector<int> &sample, std::vector<Mat> &models) const override {
+            std::vector<Mat> E;
+        const int models_count = min_solver->estimate(sample, E);
+        int valid_models_count = 0;
+        for (int i = 0; i < models_count; i++)
+            if (degeneracy->isModelValid (E[i], sample))
+                models[valid_models_count++] = E[i];
+        return valid_models_count;
+    }
+
+    int estimateModelNonMinimalSample(const std::vector<int> &sample, int sample_size,
+            std::vector<Mat> &models, const std::vector<double> &weights) const override {
+        std::vector<Mat> Es;
+        const int num_est_models = non_min_solver->estimate(sample, sample_size, Es, weights);
+        int valid_models_count = 0;
+        for (int i = 0; i < num_est_models; i++)
+            if (degeneracy->isModelValid (Es[i], sample, sample_size))
+                models[valid_models_count++] = Es[i];
+        return valid_models_count;
+    };
+    int getMaxNumSolutions () const override {
+        return min_solver->getMaxNumberOfSolutions();
+    }
+    int getMinimalSampleSize () const override {
+        return min_solver->getSampleSize();
+    }
+    int getNonMinimalSampleSize () const override {
+        return non_min_solver->getMinimumRequiredSampleSize();
+    }
+    int getMaxNumSolutionsNonMinimal () const override {
+        return non_min_solver->getMaxNumberOfSolutions();
+    }
+    Ptr<Estimator> clone() const override {
+        return makePtr<EssentialEstimatorImpl>(min_solver->clone(), non_min_solver->clone(),
+                degeneracy->clone(0));
+    }
+};
+Ptr<EssentialEstimator> EssentialEstimator::create (const Ptr<MinimalSolver> &min_solver_,
+        const Ptr<NonMinimalSolver> &non_min_solver_, const Ptr<Degeneracy> &degeneracy_) {
+    return makePtr<EssentialEstimatorImpl>(min_solver_, non_min_solver_, degeneracy_);
+}
+
+/////////////////////////////////////////////////////////////////////////
+class PnPEstimatorImpl : public PnPEstimator {
+private:
+    const Ptr<MinimalSolver> min_solver;
+    const Ptr<NonMinimalSolver> non_min_solver;
+    const Ptr<Degeneracy> degeneracy;
+public:
+    explicit PnPEstimatorImpl (const Ptr<MinimalSolver> &min_solver_,
+        const Ptr<NonMinimalSolver> &non_min_solver_, const Ptr<Degeneracy> &degeneracy_) :
+        min_solver(min_solver_), non_min_solver(non_min_solver_), degeneracy(degeneracy_) {}
+
+    int estimateModels (const std::vector<int> &sample, std::vector<Mat> &models) const override {
+        return min_solver->estimate(sample, models);
+    }
+    int estimateModelNonMinimalSample (const std::vector<int> &sample, int sample_size,
+            std::vector<Mat> &models, const std::vector<double> &weights) const override {
+        return non_min_solver->estimate(sample, sample_size, models, weights);
+    }
+    int getMinimalSampleSize() const override {
+        return min_solver->getSampleSize();
+    }
+    int getNonMinimalSampleSize() const override {
+        return non_min_solver->getMinimumRequiredSampleSize();
+    }
+    int getMaxNumSolutions () const override {
+        return min_solver->getMaxNumberOfSolutions();
+    }
+    int getMaxNumSolutionsNonMinimal () const override {
+        return non_min_solver->getMaxNumberOfSolutions();
+    }
+    Ptr<Estimator> clone() const override {
+        return makePtr<PnPEstimatorImpl>(min_solver->clone(), non_min_solver->clone(),
+                degeneracy->clone(0));
+    }
+};
+Ptr<PnPEstimator> PnPEstimator::create (const Ptr<MinimalSolver> &min_solver_,
+        const Ptr<NonMinimalSolver> &non_min_solver_, const Ptr<Degeneracy> &degeneracy_) {
+    return makePtr<PnPEstimatorImpl>(min_solver_, non_min_solver_, degeneracy_);
 }
 
 ///////////////////////////////////////////// ERROR /////////////////////////////////////////
@@ -123,28 +221,28 @@ public:
     inline float getError (int point_idx) const override {
         const int smpl = 4*point_idx;
         const float x1=points[smpl], y1=points[smpl+1], x2=points[smpl+2], y2=points[smpl+3];
-        const float est_z2 =  m31 * x1 + m32 * y1 + m33,
-                    est_x2 = (m11 * x1 + m12 * y1 + m13) / est_z2,
-                    est_y2 = (m21 * x1 + m22 * y1 + m23) / est_z2;
-        const float est_z1 =  minv31 * x2 + minv32 * y2 + minv33,
-                    est_x1 = (minv11 * x2 + minv12 * y2 + minv13) / est_z1,
-                    est_y1 = (minv21 * x2 + minv22 * y2 + minv23) / est_z1;
+        const float est_z2 = 1 / (m31 * x1 + m32 * y1 + m33),
+                    est_x2 =     (m11 * x1 + m12 * y1 + m13) * est_z2,
+                    est_y2 =     (m21 * x1 + m22 * y1 + m23) * est_z2;
+        const float est_z1 = 1 / (minv31 * x2 + minv32 * y2 + minv33),
+                    est_x1 =     (minv11 * x2 + minv12 * y2 + minv13) * est_z1,
+                    est_y1 =     (minv21 * x2 + minv22 * y2 + minv23) * est_z1;
         return ((x2 - est_x2) * (x2 - est_x2) + (y2 - est_y2) * (y2 - est_y2) +
-                (x1 - est_x1) * (x1 - est_x1) + (y1 - est_y1) * (y1 - est_y1)) / 2;
+                (x1 - est_x1) * (x1 - est_x1) + (y1 - est_y1) * (y1 - est_y1)) * .5f;
     }
     void computeErrors (const Mat &model) override {
         setModelParameters(model);
         for (int point_idx = 0; point_idx < points_mat->rows; point_idx++) {
             const int smpl = 4*point_idx;
             const float x1=points[smpl], y1=points[smpl+1], x2=points[smpl+2], y2=points[smpl+3];
-            const float est_z2 =  m31 * x1 + m32 * y1 + m33,
-                        est_x2 = (m11 * x1 + m12 * y1 + m13) / est_z2,
-                        est_y2 = (m21 * x1 + m22 * y1 + m23) / est_z2;
-            const float est_z1 =  minv31 * x2 + minv32 * y2 + minv33,
-                        est_x1 = (minv11 * x2 + minv12 * y2 + minv13) / est_z1,
-                        est_y1 = (minv21 * x2 + minv22 * y2 + minv23) / est_z1;
-            errors[point_idx] = ((x2 - est_x2) * (x2 - est_x2) + (y2 - est_y2) * (y2 - est_y2) +
-                                 (x1 - est_x1) * (x1 - est_x1) + (y1 - est_y1) * (y1 - est_y1))/2;
+            const float est_z2 = 1 / (m31 * x1 + m32 * y1 + m33),
+                        est_x2 =     (m11 * x1 + m12 * y1 + m13) * est_z2,
+                        est_y2 =     (m21 * x1 + m22 * y1 + m23) * est_z2;
+            const float est_z1 = 1 / (minv31 * x2 + minv32 * y2 + minv33),
+                        est_x1 =     (minv11 * x2 + minv12 * y2 + minv13) * est_z1,
+                        est_y1 =     (minv21 * x2 + minv22 * y2 + minv23) * est_z1;
+            errors[point_idx] =((x2 - est_x2) * (x2 - est_x2) + (y2 - est_y2) * (y2 - est_y2) +
+                                (x1 - est_x1) * (x1 - est_x1) + (y1 - est_y1) * (y1 - est_y1))*.5f;
         }
     }
     const std::vector<float> &getErrors () const override { return errors; }
@@ -177,9 +275,9 @@ public:
     inline float getError (int point_idx) const override {
         const int smpl = 4*point_idx;
         const float x1 = points[smpl], y1 = points[smpl+1], x2 = points[smpl+2], y2 = points[smpl+3];
-        const float est_z2 =  m31 * x1 + m32 * y1 + m33,
-                    est_x2 = (m11 * x1 + m12 * y1 + m13) / est_z2,
-                    est_y2 = (m21 * x1 + m22 * y1 + m23) / est_z2;
+        const float est_z2 = 1 / (m31 * x1 + m32 * y1 + m33),
+                    est_x2 =     (m11 * x1 + m12 * y1 + m13) * est_z2,
+                    est_y2 =     (m21 * x1 + m22 * y1 + m23) * est_z2;
         return (x2 - est_x2) * (x2 - est_x2) + (y2 - est_y2) * (y2 - est_y2);
     }
     void computeErrors (const Mat &model) override {
@@ -187,9 +285,9 @@ public:
         for (int point_idx = 0; point_idx < points_mat->rows; point_idx++) {
             const int smpl = 4*point_idx;
             const float x1=points[smpl], y1=points[smpl+1], x2=points[smpl+2], y2=points[smpl+3];
-            const float est_z2 =  m31 * x1 + m32 * y1 + m33,
-                        est_x2 = (m11 * x1 + m12 * y1 + m13) / est_z2,
-                        est_y2 = (m21 * x1 + m22 * y1 + m23) / est_z2;
+            const float est_z2 = 1 / (m31 * x1 + m32 * y1 + m33),
+                        est_x2 =     (m11 * x1 + m12 * y1 + m13) * est_z2,
+                        est_y2 =     (m21 * x1 + m22 * y1 + m23) * est_z2;
             errors[point_idx] = (x2 - est_x2) * (x2 - est_x2) + (y2 - est_y2) * (y2 - est_y2);
         }
     }
@@ -263,6 +361,108 @@ public:
 Ptr<SampsonError>
 SampsonError::create(const Mat &points) {
     return makePtr<SampsonErrorImpl>(points);
+}
+
+class SymmetricGeometricDistanceImpl : public SymmetricGeometricDistance {
+private:
+    const Mat * points_mat;
+    const float * const points;
+    float m11, m12, m13, m21, m22, m23, m31, m32, m33;
+    std::vector<float> errors;
+public:
+    explicit SymmetricGeometricDistanceImpl (const Mat &points_) :
+            points_mat(&points_), points ((float *) points_.data), errors(points_.rows) {}
+
+    inline void setModelParameters (const Mat &model) override {
+        const auto * const m = (double *) model.data;
+        m11=static_cast<float>(m[0]); m12=static_cast<float>(m[1]); m13=static_cast<float>(m[2]);
+        m21=static_cast<float>(m[3]); m22=static_cast<float>(m[4]); m23=static_cast<float>(m[5]);
+        m31=static_cast<float>(m[6]); m32=static_cast<float>(m[7]); m33=static_cast<float>(m[8]);
+    }
+
+    inline float getError (int point_idx) const override {
+        const int smpl = 4*point_idx;
+        const float x1=points[smpl], y1=points[smpl+1], x2=points[smpl+2], y2=points[smpl+3];
+        // pt2^T * E, line 1
+        const float l1 = x2 * m11 + y2 * m21 + m31,
+                    l2 = x2 * m12 + y2 * m22 + m32,
+                    l3 = x2 * m13 + y2 * m23 + m33;
+        // E * pt1, line 2
+        const float t1 = m11 * x1 + m12 * y1 + m13,
+                    t2 = m21 * x1 + m22 * y1 + m23,
+                    t3 = m31 * x1 + m32 * y1 + m33;
+        return (fabsf(l1 * x1 + l2 * y1 + l3) / sqrt(l1 * l1 + l2 * l2) // distance from pt1 to line 1
+                +
+                fabsf(t1 * x2 + t2 * y2 + t3) / sqrt(t1 * t1 + t2 * t2) // distance from pt2 to line 2
+               ) * .5f; // error is average of distances to lines
+    }
+    void computeErrors (const Mat &model) override {
+        setModelParameters(model);
+        for (int point_idx = 0; point_idx < points_mat->rows; point_idx++) {
+            const int smpl = 4*point_idx;
+            const float x1=points[smpl], y1=points[smpl+1], x2=points[smpl+2], y2=points[smpl+3];
+            const float l1 = x2 * m11 + y2 * m21 + m31, t1 = m11 * x1 + m12 * y1 + m13,
+                        l2 = x2 * m12 + y2 * m22 + m32, t2 = m21 * x1 + m22 * y1 + m23,
+                        l3 = x2 * m13 + y2 * m23 + m33, t3 = m31 * x1 + m32 * y1 + m33;
+            errors[point_idx] = (fabsf(l1 * x1 + l2 * y1 + l3) / sqrt(l1 * l1 + l2 * l2) +
+                                 fabsf(t1 * x2 + t2 * y2 + t3) / sqrt(t1 * t1 + t2 * t2)) *.5f;
+        }
+    }
+    const std::vector<float> &getErrors () const override { return errors; }
+    Ptr<Error> clone () const override {
+        return makePtr<SymmetricGeometricDistanceImpl>(*points_mat);
+    }
+};
+Ptr<SymmetricGeometricDistance>
+SymmetricGeometricDistance::create(const Mat &points) {
+    return makePtr<SymmetricGeometricDistanceImpl>(points);
+}
+
+class ReprojectionErrorPmatrixImpl : public ReprojectionErrorPmatrix {
+private:
+    const Mat * points_mat;
+    const float * const points;
+    float p11, p12, p13, p14, p21, p22, p23, p24, p31, p32, p33, p34;
+    std::vector<float> errors;
+public:
+    explicit ReprojectionErrorPmatrixImpl (const Mat &points_) :
+        points_mat(&points_), points ((float *) points_.data), errors(points_.rows) {}
+
+    inline void setModelParameters (const Mat &model) override {
+        const auto * const p = (double *) model.data;
+        p11 = (float)p[0]; p12 = (float)p[1]; p13 = (float)p[2];  p14 = (float)p[3];
+        p21 = (float)p[4]; p22 = (float)p[5]; p23 = (float)p[6];  p24 = (float)p[7];
+        p31 = (float)p[8]; p32 = (float)p[9]; p33 = (float)p[10]; p34 = (float)p[11];
+    }
+
+    inline float getError (int point_idx) const override {
+        const int smpl = 5*point_idx;
+        const float u = points[smpl  ], v = points[smpl+1],
+                    x = points[smpl+2], y = points[smpl+3], z = points[smpl+4];
+        const float depth = 1 / (p31 * x + p32 * y + p33 * z + p34);
+        const float u_est =     (p11 * x + p12 * y + p13 * z + p14) * depth;
+        const float v_est =     (p21 * x + p22 * y + p23 * z + p24) * depth;
+        return powf(u - u_est, 2) + powf(v - v_est, 2);
+    }
+    void computeErrors (const Mat &model) override {
+        setModelParameters(model);
+        for (int point_idx = 0; point_idx < points_mat->rows; point_idx++) {
+            const int smpl = 5*point_idx;
+            const float u = points[smpl  ], v = points[smpl+1],
+                        x = points[smpl+2], y = points[smpl+3], z = points[smpl+4];
+            const float depth = 1 / (p31 * x + p32 * y + p33 * z + p34);
+            const float u_est =     (p11 * x + p12 * y + p13 * z + p14) * depth;
+            const float v_est =     (p21 * x + p22 * y + p23 * z + p24) * depth;
+            errors[point_idx] = powf(u - u_est, 2) + powf(v - v_est, 2);
+        }
+    }
+    const std::vector<float> &getErrors () const override { return errors; }
+    Ptr<Error> clone () const override {
+        return makePtr<ReprojectionErrorPmatrixImpl>(*points_mat);
+    }
+};
+Ptr<ReprojectionErrorPmatrix> ReprojectionErrorPmatrix::create(const Mat &points) {
+    return makePtr<ReprojectionErrorPmatrixImpl>(points);
 }
 
 ////////////////////////////////////// NORMALIZING TRANSFORMATION /////////////////////////
