@@ -328,7 +328,7 @@ public:
                 continue;
             const double n12 = eigenvalues(r).real(), n12_p2 = n12*n12;
 #elif defined(HAVE_LAPACK)
-            if (wi[i] == 0)
+            if (wi[r] == 0)
                 continue;
             const double n12 = wr[r], n12_p2 = n12*n12;
 #else
