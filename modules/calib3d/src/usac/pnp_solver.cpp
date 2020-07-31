@@ -8,7 +8,8 @@
 #include <Eigen/Eigen>
 #include <Eigen/QR>
 #elif defined(HAVE_LAPACK)
-#include <lapacke.h>
+// #include <lapacke.h>
+#include "opencv_lapack.h"
 #endif
 
 

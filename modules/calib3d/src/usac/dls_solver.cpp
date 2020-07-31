@@ -43,7 +43,8 @@
 #if defined(HAVE_EIGEN)
 #include <Eigen/Eigen>
 #elif defined(HAVE_LAPACK)
-#include <lapacke.h>
+// #include <lapacke.h>
+#include "opencv_lapack.h"
 #endif
 
 namespace cv { namespace usac {
