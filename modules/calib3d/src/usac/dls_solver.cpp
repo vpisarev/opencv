@@ -55,15 +55,14 @@ private:
     const Mat &K;
     const float * const calib_norm_points;
     const float * const points;
-public:
-    explicit DLSPnPImpl (const Mat &points_, const Mat &calib_norm_points_, const Mat &K_) :
-        points_mat(&points_), calib_norm_points_mat(&calib_norm_points_), K_mat (&K_),
-        K(K_), calib_norm_points((float*)calib_norm_points_.data), points((float*)points_.data) {}
-#else
-public:
-    explicit DLSPnPImpl (const Mat &points_, const Mat &calib_norm_points_, const Mat &K_) :
-        points_mat(&points_), calib_norm_points_mat(&calib_norm_points_), K_mat (&K_) {}
 #endif
+public:
+    explicit DLSPnPImpl (const Mat &points_, const Mat &calib_norm_points_, const Mat &K_) :
+        points_mat(&points_), calib_norm_points_mat(&calib_norm_points_), K_mat (&K_)
+#if defined(HAVE_LAPACK) || defined(HAVE_EIGEN)
+        , K(K_), calib_norm_points((float*)calib_norm_points_.data), points((float*)points_.data)
+#endif
+        {}
     // return minimal sample size required for non-minimal estimation.
     int getMinimumRequiredSampleSize() const override { return 3; }
     // return maximum number of possible solutions.
@@ -401,7 +400,6 @@ protected:
             14245, 14246, 14273, 14274, 14275, 14276, 14307, 14311, 14328, 14335, 14338,
             14361, 14365, 14393, 14395
     };
-#endif
     void createMacaulayMatrix(const double a[20], const double b[20],
             const double c[20], const double u[4], double * macaulay_matrix) const {
         // The matrix is very large (14400 elements!) and sparse (1968 non-zero
@@ -586,6 +584,7 @@ protected:
         for (int i = 0; i < 1968; i++)
             macaulay_matrix[indices[i]] = values[i];
     }
+#endif
 
     // Transforms a 3 - vector in a 3x9 matrix such that :
     // R * v = leftMultiplyMatrix(v) * vec(R)

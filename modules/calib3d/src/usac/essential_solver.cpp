@@ -23,13 +23,14 @@ private:
     const Mat * points_mat;
 #if defined(HAVE_EIGEN) || defined(HAVE_LAPACK)
     const float * const pts;
+#endif
 public:
     explicit EssentialMinimalSolverStewenius5ptsImpl (const Mat &points_) :
-        points_mat(&points_), pts((float*)points_.data) {}
-#else
-    explicit EssentialMinimalSolverStewenius5ptsImpl (const Mat &points_) :
-        points_mat(&points_) {}
+        points_mat(&points_)
+#if defined(HAVE_EIGEN) || defined(HAVE_LAPACK)
+        , pts((float*)points_.data)
 #endif
+        {}
 
 #if defined(HAVE_LAPACK) || defined(HAVE_EIGEN)
     int estimate (const std::vector<int> &sample, std::vector<Mat> &models) const override {
