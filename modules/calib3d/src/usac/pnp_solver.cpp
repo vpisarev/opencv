@@ -4,12 +4,13 @@
 
 #include "../precomp.hpp"
 #include "../usac.hpp"
-#ifdef HAVE_EIGEN
+#if defined(HAVE_EIGEN)
 #include <Eigen/Eigen>
 #include <Eigen/QR>
-#elif HAVE_LAPACK
+#elif defined(HAVE_LAPACK)
 #include <lapacke.h>
 #endif
+
 
 namespace cv { namespace usac {
 class PnPMinimalSolver6PtsImpl : public PnPMinimalSolver6Pts {
@@ -330,7 +331,7 @@ public:
                 continue;
             const double n12 = wr[r], n12_p2 = n12*n12;
 #else
-            if (r >= roots.size())
+            if (r >= (int) roots.size())
                 break;
             if (fabs(roots[r].im) > 1e-10)
                 continue;
@@ -388,7 +389,7 @@ public:
             hconcat(KR, -KR * C, P);
             models.emplace_back(P);
         }
-        return models.size();
+        return static_cast<int>(models.size());
     }
     int getSampleSize() const override { return 3; }
     int getMaxNumberOfSolutions () const override { return 4; }

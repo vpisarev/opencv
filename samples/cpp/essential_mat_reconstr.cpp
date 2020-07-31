@@ -41,10 +41,10 @@ void getPlanes (InputArray points3d_, std::vector<int> &labels, std::vector<Vec4
     Mat points3d = points3d_.getMat();
     points3d.convertTo(points3d, CV_64F); // convert points to have double precision
     if (points3d_.isVector())
-        points3d = Mat(points3d.total(), 3, CV_64F, points3d.data);
+        points3d = Mat((int)points3d.total(), 3, CV_64F, points3d.data);
     else {
         if (points3d.type() != CV_64F)
-            points3d = points3d.reshape(1, points3d.total()); // convert point to have 1 channel
+            points3d = points3d.reshape(1, (int)points3d.total()); // convert point to have 1 channel
         if (points3d.rows < points3d.cols)
             transpose(points3d, points3d); // transpose so points will be in rows
         CV_CheckEQ(points3d.cols, 3, "Invalid dimension of point");
@@ -72,7 +72,7 @@ void getPlanes (InputArray points3d_, std::vector<int> &labels, std::vector<Vec4
         // estimate plane coefficients using covariance matrix
         auto estimate = [&] (const std::vector<int> &sample, Vec4d &model_) {
             // https://www.ilikebigbits.com/2017_09_25_plane_from_points_2.html
-            const int n = sample.size();
+            const int n = static_cast<int>(sample.size());
             if (n < 3) return false;
             double sum_x = 0, sum_y = 0, sum_z = 0;
             for (int s : sample) {
@@ -193,7 +193,7 @@ void getPlanes (InputArray points3d_, std::vector<int> &labels, std::vector<Vec4
     }
 }
 
-int main(int /*argc*/, char **/*argv*/) {
+int main(int /*argc*/, char** /*argv*/) {
     std::ifstream file("../data/essential_mat_data.txt", std::ios_base::in);
     CV_CheckEQ(file.is_open(), true, "Data file is not found!");
     std::string filename1, filename2;
@@ -249,8 +249,8 @@ int main(int /*argc*/, char **/*argv*/) {
             (std::chrono::steady_clock::now() - begin_time).count() <<
             "mcs.\nNumber of inliers " << countNonZero(inliers) << "\n";
 
-    Mat points1 = Mat(pts1.size(), 2, CV_64F, pts1.data());
-    Mat points2 = Mat(pts2.size(), 2, CV_64F, pts2.data());
+    Mat points1 = Mat((int)pts1.size(), 2, CV_64F, pts1.data());
+    Mat points2 = Mat((int)pts2.size(), 2, CV_64F, pts2.data());
     points1 = points1.t(); points2 = points2.t();
 
     std::cout << "Mean error to epipolar lines " <<
@@ -328,8 +328,8 @@ int main(int /*argc*/, char **/*argv*/) {
     hconcat(image1, image2, image1);
     const int new_img_size = 1200 * 800; // for example
     // resize with the same aspect ratio
-    resize(image1, image1, Size(sqrt ((double) image1.cols * new_img_size / image1.rows),
-                                      sqrt ((double) image1.rows * new_img_size / image1.cols)));
+    resize(image1, image1, Size((int)sqrt ((double) image1.cols * new_img_size / image1.rows),
+                                (int)sqrt ((double) image1.rows * new_img_size / image1.cols)));
     imshow("image 1-2", image1);
     imwrite("planes.png", image1);
     waitKey(0);

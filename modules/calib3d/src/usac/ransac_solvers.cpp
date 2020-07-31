@@ -366,7 +366,7 @@ public:
 
         // ================= here is ending ransac main implementation ===========================
         std::vector<bool> inliers_mask;
-        if (params->isMaskRequired() >= 1) {
+        if (params->isMaskRequired()) {
             inliers_mask = std::vector<bool>(points_size);
             // get final inliers from the best model
             _quality->getInliers(best_model, inliers_mask);
@@ -391,10 +391,10 @@ int mergePoints (InputArray pts1_, InputArray pts2_, Mat &pts, bool ispnp) {
     auto convertPoints = [] (Mat &points, bool is_vector, int pt_dim) {
         points.convertTo(points, CV_32F); // convert points to have float precision
         if (is_vector)
-            points = Mat(points.total(), pt_dim, CV_32F, points.data);
+            points = Mat((int)points.total(), pt_dim, CV_32F, points.data);
         else {
             if (points.channels() > 1)
-                points = points.reshape(1, points.total()); // convert point to have 1 channel
+                points = points.reshape(1, (int)points.total()); // convert point to have 1 channel
             if (points.rows < points.cols)
                 transpose(points, points); // transpose so points will be in rows
             CV_CheckGE(points.cols, pt_dim, "Invalid dimension of point");

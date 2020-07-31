@@ -12,7 +12,7 @@
 
 using namespace cv;
 
-int main(int /*argc*/, char **/*argv*/) {
+int main(int /*argc*/, char** /*argv*/) {
     const std::string folder = "/home/ivashmak/opencv/samples/data/";
     Mat image1 = imread(folder+"left.jpg");
     Mat image2 = imread(folder+"right.jpg");
@@ -47,12 +47,12 @@ int main(int /*argc*/, char **/*argv*/) {
 
     Mat inliers;
     const auto begin_time = std::chrono::steady_clock::now();
-    const Mat F = findFundamentalMat(pts1, pts2, RANSAC, 1., 0.99, 2e3, inliers);
+    const Mat F = findFundamentalMat(pts1, pts2, RANSAC, 1., 0.99, 2000, inliers);
     std::cout << "RANSAC fundamental matrix time " << static_cast<int>(std::chrono::duration_cast<std::chrono::microseconds>
             (std::chrono::steady_clock::now() - begin_time).count()) << "\n";
 
-    Mat points1 = Mat(pts1.size(), 2, CV_64F, pts1.data());
-    Mat points2 = Mat(pts2.size(), 2, CV_64F, pts2.data());
+    Mat points1 = Mat((int)pts1.size(), 2, CV_64F, pts1.data());
+    Mat points2 = Mat((int)pts2.size(), 2, CV_64F, pts2.data());
     vconcat(points1.t(), Mat::ones(1, points1.rows, points1.type()), points1);
     vconcat(points2.t(), Mat::ones(1, points2.rows, points2.type()), points2);
 
@@ -74,10 +74,10 @@ int main(int /*argc*/, char **/*argv*/) {
             const double mag1 = sqrt(a1*a1 + b1*b1), mag2 = (a2*a2 + b2*b2);
             a1 /= mag1; b1 /= mag1; c1 /= mag1; a2 /= mag2; b2 /= mag2; c2 /= mag2;
             if (plot_lines++ < max_lines) {
-                line(image1, Point2f(0, -c1/b1),
-                     Point2f(image1.cols, -(a1*image1.cols+c1)/b1), col, line_sz);
-                line(image2, Point2f(0, -c2/b2),
-                     Point2f(image2.cols, -(a2*image2.cols+c2)/b2), col, line_sz);
+                line(image1, Point2d(0, -c1/b1),
+                     Point2d((double)image1.cols, -(a1*image1.cols+c1)/b1), col, line_sz);
+                line(image2, Point2d(0, -c2/b2),
+                     Point2d((double)image2.cols, -(a2*image2.cols+c2)/b2), col, line_sz);
             }
             circle (image1, pts1[pt], circle_sz, col, -1);
             circle (image2, pts2[pt], circle_sz, col, -1);
@@ -91,8 +91,8 @@ int main(int /*argc*/, char **/*argv*/) {
     hconcat(image1, image2, image1);
     const int new_img_size = 1200 * 800; // for example
     // resize with the same aspect ratio
-    resize(image1, image1, Size(sqrt ((double) image1.cols * new_img_size / image1.rows),
-                                      sqrt ((double) image1.rows * new_img_size / image1.cols)));
+    resize(image1, image1, Size((int) sqrt ((double) image1.cols * new_img_size / image1.rows),
+                                (int)sqrt ((double) image1.rows * new_img_size / image1.cols)));
 
     imshow("epipolar lines, image 1, 2", image1);
     imwrite("epipolar_lines.png", image1);

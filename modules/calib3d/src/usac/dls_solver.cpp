@@ -40,10 +40,9 @@
 
 #include "../precomp.hpp"
 #include "../usac.hpp"
-#ifdef HAVE_EIGEN
+#if defined(HAVE_EIGEN)
 #include <Eigen/Eigen>
-#endif
-#ifdef HAVE_LAPACK
+#elif defined(HAVE_LAPACK)
 #include <lapacke.h>
 #endif
 
@@ -52,6 +51,7 @@ namespace cv { namespace usac {
 class DLSPnPImpl : public DLSPnP {
 private:
     const Mat * points_mat, * calib_norm_points_mat, * K_mat;
+#if defined(HAVE_LAPACK) || defined(HAVE_EIGEN)
     const Mat &K;
     const float * const calib_norm_points;
     const float * const points;
@@ -59,7 +59,11 @@ public:
     explicit DLSPnPImpl (const Mat &points_, const Mat &calib_norm_points_, const Mat &K_) :
         points_mat(&points_), calib_norm_points_mat(&calib_norm_points_), K_mat (&K_),
         K(K_), calib_norm_points((float*)calib_norm_points_.data), points((float*)points_.data) {}
-
+#else
+public:
+    explicit DLSPnPImpl (const Mat &points_, const Mat &calib_norm_points_, const Mat &K_) :
+        points_mat(&points_), calib_norm_points_mat(&calib_norm_points_), K_mat (&K_) {}
+#endif
     // return minimal sample size required for non-minimal estimation.
     int getMinimumRequiredSampleSize() const override { return 3; }
     // return maximum number of possible solutions.
@@ -67,9 +71,9 @@ public:
     Ptr<NonMinimalSolver> clone () const override {
         return makePtr<DLSPnPImpl>(*points_mat, *calib_norm_points_mat, *K_mat);
     }
+#if defined(HAVE_LAPACK) || defined(HAVE_EIGEN)
     int estimate(const std::vector<int> &sample, int sample_number,
         std::vector<Mat> &models_, const std::vector<double> &/*weights_*/) const override {
-#if defined(HAVE_LAPACK) || defined(HAVE_EIGEN)
         if (sample_number < getMinimumRequiredSampleSize())
             return 0;
 
@@ -219,11 +223,14 @@ public:
         }
         return static_cast<int>(models_.size());
 #else
+    int estimate(const std::vector<int> &/*sample*/, int /*sample_number*/,
+        std::vector<Mat> &/*models_*/, const std::vector<double> &/*weights_*/) const override {
         return 0;
 #endif
     }
 
 protected:
+#if defined(HAVE_LAPACK) || defined(HAVE_EIGEN)
     const int indices[1968] = {
             0, 35, 83, 118, 120, 121, 154, 155, 174, 203, 219, 238, 241, 242, 274, 275,
             291, 294, 305, 323, 329, 339, 358, 360, 363, 395, 409, 436, 443, 478, 479,
@@ -394,7 +401,7 @@ protected:
             14245, 14246, 14273, 14274, 14275, 14276, 14307, 14311, 14328, 14335, 14338,
             14361, 14365, 14393, 14395
     };
-
+#endif
     void createMacaulayMatrix(const double a[20], const double b[20],
             const double c[20], const double u[4], double * macaulay_matrix) const {
         // The matrix is very large (14400 elements!) and sparse (1968 non-zero

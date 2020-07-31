@@ -283,6 +283,7 @@ TEST(usac_Fundamental8pts, accuracy) {
 }
 
 TEST(usac_Essential, accuracy) {
+#if defined(HAVE_EIGEN) || defined(HAVE_LAPACK)
     std::vector<int> gt_inliers;
     const int pts_size = 2000;
     cv::RNG &rng = cv::theRNG();
@@ -302,6 +303,7 @@ TEST(usac_Essential, accuracy) {
         checkInliersMask(TestSolver::Essen, inl_size, thr / ((K1.at<double>(0,0) + K1.at<double>(1,1)) / 2)+1e-5,
                 cpts1_3d.rowRange(0,2), cpts2_3d.rowRange(0,2), E, mask);
     }
+#endif
 }
 TEST(usac_P3P, accuracy) {
     std::vector<int> gt_inliers;

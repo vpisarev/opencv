@@ -4,9 +4,9 @@
 
 #include "../precomp.hpp"
 #include "../usac.hpp"
-#ifdef HAVE_EIGEN
+#if defined(HAVE_EIGEN)
 #include <Eigen/Eigen>
-#elif HAVE_LAPACK
+#elif defined(HAVE_LAPACK)
 #include <lapacke.h>
 #endif
 
@@ -19,15 +19,20 @@ namespace cv { namespace usac {
 */
 class EssentialMinimalSolverStewenius5ptsImpl : public EssentialMinimalSolverStewenius5pts {
 private:
+    // Points must be calibrated K^-1 x
     const Mat * points_mat;
+#if defined(HAVE_EIGEN) || defined(HAVE_LAPACK)
     const float * const pts;
 public:
-    // Points must be calibrated K^-1 x
     explicit EssentialMinimalSolverStewenius5ptsImpl (const Mat &points_) :
         points_mat(&points_), pts((float*)points_.data) {}
+#else
+    explicit EssentialMinimalSolverStewenius5ptsImpl (const Mat &points_) :
+        points_mat(&points_) {}
+#endif
 
-    int estimate (const std::vector<int> &sample, std::vector<Mat> &models) const override {
 #if defined(HAVE_LAPACK) || defined(HAVE_EIGEN)
+    int estimate (const std::vector<int> &sample, std::vector<Mat> &models) const override {
         // (1) Extract 4 null vectors from linear equations of epipolar constraint
         std::vector<double> coefficients(45); // 5 pts=rows, 9 columns
         auto *coefficients_ = &coefficients[0];
@@ -186,6 +191,7 @@ public:
             }
         return static_cast<int>(models.size());
 #else
+    int estimate (const std::vector<int> &/*sample*/, std::vector<Mat> &/*models*/) const override {
         return 0;
 #endif
     }
