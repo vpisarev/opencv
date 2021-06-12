@@ -309,6 +309,9 @@ OCV_OPTION(WITH_OPENEXR "Include ILM support via OpenEXR" BUILD_OPENEXR OR NOT C
 OCV_OPTION(WITH_OPENGL "Include OpenGL support" OFF
   VISIBLE_IF NOT ANDROID AND NOT WINRT
   VERIFY HAVE_OPENGL)
+OCV_OPTION(WITH_GLFW "Include GLFW support" ON
+  VISIBLE_IF NOT ANDROID AND NOT WINRT
+  VERIFY HAVE_GLFW)
 OCV_OPTION(WITH_OPENVX "Include OpenVX support" OFF
   VISIBLE_IF TRUE
   VERIFY HAVE_OPENVX)
@@ -804,6 +807,10 @@ if(WITH_VTK)
   include(cmake/OpenCVDetectVTK.cmake)
 endif()
 
+if(WITH_GLFW)
+  include(cmake/OpenCVDetectGLFW.cmake)
+endif()
+
 if(WITH_OPENVX)
   include(cmake/FindOpenVX.cmake)
 endif()
@@ -1281,6 +1288,10 @@ endif()
 
 if(WITH_OPENGL OR HAVE_OPENGL)
   status("    OpenGL support:" HAVE_OPENGL THEN "YES (${OPENGL_LIBRARIES})" ELSE NO)
+endif()
+
+if(WITH_GLFW OR HAVE_GLFW)
+  status("    GLFW support:" HAVE_GLFW THEN "YES" ELSE "NO")
 endif()
 
 if(WITH_VTK OR HAVE_VTK)
