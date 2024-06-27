@@ -11,32 +11,13 @@ using namespace cv;
 using namespace cv::dnn;
 using namespace std;
 
-struct UserData
-{
-    Mat gray;
-    int thrs1 = 100;
-    int thrs2 = 200;
-};
+int threshold1 = 20;
+int threshold2 = 50;
+
 // Function to apply sigmoid activation
 static void sigmoid(Mat& input) {
     exp(-input, input);          // e^-input
     input = 1.0 / (1.0 + input); // 1 / (1 + e^-input)
-}
-// Callback for the first threshold adjustment
-static void cannyDetectionThresh1(int position, void* userdata) {
-    UserData* data = reinterpret_cast<UserData*>(userdata);
-    Mat output;
-    Canny(data->gray, output, position, data->thrs2);
-    data->thrs1 = position;
-    imshow("Output", output);
-}
-// Callback for the second threshold adjustment
-static void cannyDetectionThresh2(int position, void* userdata) {
-    UserData* data = reinterpret_cast<UserData*>(userdata);
-    Mat output;
-    Canny(data->gray, output, data->thrs1, position);
-    data->thrs2 = position;
-    imshow("Output", output);
 }
 
 // Load Model
@@ -46,22 +27,6 @@ static void loadModel(const string modelPath, int backend, int target, Net &net)
     net.setPreferableTarget(target);
 }
 
-static void setupCannyWindow(const Mat &image, UserData &user_data){
-    destroyWindow("Output");
-    namedWindow("Output", WINDOW_NORMAL);
-    moveWindow("Output", 200, 50);
-    Mat gray;
-    cvtColor(image, gray, COLOR_BGR2GRAY);
-    user_data.gray = gray;
-    // Create trackbars
-    createTrackbar("thrs1", "Output", 0, 255, cannyDetectionThresh1, &user_data);
-    createTrackbar("thrs2", "Output", 0, 255, cannyDetectionThresh2, &user_data);
-
-    // Set initial positions of trackbars
-    setTrackbarPos("thrs1", "Output", 100);
-    setTrackbarPos("thrs2", "Output", 200);
-
-}
 static pair<Mat, Mat> postProcess(const vector<Mat>& output, int height, int width);
 
 int main(int argc, char** argv) {
@@ -128,18 +93,17 @@ int main(int argc, char** argv) {
 
     namedWindow("Input", WINDOW_NORMAL);
     namedWindow("Output", WINDOW_NORMAL);
-    moveWindow("Output", 200, 0);
+    moveWindow("Output", 200, 50);
+    createTrackbar("threshold1", "Output", &threshold1, 255, 0, 0);
+    createTrackbar("threshold2", "Output", &threshold2, 255, 0, 0);
     // Check if the 'modelPath' string is empty and set the 'method' accordingly
     string method;
     Net net;
     Mat image, gray;
-    UserData user_data;
 
     if (modelPath.empty()) {
         cout << "[WARN] Model file not provided, cannot use dexined." << endl;
         method = "canny";
-        Mat dummy = Mat::zeros(imageSize, imageSize, CV_8UC3);
-        setupCannyWindow(dummy, user_data);
     } else {
         method = "dexined";
         loadModel(modelPath, backend, target, net);
@@ -168,26 +132,24 @@ int main(int argc, char** argv) {
         else if (method == "canny")
         {
             cvtColor(image, gray, COLOR_BGR2GRAY);
-            user_data.gray = gray;
-            cannyDetectionThresh1(user_data.thrs1, &user_data);
+            GaussianBlur(gray, gray, Size(11, 11), 2, 2);
+            Canny(gray, gray, threshold1, threshold2);
+            imshow("Output", gray);
         }
         imshow("Input", image);
         int key = waitKey(30);
 
         if (key == 'd' || key == 'D')
         {
-            if (!modelPath.empty())
+            if (!modelPath.empty()) {
                 method = "dexined";
-            if (net.empty())
-                loadModel(modelPath, backend, target, net);
-            namedWindow("Input", WINDOW_NORMAL);
-            namedWindow("Output", WINDOW_NORMAL);
-            moveWindow("Output", 200, 0);
+                if (net.empty())
+                    loadModel(modelPath, backend, target, net);
+            }
         }
         else if (key == 'c' || key == 'C')
         {
             method = "canny";
-            setupCannyWindow(image, user_data);
         }
         else if (key == 27 || key == 'q')
         { // Escape key to exit
