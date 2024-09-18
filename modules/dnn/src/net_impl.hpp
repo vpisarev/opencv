@@ -25,6 +25,8 @@
 
 #include "legacy_backend.hpp"  // wrapMat BlobManager OpenCLBackendWrapper
 
+#include <ostream>
+
 namespace cv {
 namespace dnn {
 CV__DNN_INLINE_NS_BEGIN
@@ -284,6 +286,10 @@ struct Net::Impl : public detail::NetImplBase
 
 };  // Net::Impl
 
+std::ostream& pprint(std::ostream& strm, InputArray array,
+                     int indent, int edge_,
+                     int wholeTensorThreshold,
+                     char parens);
 
 CV__DNN_INLINE_NS_END
 }}  // namespace cv::dnn

@@ -5,6 +5,7 @@ ocv_add_module(${MODULE_NAME} BINDINGS PRIVATE_REQUIRED opencv_python_bindings_g
 
 include_directories(SYSTEM
     "${${PYTHON}_INCLUDE_PATH}"
+    "${${PYTHON}_INCLUDE_DIR}"
     ${${PYTHON}_NUMPY_INCLUDE_DIRS}
 )
 ocv_module_include_directories(
