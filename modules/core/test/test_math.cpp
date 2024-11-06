@@ -3447,5 +3447,245 @@ TEST(Core_BFloat, convert)
 #endif
 }
 
+static float compute_ulps(float res, float ref)
+{
+    Cv64suf d, z;
+    d.f = res;
+    z.f = ref;
+    int d_e = (int)(((d.i >> 52) & 2047) - 1023);
+    int z_e = (int)(((z.i >> 52) & 2047) - 1023);
+    int m = -((z_e > -127) | (d_e > -127));
+    z_e = std::min(std::max(z_e - d_e+1023, 0), 2047);
+    z.i = (z.i & 0xfffffffffffffLL) + ((int64_t)z_e << 52);
+    z.i &= (int64_t)m;
+    d.i = (d.i & 0xfffffffffffffLL) + (1023LL << 52);
+    d.i &= (int64_t)m;
+    double diff = fabs(z.f - d.f);
+    diff *= 1 << 23;
+    return (float)diff;
+}
+
+TEST(Core_Intrin_exp, ulps)
+{
+#if CV_SIMD || CV_SIMD_SCALABLE
+#if 0
+    Cv32suf u, v;
+    //u.u = 0x42b0c0a6;
+    //u.u = 0x42aa83a3;
+    //u.u = 0xfc2af5dc3;
+    //u.u = 0xfc2aeac7e;
+    //u.u = 0xfc2bbee4f;
+    u.u = 0x42918f98;
+    v.f = expf(u.f);
+    float buf[VTraits<v_float32>::max_nlanes];
+    buf[0] = u.f;
+    buf[1] = u.f;
+    buf[2] = u.f;
+    buf[3] = u.f;
+    v_float32 x = vx_load(buf);
+    //x = v_exp(x);
+    v_float64 x0 = v_cvt_f64(x), x1 = v_cvt_f64_high(x);
+    x0 = v_exp(x0); x1 = v_exp(x1);
+    x = v_cvt_f32(x0, x1);
+    vx_store(buf, x);
+    printf("x=%f, ref_exp(x)=%.8g, fast_exp(x) = %.8g, ulps=%f\n", u.f, v.f, buf[0], compute_ulps(buf[0], v.f));
+#else
+    const int BLOCK_SIZE = 1 << 10;
+    std::vector<float> block(BLOCK_SIZE);
+    int vlanes = VTraits<v_float32>::vlanes();
+    int64_t exp_nan_nerrs = 0, exp_nan_first = 0;
+    int64_t exp_pinf_nerrs = 0, exp_pinf_first = 0;
+    //int64_t exp_ninf_nerrs = 0, exp_ninf_first = 0;
+    int64_t exp_max_ulps_arg = 0;
+    int64_t exp_sign_nerrs = 0, exp_sign_first = 0;
+    float exp_max_ulps = 0;
+
+    for (int64_t i = INT_MIN; i <= INT_MAX; i += BLOCK_SIZE)
+    {
+        if ((i + INT_MIN) % (1 << 26) == 0)
+            printf("i=%lld\n", (long long)i);
+        int block_size = (int)std::min((int64_t)INT_MAX + 1 - i, (int64_t)BLOCK_SIZE);
+
+        CV_Assert(block_size % vlanes == 0);
+        for (int j = 0; j < block_size; j++)
+        {
+            Cv32suf u;
+            u.i = (int32_t)(i + j);
+            block[j] = u.f;
+        }
+
+        for (int j = 0; j < block_size; j += vlanes)
+        {
+            v_float32 v = vx_load(&block[j]);
+            #if 0
+            v_float64 v0 = v_cvt_f64(v), v1 = v_cvt_f64_high(v);
+            v0 = v_exp(v0); v1 = v_exp(v1);
+            v = v_cvt_f32(v0, v1);
+            #else
+            v = v_exp(v);
+            #endif
+            vx_store(&block[j], v);
+        }
+
+        for (int j = 0; j < block_size; j++)
+        {
+            Cv32suf u, res;
+            u.i = (int32_t)(i + j);
+            res.f = block[j];
+            unsigned abs_u = (u.u & 0x7fffffff);
+            unsigned abs_res = (res.u & 0x7fffffff);
+
+            if (res.i < 0) {
+                if (exp_sign_nerrs++ == 0)
+                    exp_sign_first = i + j;
+                continue;
+            }
+
+            if (abs_u > 0x7f800000) {
+                if (abs_res <= 0x7f800000) {
+                    if (exp_nan_nerrs++ == 0)
+                        exp_nan_first = i + j;
+                }
+                continue;
+            }
+
+            if (u.f > 88) {
+                if (res.f < 1e38) {
+                    if (exp_pinf_nerrs++ == 0)
+                        exp_pinf_first = i + j;
+                }
+                continue;
+            }
+
+            float err = compute_ulps(res.f, expf(u.f));
+            if (err > exp_max_ulps) {
+                exp_max_ulps = err;
+                exp_max_ulps_arg = i + j;
+            }
+        }
+    }
+
+    printf("1. exp(x) < 0: %lld errors, 0x%08llx is first\n", (long long)exp_sign_nerrs, (long long)exp_sign_first);
+    printf("2. exp(nan) != nan: %lld errors, 0x%08llx is first\n", (long long)exp_nan_nerrs, (long long)exp_nan_first);
+    printf("3. exp(big) < big: %lld errors, 0x%08llx is first\n", (long long)exp_pinf_nerrs, (long long)exp_pinf_first);
+    printf("4. max error (ulps) = %.1f at 0x%08llx\n", exp_max_ulps, (long long)exp_max_ulps_arg);
+#endif
+#endif
+}
+
+TEST(Core_Intrin_sincos, ulps)
+{
+#if CV_SIMD || CV_SIMD_SCALABLE
+#if 0
+    Cv32suf u, c, s;
+    //u.u = 0xfcd0b4ab1;
+    //u.u = 0xfcc32c72d;
+    //u.u = 0xfd47bad93;
+    //u.u = 0xfda3ded57;
+    //u.u = 0xfc096cbe4;
+    //u.u = 0xfc096cbe4;
+    //u.u = 0xf80000400;
+    u.u = 0xfc5b6f2dd;
+    //u.f = CV_PI/2;
+    //u.f = CV_PI/4;
+    //u.f = (float)fmod((double)u.f, CV_PI*2);
+    c.f = cosf(u.f);
+    s.f = sinf(u.f);
+    float cbuf[VTraits<v_float32>::max_nlanes], sbuf[VTraits<v_float32>::max_nlanes];
+    v_float32 x = vx_setall_f32(u.f), vs, vc;
+    v_sincos(x, vs, vc);
+    vx_store(sbuf, vs);
+    vx_store(cbuf, vc);
+    printf("x=%f, ref_sin(x)=%.8g, fast_sin(x)=%.8g, sin ulps=%f\n",
+           u.f, s.f, sbuf[0], compute_ulps(sbuf[0], s.f));
+    printf("x=%f, ref_cos(x)=%.8g, fast_cos(x)=%.8g, cos ulps=%f\n",
+           u.f, c.f, cbuf[0], compute_ulps(cbuf[0], c.f));
+#else
+    const int BLOCK_SIZE = 1 << 10;
+    std::vector<float> block(BLOCK_SIZE), sinblock(BLOCK_SIZE), cosblock(BLOCK_SIZE);
+    Mat ones_ = Mat::ones(1, BLOCK_SIZE, CV_32F);
+    Mat x_(1, BLOCK_SIZE, CV_32F, &block[0]);
+    Mat s_(1, BLOCK_SIZE, CV_32F, &sinblock[0]);
+    Mat c_(1, BLOCK_SIZE, CV_32F, &cosblock[0]);
+    int vlanes = VTraits<v_float32>::vlanes();
+    int64_t cs_nan_nerrs = 0, cs_nan_first = 0;
+    //int64_t exp_ninf_nerrs = 0, exp_ninf_first = 0;
+    int64_t cos_max_ulps_arg = 0, sin_max_ulps_arg = 0;
+    float cos_max_ulps = 0, sin_max_ulps = 0;
+
+    for (int64_t i = INT_MIN; i <= INT_MAX; i += BLOCK_SIZE)
+    {
+        if ((i + INT_MIN) % (1 << 26) == 0)
+            printf("i=%lld\n", (long long)i);
+        int block_size = (int)std::min((int64_t)INT_MAX + 1 - i, (int64_t)BLOCK_SIZE);
+
+        CV_Assert(block_size % vlanes == 0);
+        for (int j = 0; j < block_size; j++)
+        {
+            Cv32suf u;
+            u.i = (int32_t)(i + j);
+            block[j] = u.f;
+        }
+
+        //ones_.cols = x_.cols = s_.cols = c_.cols = block_size;
+        //polarToCart(ones_, x_, c_, s_);
+
+        for (int j = 0; j < block_size; j += vlanes)
+        {
+            v_float32 v = vx_load(&block[j]), s, c;
+            //v_sincos(v, s, c);
+            //v_sincos_default_32f_<v_float32x4, v_int32x4, v_float64x2>(v, s, c);
+            v_float64 v0 = v_cvt_f64(v), v1 = v_cvt_f64_high(v);
+            v_float64 s0, c0, s1, c1;
+            v_sincos(v0, s0, c0);
+            v_sincos(v1, s1, c1);
+            s = v_cvt_f32(s0, s1);
+            c = v_cvt_f32(c0, c1);
+            vx_store(&cosblock[j], c);
+            vx_store(&sinblock[j], s);
+        }
+
+        for (int j = 0; j < block_size; j++)
+        {
+            Cv32suf u, cres, sres;
+            u.i = (int32_t)(i + j);
+            cres.f = cosblock[j];
+            sres.f = sinblock[j];
+            unsigned abs_u = (u.u & 0x7fffffff);
+            unsigned abs_cres = (cres.u & 0x7fffffff);
+            unsigned abs_sres = (sres.u & 0x7fffffff);
+
+            if (abs_u > 0x7f800000) {
+                if (abs_cres <= 0x7f800000 || abs_sres <= 0x7f800000) {
+                    if (cs_nan_nerrs++ == 0)
+                        cs_nan_first = i + j;
+                }
+                continue;
+            }
+
+            //if (fabsf(u.f) > 1e30)
+            //    continue;
+
+            float err = compute_ulps(cres.f, cosf(u.f));
+            if (err > cos_max_ulps) {
+                cos_max_ulps = err;
+                cos_max_ulps_arg = i + j;
+            }
+            err = compute_ulps(sres.f, sinf(u.f));
+            if (err > sin_max_ulps) {
+                sin_max_ulps = err;
+                sin_max_ulps_arg = i + j;
+            }
+        }
+    }
+
+    printf("1. sin or cos(nan) != nan: %lld errors, 0x%08llx is first\n", (long long)cs_nan_nerrs, (long long)cs_nan_first);
+    printf("2. cos max error (ulps) = %.1f at 0x%08llx\n", cos_max_ulps, (long long)cos_max_ulps_arg);
+    printf("3. sin max error (ulps) = %.1f at 0x%08llx\n", sin_max_ulps, (long long)sin_max_ulps_arg);
+#endif
+#endif
+}
+
+
 }} // namespace
 /* End of file. */
