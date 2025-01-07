@@ -99,7 +99,7 @@ static void quantizeLinear(const _InpTp* inp_, const _ScaleTp* scale_,
     });
 }
 
-// Dequantize INT8/UINT8 to FP32/FP16; out must be preallocated
+// Quantize FP32/FP16 to INT8/UINT8; out must be preallocated
 static void quantizeLinear(const Mat& inp, const Mat& scale_, const Mat& zp,
                            int axis, int block_size, Mat& out)
 {

@@ -304,6 +304,11 @@ bool Layer::dynamicOutputShapes() const
     return false;
 }
 
+int Layer::supportBlockLayout(int input) const
+{
+    return -1;
+}
+
 std::ostream& Layer::dumpAttrs(std::ostream& strm, int) const
 {
     return strm;

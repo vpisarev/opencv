@@ -85,7 +85,7 @@ struct ConstFolding
             }
 
             if (all_const /*&&
-                op->supportBlockLayout(0, (int)ninputs) <= 0 // we don't currently support constant folding
+                op->supportBlockLayout(0) <= 0 // we don't currently support constant folding
                                                // for block-layout operations (Convolution, MaxPool, AveragePool)
                 */) {
                 // Use a fresh vector of Mat's for outputs since we want to make these outputs the new constant tensors.

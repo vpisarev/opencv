@@ -478,6 +478,13 @@ CV__DNN_INLINE_NS_BEGIN
         // so that forward() can assume that the outputs are already allocated.
         virtual bool dynamicOutputShapes() const;
 
+        // returns:
+        //  -1 (default value) if the 'input'-th input of the layer should not have block layout
+        //   0 if the 'input'-th input of the layer may or may not have block layout,
+        //     it will be handled correctly in any case
+        //   1 if the 'input'-th input of the layer should have block layout
+        virtual int supportBlockLayout(int input) const;
+
         // dumps attributes of the layer (e.g. strides, dilations in Convolution, MaxPool)
         virtual std::ostream& dumpAttrs(std::ostream& strm, int indent) const;
 

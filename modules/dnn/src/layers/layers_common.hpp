@@ -80,7 +80,9 @@ double getWeightScale(const Mat& weightsMat);
 // Several ONNX operations take list of integer's or float's,
 // e.g. to specify list of axes (Squeeze, Unsqueeze, Transpose, Reduce*, ...),
 // coordinates, repetitions etc. (Slice, Tile, ...), scale factors (Resize, ...).
-// Here are helper functions to extract this data
+// There are also many functions that take scalar tensors as arguments, i.e.
+// tensors containing exactly 1 element.
+// Here are helper functions to extract data (vectors or scalars) from tensors
 void tensorToIntVec(const Mat& tensor, std::vector<int>& vec);
 void tensorToFloatVec(const Mat& tensor, std::vector<float>& vec);
 void tensorToScalar(const Mat& tensor, int type, void* value);
@@ -94,8 +96,8 @@ template<typename _Tp> _Tp tensorToScalar(const Mat& tensor)
 // tensor to mat shape
 MatShape tensorToShape(const Mat& shapeTensor);
 
-// inputs and outputs are both vector<Mat>'s or both are vector<UMat>'s.
-// the function does the following:
+// Inputs and outputs are both vector<Mat>'s or both are vector<UMat>'s.
+// The function does the following:
 //
 // 1. resizes output vector to 1-element vector
 // 2. outputs[0].fit(shape, inputs[0].type())
@@ -103,7 +105,7 @@ MatShape tensorToShape(const Mat& shapeTensor);
 // 4. temp.copyTo(outputs[0]) // detect in-place case and do nothing in this case
 //
 // the function helps to implement DL operations
-// 'Reshape', 'Flatten', 'Squeeze', 'Unsqueeze', 'Identity'.
+// 'Flatten', 'Identity', 'Reshape', 'Squeeze', 'Unsqueeze'.
 void reshapeAndCopyFirst(InputArrayOfArrays inputs,
                          OutputArrayOfArrays outputs,
                          const MatShape& shape);

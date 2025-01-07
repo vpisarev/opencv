@@ -306,6 +306,14 @@ CV__DNN_INLINE_NS_BEGIN
     public:
         static Ptr<GatherNDLayer> create(const LayerParams& params);
     };
+    
+    enum AutoPadding
+    {
+        AUTO_PAD_NONE = 0,
+        AUTO_PAD_SAME_UPPER = 1,
+        AUTO_PAD_SAME_LOWER = 2,
+        AUTO_PAD_VALID = 3
+    };
 
     class CV_EXPORTS BaseConvolutionLayer : public Layer
     {
@@ -400,6 +408,34 @@ CV__DNN_INLINE_NS_BEGIN
     public:
         static Ptr<GatherElementsLayer> create(const LayerParams& params);
     };
+    
+    class CV_EXPORTS AveragePoolLayer : public Layer
+    {
+    public:
+        std::vector<int> kernel_shape, strides, dilations, pads;
+        AutoPadding auto_pad;
+        bool ceil_mode;
+        bool count_include_pad;
+
+        static Ptr<AveragePoolLayer> create(const LayerParams& params);
+    };
+    
+    class CV_EXPORTS MaxPoolLayer : public Layer
+    {
+    public:
+        std::vector<int> kernel_shape, strides, dilations, pads;
+        AutoPadding auto_pad;
+        bool ceil_mode;
+        int storage_order;
+
+        static Ptr<MaxPoolLayer> create(const LayerParams& params);
+    };
+    
+    class CV_EXPORTS GlobalAveragePoolLayer : public Layer
+    {
+    public:
+        static Ptr<GlobalAveragePoolLayer> create(const LayerParams& params);
+    };
 
     class CV_EXPORTS PoolingLayer : public Layer
     {
@@ -424,7 +460,7 @@ CV__DNN_INLINE_NS_BEGIN
 
         static Ptr<PoolingLayer> create(const LayerParams& params);
     };
-
+    
     class CV_EXPORTS PoolingLayerInt8 : public PoolingLayer
     {
     public:
