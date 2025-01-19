@@ -30,8 +30,8 @@ static void initConv2DTables(const ConvState& cs,
     int DY_ = cs.dilations[0], DX_ = cs.dilations[1];
     int pad_y0 = cs.pads[0], pad_x0 = cs.pads[1];
     int Hi_ = cs.inpshape[2], Wi_ = cs.inpshape[3], H = cs.outshape[2], W = cs.outshape[3];
-    int C0_ = cs.inpshape.back(), K0 = C0_, C1_ = cs.inpshape[1], K1 = cs.outshape[1];
-    int ngroups = cs.ngroups, C1g = C1_/ngroups, K1g = K1/ngroups;
+    int C0_ = cs.inpshape.back(), C1_ = cs.inpshape[1], K1 = cs.outshape[1];
+    int ngroups = cs.ngroups, C1g = C1_/ngroups;
     int inner_y0 = cs.inner[0], inner_y1 = cs.inner[1];
     int inner_x0 = cs.inner[cs.nspatialdims], inner_x1 = cs.inner[cs.nspatialdims + 1];
 
@@ -54,7 +54,7 @@ static void initConv2DTables(const ConvState& cs,
                 int yi = dy*DY_;
                 for (int dx = 0; dx < Wk_; dx++, k++) {
                     int xi = dx*DX_;
-                    ofsbuf[k] = (int32_t)(((c*Hi + yi)*Wi_ + xi)*C0);
+                    ofsbuf[k] = (int32_t)(((c*Hi_ + yi)*Wi_ + xi)*C0_);
                 }
             }
         }
@@ -119,7 +119,7 @@ static void initConv2DTables(const ConvState& cs,
 
 template<typename _InpT, typename _OutT> void
 repackConv2DWeights_(const _InpT* inpw_, _OutT* outw_,
-                     int inp_step_c, int inp_step_k, int ksize,
+                     size_t inp_step_c, size_t inp_step_k, int ksize,
                      int C0, int K0, int curr_C0, int curr_K0)
 {
     const _InpT* inpw = inpw_;
@@ -142,14 +142,14 @@ static void repackConv2DWeights(const void* inpw__, int inptype_, void* outw__, 
     CV_Assert(inptype_ == CV_32F || inptype_ == CV_16F);
     CV_Assert(outtype_ == CV_32F || outtype_ == CV_16F);
 
-    int K1_ = (wshape[0] + C0_ - 1)/C0_;
-    parallel_for_(Range(0, K1_), [&](const Range& r) {
+    int K1 = (wshape[0] + C0_ - 1)/C0_;
+    parallel_for_(Range(0, K1), [&](const Range& r) {
         int inptype = inptype_, outtype = outtype_;
         size_t inp_esz = CV_ELEM_SIZE(inptype);
         size_t out_esz = CV_ELEM_SIZE(outtype);
         int C0 = C0_, K0 = C0_;
-        int K = wsize.size[0], Cg = wsize.size[1];
-        int K1 = K1_, C1g = (Cg + C0 - 1)/C0;
+        int K = wshape[0], Cg = wshape[1];
+        int C1g = (Cg + C0 - 1)/C0;
         int Hk = wshape[2], Wk = wshape[3];
         int ksize = Hk*Wk;
         size_t inp_step_c = ksize, inp_step_k = Cg*ksize;
@@ -192,7 +192,7 @@ static void conv2d_32f(const void* inp__, const void* residual__, void* out__,
     int C0_ = cs.inpshape.back();
 
     CV_Assert(C0_ == nlanes_ || C0_ == nlanes_*2 || C0_ % (nlanes_*4) == 0);
-    CV_Assert(cs.activation == nullptr || cs.fastActivation == ACTIV_NONE);
+    CV_Assert(cs.activation == nullptr || cs.fastActivation == FAST_ACTIV_NONE);
 
     int NK1 = cs.outshape[0]*cs.outshape[1];
 
@@ -201,17 +201,14 @@ static void conv2d_32f(const void* inp__, const void* residual__, void* out__,
         const float* bias_ = bias__;
         const int32_t* ofs0_ = ofs0__;
         const int32_t** ofsptrs_ = ofsptrs__;
-        const uint8_t* mask_ = mask__;
         constexpr int BLOCK_SIZE = 10;
         int nk0 = r.start, nk1 = r.end;
-        int nlanes = nlanes_, C0 = C0_, K0 = C0;
+        int C0 = C0_, K0 = C0;
         int Hi = cs.inpshape[2], Wi = cs.inpshape[3];
         int H = cs.outshape[2], W = cs.outshape[3];
         int iplanesize = Hi*Wi;
         int planesize = H*W;
-        int SY = cs.strides[0], SX = cs.strides[1];
-        int Hk = cs.wshape[2], Wk = cs.wshape[3];
-        int pad_y0 = cs.pads[0], pad_x0 = cs.pads[1];
+        int Hk = cs.kshape[0], Wk = cs.kshape[1];
         int C1 = cs.inpshape[1], K1 = cs.outshape[1];
         int ngroups = cs.ngroups, K1g = K1/ngroups, C1g = C1/ngroups;
         int nC = C1g*Hk*Wk*C0*K0;
@@ -223,10 +220,10 @@ static void conv2d_32f(const void* inp__, const void* residual__, void* out__,
         const int32_t* ofsptrs[BLOCK_SIZE];
         FastActivation fastActivation = cs.fastActivation;
         const float* activParams = cs.activParams;
-        ElemwiseOp::activ_t activation = cs.activation;
-        float maxval = fastActivation == ACTIV_CLIP ? activParams[1] : FLT_MAX;
-        float alpha = fastActivation == ACTIV_LEAKY_RELU ? activParams[0] :
-                    fastActivation == ACTIV_NONE ? 1.f : 0.f;
+        activation_func_t activation = cs.activation;
+        float maxval = fastActivation == FAST_ACTIV_CLIP ? activParams[1] : FLT_MAX;
+        float alpha = fastActivation == FAST_ACTIV_LEAKY_RELU ? activParams[0] :
+                    fastActivation == FAST_ACTIV_NONE ? 1.f : 0.f;
 
         for (int j = 0; j < BLOCK_SIZE*K0; j++) {
             scale[j] = 1.f;
@@ -283,7 +280,7 @@ static void conv2d_32f(const void* inp__, const void* residual__, void* out__,
                             float xc = x[c0]*mij;
                             for (int k = 0; k < K0; k++) {
                                 float w = wptr[c1 + c0*K0 + k];
-                                sum[K0*j + k] += xc*wptr[c1 + c0*K0 + k];
+                                sum[K0*j + k] += xc*w;
                             }
                         }
                     }

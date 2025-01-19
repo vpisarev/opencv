@@ -412,7 +412,7 @@ public:
             std::vector<UMat>& outs = outputs_arr.getUMatVecRef();
             outs.resize(1);
             outs[0].fit(outshape, inptype);
-            Mat temp(outShape, inptype);
+            Mat temp(outshape, inptype);
             runOp(inp, temp, cs);
             temp.copyTo(outs[0]);
         }

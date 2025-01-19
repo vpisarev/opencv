@@ -290,20 +290,20 @@ public:
     }
 
     virtual void forward(Net2& net, Graph& graph,
-                        const std::vector<Tensor>& inputs,
-                        std::vector<Tensor>& outputs,
+                        const std::vector<Mat>& inputs,
+                        std::vector<Mat>& outputs,
                         std::vector<Buffer>& tempbufs) CV_OVERRIDE
     {
         size_t ninputs = inputs.size();
         CV_Assert(minNumInputs() <= ninputs && ninputs <= maxNumInputs());
-        const Tensor& inp = inputs[0];
+        const Mat& inp = inputs[0];
         CV_Assert(inp.isContinuous());
 
         int inptype = inp.type(), outtype = inferType(inptype);
         MatShape inpsize = inp.size();
         MatShape outsize = inferShapes_(inpsize);
         outputs.resize(1);
-        Tensor& out = outputs[0];
+        Mat& out = outputs[0];
         out.fitSameDevice(inp, outsize, outtype);
         CV_Assert(out.isContinuous());
 

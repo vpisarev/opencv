@@ -355,50 +355,59 @@ public:
         return true;
     }
 
-    virtual void forward(Net2& net, Graph& graph,
-                        const std::vector<Mat>& inputs,
-                        std::vector<Mat>& outputs,
-                        std::vector<Buffer>& tempbufs) CV_OVERRIDE
+    void finalize(InputArrayOfArrays, OutputArrayOfArrays outputs_arr) CV_OVERRIDE
     {
-        size_t ninputs = inputs.size();
-        CV_Assert(minNumInputs() <= ninputs && ninputs <= maxNumInputs());
-        const Mat& inp = inputs[0];
-        CV_Assert(inp.isContinuous());
+    }
 
-        int inptype = inp.type(), outtype = inferType(inptype);
-        MatShape inpsize = inp.size();
-        MatShape outsize = convInferShape(net, inpsize, params);
-        outputs.resize(1);
-        Mat& out = outputs[0];
-        out.fitSameDevice(inp, outsize, outtype);
-        CV_Assert(out.isContinuous());
+    void forward(InputArrayOfArrays inputs_arr,
+                 OutputArrayOfArrays outputs_arr,
+                 OutputArrayOfArrays) CV_OVERRIDE
+    {
+        size_t ninputs = inputs_arr.total();
+        CV_Assert(ninputs == 1);
 
-        if (inp.empty())
-            return;
+        int inptype = inputs_arr.type(0);
+        MatShape inpshape = inputs_arr.shape(0);
+        MatShape outshape = convInferShape(inpshape, MatShape(),
+                                           kernel_shape, 0, strides, dilations,
+                                           pads, auto_pad, ceil_mode);
+        int outKind = outputs_arr.kind();
+        CV_Assert(outKind == _InputArray::STD_VECTOR_MAT ||
+                  outKind == _InputArray::STD_VECTOR_UMAT);
 
-        const char* inptr0 = (const char*)inp.data();
-        char* outptr0 = (char*)out.data();
+        ConvState cs;
+        initPoolingState(inpshape, outshape, kernel_shape, strides, dilations, pads, auto_pad, ceil_mode, cs);
 
+        if (outKind == _InputArray::STD_VECTOR_MAT) {
+            Mat inp = inputs_arr.getMat(0);
+            std::vector<Mat>& outs = outputs_arr.getMatVecRef();
+            outs.resize(1);
+            outs[0].fit(outshape, inptype);
+            runOp(inp, outs[0], cs);
+        } else {
+            // [TODO] more efficient OpenCL implementation
+            Mat inp = inputs_arr.getMat(0);
+            std::vector<UMat>& outs = outputs_arr.getUMatVecRef();
+            outs.resize(1);
+            outs[0].fit(outshape, inptype);
+            Mat temp(outshape, inptype);
+            runOp(inp, temp, cs);
+            temp.copyTo(outs[0]);
+        }
+    }
+
+    void runOp(const Mat& inp, Mat& out, const ConvState& cs)
+    {
+        int inptype = inp.type();
         maxpool_func_t func =
             inptype == CV_32F ? maxpool2d_32f :
             inptype == CV_16F ? maxpool2d_16f :
             inptype == CV_16BF ? maxpool2d_16bf : nullptr;
 
-        CV_Assert(func != nullptr);
-
-        int64_t ksize = 1;
-        for (auto sz: params.ksizes) ksize *= sz;
-        AutoBuffer<int64_t> buf(ksize*2);
-        int64_t* ofstab = buf.data();
-        int* yxtab = (int*)(ofstab + ksize);
-
-        ConvState cs = initPoolingState(net, inpsize, params, yxtab, ofstab);
-
-        func(inptr0, outptr0, cs);
+        CV_Assert(func != nullptr && "MaxPool: unsupported data type");
+        func(inp.data, out.data, cs);
     }
 };
-
-MaxPoolLayer::~MaxPoolLayer() {}
 
 Ptr<MaxPoolLayer> MaxPoolLayer::create(const LayerParams& params)
 {
