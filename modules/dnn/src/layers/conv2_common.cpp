@@ -104,9 +104,9 @@ void initPoolingState(const MatShape& inpshape,
                       AutoPadding auto_pad, bool ceil_mode,
                       int mindims, ConvState& cs)
 {
-    size_t kshape_size = 
-    CV_Assert(kernel_shape.size() <= (size_t)ConvState::MAX_CONV_DIMS);
-
+    //size_t kshape_size =
+    //CV_Assert(kernel_shape.size() <= (size_t)ConvState::MAX_CONV_DIMS);
+    CV_Error(Error::StsNotImplemented, "");
 }
 
 }

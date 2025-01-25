@@ -259,67 +259,84 @@ public:
         outtypes.assign(1, inferType(inptypes[0]));
         temptypes.clear();
     }
-
-    MatShape inferShapes_(const MatShape& inpsize) const
+    
+    MatShape inferShape(const MatShape& inpshape) const
     {
-        int ndims = inpsize.ndims;
-        TensorLayout inplayout = inpsize.layout;
-        MatShape outsize = inpsize;
-        CV_Assert(inplayout == DATA_LAYOUT_BLOCK || inplayout == LAYOUT_NCHW);
+        int ndims = inpshape.dims;
+        DataLayout inplayout = inpshape.layout;
+        MatShape outshape = inpshape;
+        CV_Assert(inplayout == DATA_LAYOUT_BLOCK || inplayout == DATA_LAYOUT_NCHW);
 
-        for (int i = 2; i < ndims - (inplayout == DATA_LAYOUT_BLOCK); i++)
-            outsize.size[i] = 1;
+        outshape.dims = ndims - (inplayout == DATA_LAYOUT_BLOCK);
+        outshape.layout = DATA_LAYOUT_NCHW;
+        outshape.C = 0;
+        
+        for (int i = 2; i < outshape.dims; i++)
+            outshape[i] = 1;
 
-        return outsize;
+        return outshape;
     }
 
-    virtual void inferShapes(Net2& net, const Graph& graph,
-                             const std::vector<Arg>& inpargs,
-                             const std::vector<MatShape>& inpshapes,
-                             const std::vector<Arg>& outargs,
-                             std::vector<MatShape>& outshapes,
-                             bool symbolic) const CV_OVERRIDE
+    virtual bool getMemoryShapes(const std::vector<MatShape>& inpshapes,
+                                 const int,
+                                 std::vector<MatShape> &outshapes,
+                                 std::vector<MatShape> &tempshapes) const CV_OVERRIDE
     {
-        int ninputs = (int)inpargs.size(), noutputs = (int)outargs.size();
-        CV_Assert(minNumInputs() <= ninputs && ninputs <= maxNumInputs());
-        CV_Assert(noutputs == 1);
-        outshapes.resize(1);
+        size_t ninputs = inpshapes.size();
+        CV_Assert(ninputs == 1);
 
-        const MatShape& inpsize = inpshapes[0];
-        outshapes[0] = inferShapes_(inpsize);
+        outshapes.assign(1, inferShape(inpshapes[0]));
+        tempshapes.clear();
+        return true;
+    }
+    
+    void finalize(InputArrayOfArrays, OutputArrayOfArrays outputs_arr) CV_OVERRIDE
+    {
     }
 
-    virtual void forward(Net2& net, Graph& graph,
-                        const std::vector<Mat>& inputs,
-                        std::vector<Mat>& outputs,
-                        std::vector<Buffer>& tempbufs) CV_OVERRIDE
+    void forward(InputArrayOfArrays inputs_arr,
+                 OutputArrayOfArrays outputs_arr,
+                 OutputArrayOfArrays) CV_OVERRIDE
     {
-        size_t ninputs = inputs.size();
-        CV_Assert(minNumInputs() <= ninputs && ninputs <= maxNumInputs());
-        const Mat& inp = inputs[0];
-        CV_Assert(inp.isContinuous());
-
-        int inptype = inp.type(), outtype = inferType(inptype);
-        MatShape inpsize = inp.size();
-        MatShape outsize = inferShapes_(inpsize);
-        outputs.resize(1);
-        Mat& out = outputs[0];
-        out.fitSameDevice(inp, outsize, outtype);
-        CV_Assert(out.isContinuous());
-
-        if (inp.empty())
-            return;
-
-        const char* inptr0 = (const char*)inp.data();
-        char* outptr0 = (char*)out.data();
-
+        size_t ninputs = inputs_arr.total();
+        CV_Assert(ninputs == 1);
+        
+        int inptype = inputs_arr.type(0), outtype = inferType(inptype);
+        MatShape inpshape = inputs_arr.shape(0);
+        MatShape outshape = inferShape(inpshape);
+        
+        int outKind = outputs_arr.kind();
+        CV_Assert(outKind == _InputArray::STD_VECTOR_MAT ||
+                  outKind == _InputArray::STD_VECTOR_UMAT);
+        
+        if (outKind == _InputArray::STD_VECTOR_MAT) {
+            Mat inp = inputs_arr.getMat(0);
+            std::vector<Mat>& outs = outputs_arr.getMatVecRef();
+            outs.resize(1);
+            outs[0].fit(outshape, outtype);
+            runOp(inp, outs[0]);
+        } else {
+            // [TODO] more efficient OpenCL implementation
+            Mat inp = inputs_arr.getMat(0);
+            std::vector<UMat>& outs = outputs_arr.getUMatVecRef();
+            outs.resize(1);
+            outs[0].fit(outshape, inptype);
+            Mat temp(outshape, outtype);
+            runOp(inp, temp);
+            temp.copyTo(outs[0]);
+        }
+    }
+    
+    void runOp(const Mat& inp, Mat& out)
+    {
+        int inptype = inp.type();
         global_avgpool_func_t func =
             inptype == CV_32F ? global_average_pool_32f :
             inptype == CV_16F ? global_average_pool_16f :
             inptype == CV_16BF ? global_average_pool_16bf : nullptr;
 
         CV_Assert(func != nullptr);
-        func(inptr0, inpsize, outptr0);
+        func(inp.data, inp.shape(), out.data);
     }
 };
 

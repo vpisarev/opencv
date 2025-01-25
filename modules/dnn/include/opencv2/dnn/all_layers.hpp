@@ -408,6 +408,22 @@ CV__DNN_INLINE_NS_BEGIN
     public:
         static Ptr<GatherElementsLayer> create(const LayerParams& params);
     };
+
+    class CV_EXPORTS ConvLayer : public Layer
+    {
+    public:
+        static Ptr<ConvLayer> create(const LayerParams& params);
+        virtual bool fuseAddBias(const Ptr<Layer>& addbias) = 0;
+        virtual bool fuseBatchNorm(const Ptr<Layer>& bn) = 0;
+        virtual bool fuseActivation(const Ptr<Layer>& activ) = 0;
+        virtual bool fuseAddResidual(const Ptr<Layer>& addres) = 0;
+        
+        std::vector<int> strides, dilations, pads;
+        int ngroups;
+        AutoPadding auto_pad;
+        bool ceil_mode;
+        bool add_residual;
+    };
     
     class CV_EXPORTS AveragePoolLayer : public Layer
     {
@@ -1110,6 +1126,15 @@ CV__DNN_INLINE_NS_BEGIN
         float epsilon;
 
         static Ptr<BatchNormLayer> create(const LayerParams &params);
+    };
+
+    class CV_EXPORTS BatchNorm2Layer : public Layer
+    {
+    public:
+        float epsilon;
+        Mat scale, bias;
+
+        static Ptr<BatchNorm2Layer> create(const LayerParams &params);
     };
 
     class CV_EXPORTS BatchNormLayerInt8 : public BatchNormLayer

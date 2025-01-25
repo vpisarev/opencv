@@ -325,30 +325,32 @@ static void conv2d_1x1_32f(const void* inp__, const void* residual__, void* out_
                            const int32_t*, const int32_t**, const uint8_t*)
 {
     int nlanes_ = VTraits<v_float32>::vlanes();
-    int C0_ = (int)cs.C0;
+    int C0_ = cs.inpshape.back();
 
     CV_Assert(C0_ == nlanes_ || C0_ == nlanes_*2 || C0_ % (nlanes_*4) == 0);
-    CV_Assert(cs.activation == nullptr || cs.fastActivation == ACTIV_NONE);
-    CV_Assert(cs.wshape[2] == 1 && cs.wshape[3] == 1);
-    CV_Assert(cs.pad_y0 == 0 && cs.pad_x0 == 0 && cs.pad_y1 == 0 && cs.pad_x1 == 0);
+    CV_Assert(cs.activation == nullptr || cs.fastActivation == FAST_ACTIV_NONE);
+    CV_Assert(cs.kshape[0] == 1 && cs.kshape[1] == 1);
+    CV_Assert(cs.outshape.back() == cs.inpshape.back());
+    CV_Assert(cs.pads[0] == 0 && cs.pads[1] == 0 &&
+              cs.pads[cs.nspatialdims] == 0 && cs.pads[cs.nspatialdims+1] == 0);
 
     int NK1 = cs.outshape[0]*cs.outshape[1];
 
-    parallel_for_(Range(0, (int)NK1), [&](const Range& r) {
+    parallel_for_(Range(0, NK1), [&](const Range& r) {
         const float* scale_ = scale__;
         const float* bias_ = bias__;
-        constexpr int64_t BLOCK_SIZE = 10;
-        int64_t nk0 = r.start, nk1 = r.end;
-        int nlanes = nlanes_, C0 = C0_, K0 = C0;
-        int64_t Hi = cs.Hi, Wi = cs.Wi;
-        int64_t H0 = cs.H, W0 = cs.W;
-        int64_t iplanesize = Hi*Wi;
-        int64_t planesize = H0*W0;
-        int64_t SY = cs.SY, SX = cs.SX;
-        int64_t Hk = cs.Hk, Wk = cs.Wk;
-        int64_t C1 = cs.C1, K1 = cs.K1;
-        int64_t ngroups = cs.ngroups, K1g = K1/ngroups, C1g = C1/ngroups;
-        int64_t nC = C1g*C0*K0;
+        constexpr int BLOCK_SIZE = 10;
+        int nk0 = r.start, nk1 = r.end;
+        //int nlanes = nlanes_;
+        int C0 = C0_, K0 = C0;
+        int Hi = cs.inpshape[2], Wi = cs.inpshape[3];
+        int H0 = cs.outshape[2], W0 = cs.outshape[3];
+        int iplanesize = Hi*Wi;
+        int planesize = H0*W0;
+        int SY = cs.strides[0], SX = cs.strides[1];
+        int C1 = cs.inpshape[1], K1 = cs.outshape[1];
+        int ngroups = cs.ngroups, K1g = K1/ngroups, C1g = C1/ngroups;
+        int nC = C1g*C0*K0;
         AutoBuffer<float> sumbuf(BLOCK_SIZE*K0*3);
         float* sum = sumbuf.data();
         float* scale = sum + BLOCK_SIZE*K0;
@@ -356,42 +358,42 @@ static void conv2d_1x1_32f(const void* inp__, const void* residual__, void* out_
         const float* inptrs[BLOCK_SIZE];
         FastActivation fastActivation = cs.fastActivation;
         const float* activParams = cs.activParams;
-        ElemwiseOp::activ_t activation = cs.activation;
-        float maxval = fastActivation == ACTIV_CLIP ? activParams[1] : FLT_MAX;
-        float alpha = fastActivation == ACTIV_LEAKY_RELU ? activParams[0] :
-                    fastActivation == ACTIV_NONE ? 1.f : 0.f;
+        activation_func_t activation = cs.activation;
+        float maxval = fastActivation == FAST_ACTIV_CLIP ? activParams[1] : FLT_MAX;
+        float alpha = fastActivation == FAST_ACTIV_LEAKY_RELU ? activParams[0] :
+                    fastActivation == FAST_ACTIV_NONE ? 1.f : 0.f;
         bool S1 = SY == 1 && SX == 1;
 
-        for (int64_t j = 0; j < BLOCK_SIZE*K0; j++) {
+        for (int j = 0; j < BLOCK_SIZE*K0; j++) {
             scale[j] = 1.f;
             bias[j] = 0.f;
         }
 
-        for (int64_t nk = nk0; nk < nk1; nk++) {
-            int64_t n = nk/K1, k1 = nk - n*K1;
-            int64_t g = k1/K1g;
+        for (int nk = nk0; nk < nk1; nk++) {
+            int n = nk/K1, k1 = nk - n*K1;
+            int g = k1/K1g;
             float* out = (float*)out__ + nk*planesize*K0;
             const float* inp0 = (const float*)inp__ + (n*C1 + g*C1g)*iplanesize*C0;
             const float* resptr = residual__ ? (const float*)residual__ + nk*planesize*K0 : nullptr;
             const float* wptr = (const float*)weights__ + k1*nC;
 
             if (scale_) {
-                for (int64_t b = 0; b < BLOCK_SIZE; b++)
-                    for (int64_t k = 0; k < K0; k++)
+                for (int b = 0; b < BLOCK_SIZE; b++)
+                    for (int k = 0; k < K0; k++)
                         scale[b*K0 + k] = scale_[k1*K0 + k];
             }
 
             if (bias_) {
-                for (int64_t b = 0; b < BLOCK_SIZE; b++)
-                    for (int64_t k = 0; k < K0; k++)
+                for (int b = 0; b < BLOCK_SIZE; b++)
+                    for (int k = 0; k < K0; k++)
                         bias[b*K0 + k] = bias_[k1*K0 + k];
             }
 
-            int64_t yiWi = 0, xi = 0;
-            for (int64_t xy0 = 0; xy0 < W0*H0; xy0 += BLOCK_SIZE, out += K0*BLOCK_SIZE,
+            int yiWi = 0, xi = 0;
+            for (int xy0 = 0; xy0 < W0*H0; xy0 += BLOCK_SIZE, out += K0*BLOCK_SIZE,
                                                resptr += (resptr ? K0*BLOCK_SIZE : 0))
             {
-                int64_t j = 0, blocksize = std::min(W0*H0 - xy0, BLOCK_SIZE);
+                int j = 0, blocksize = std::min(W0*H0 - xy0, BLOCK_SIZE);
 
                 if (S1) {
                     for (; j < blocksize; j++) {
@@ -413,18 +415,18 @@ static void conv2d_1x1_32f(const void* inp__, const void* residual__, void* out_
                         inptrs[j] = last_inptr;
                 }
 
-                for (int64_t i = 0; i < BLOCK_SIZE*K0; i++)
+                for (int i = 0; i < BLOCK_SIZE*K0; i++)
                     sum[i] = 0.f;
 
-                for (int64_t c1 = 0, i = 0; c1 < nC; c1 += K0*C0, i++) {
-                    int64_t ofs_ij = i*iplanesize*C0;
+                for (int c1 = 0, i = 0; c1 < nC; c1 += K0*C0, i++) {
+                    int ofs_ij = i*iplanesize*C0;
                     for (j = 0; j < BLOCK_SIZE; j++) {
                         const float* x = &inptrs[j][ofs_ij];
-                        for (int64_t c0 = 0; c0 < C0; c0++) {
+                        for (int c0 = 0; c0 < C0; c0++) {
                             float xc = x[c0];
-                            for (int64_t k = 0; k < K0; k++) {
+                            for (int k = 0; k < K0; k++) {
                                 float w = wptr[c1 + c0*K0 + k];
-                                sum[K0*j + k] += xc*wptr[c1 + c0*K0 + k];
+                                sum[K0*j + k] += xc*w;
                             }
                         }
                     }
@@ -470,51 +472,48 @@ typedef void (*conv_func_t)(const void* inp, const void* residual, void* out,
                             const int32_t* ofs0, const int32_t** ofsptrs,
                             const uint8_t* mask);
 
-class Conv2LayerImpl : public Conv2Layer
+class ConvLayerImpl : public ConvLayer
 {
 public:
-    Conv2LayerImpl(const ConvParams& convparams_)
+    ConvLayerImpl(const LayerParams& params)
     {
-        params = convparams_;
+        setParamsFrom(params);
+        auto_pad = getAutoPadding(params);
+        ceil_mode = params.get<bool>("ceil_mode", false);
+        strides = params.getVector<int>("strides");
+        dilations = params.getVector<int>("dilations");
+        pads = params.getVector<int>("pads");
+        ngroups = params.get<int>("group", 1);
+        fused_batch_norm = false;
         add_residual = false;
     }
-    virtual std::string_view name() const CV_OVERRIDE { return "Conv"; }
-    virtual Op clone() const CV_OVERRIDE
-    {
-        return std::make_shared<ConvOpImpl>(params);
-    }
-
-    virtual int minNumInputs() const CV_OVERRIDE { return 1 + (add_residual ? 1 : 0); }
-    virtual int maxNumInputs() const CV_OVERRIDE { return 3 + (add_residual ? 1 : 0); }
-    virtual int minNumOutputs() const CV_OVERRIDE { return 1; }
-    virtual int maxNumOutputs() const CV_OVERRIDE { return 1; }
 
     virtual std::ostream& dumpAttrs(std::ostream& strm, int indent) const CV_OVERRIDE
     {
         prindent(strm, indent);
-        strm << "ngroup: " << params.ngroups << ",\n";
+        strm << "ngroups: " << ngroups << ",\n";
 
         /*prindent(strm, indent);
         strm << "ksizes: [";
-        for (int k = 0; k < wsize0.ndims; k++)
-            strm << (k > 0 ? ", " : "") << wsize0.size[k];
+        for (int k = 0; k < wshape0.ndims; k++)
+            strm << (k > 0 ? ", " : "") << wshape0.size[k];
         strm << "],\n";*/
 
         prindent(strm, indent);
         strm << "dilations: [";
-        for (size_t k = 0; k < params.dilations.size(); k++)
+        for (size_t k = 0; k < dilations.size(); k++)
             strm << (k > 0 ? ", " : "") << params.dilations[k];
         strm << "],\n";
 
         prindent(strm, indent);
         strm << "pads: [";
-        for (size_t k = 0; k < params.pads.size(); k++)
+        for (size_t k = 0; k < pads.size(); k++)
             strm << (k > 0 ? ", " : "") << params.pads[k];
         strm << "],\n";
 
         prindent(strm, indent);
         strm << "strides: [";
-        for (size_t k = 0; k < params.strides.size(); k++)
+        for (size_t k = 0; k < strides.size(); k++)
             strm << (k > 0 ? ", " : "") << params.strides[k];
         strm << "],\n";
 
@@ -552,55 +551,55 @@ public:
         return input == 0 || (add_residual && input == ninputs-1) ? 1 : -1;
     }
 
-    virtual void setWeights(const Tensor& weights_, const Tensor& bias_,
-                            int64_t C0, int accuracy) CV_OVERRIDE
+    virtual void setWeights(const Mat& weights_, const Mat& bias_,
+                            int C0, int accuracy) CV_OVERRIDE
     {
         CV_Assert(!weights_.empty());
         int wtype0 = weights_.type();
-        CV_Assert(wtype0 == CV_32F || wtype0 == CV_16F);
+        CV_Assert(wtype0 == CV_32F || wtype0 == CV_16F || wtype0 == CV_16BF);
         CV_Assert(accuracy == -1 || accuracy == CV_32F);
         int wtype = accuracy < 0 ? CV_32F : accuracy;
 
-        wsize0 = weights_.size();
-        MatShape wsize1 = wsize0;
-        bool depthwise = params.ngroups == wsize0.size[0] && wsize0.size[1] == 1;
+        wshape0 = weights_.size();
+        MatShape wshape1 = wshape0;
+        bool depthwise = ngroups == wshape0[0] && wshape0[1] == 1;
 
         if (depthwise) {
-            wsize1.layout = DATA_LAYOUT_BLOCK;
-            wsize1.C = wsize1.size[0];
-            wsize1.size[0] = (wsize1.size[0] + C0 - 1)/C0;
-            for (int i = 2; i < wsize1.ndims; i++)
-                wsize1.size[i-1] = wsize1.size[i];
-            wsize1.size[wsize1.ndims-1] = C0;
-            weights.fit(wsize1, wtype);
+            wshape1.layout = DATA_LAYOUT_BLOCK;
+            wshape1.C = wshape1.size[0];
+            wshape1.size[0] = (wshape1.size[0] + C0 - 1)/C0;
+            for (int i = 2; i < wshape1.ndims; i++)
+                wshape1.size[i-1] = wshape1.size[i];
+            wshape1.size[wshape1.ndims-1] = C0;
+            weights.fit(wshape1, wtype);
 
-            repackDepthwiseConvWeights(weights_.data(), wtype0, weights.data(), wtype, wsize0, C0);
+            repackDepthwiseConvWeights(weights_.data(), wtype0, weights.data(), wtype, wshape0, C0);
         } else {
-            wsize1.ndims += 2;
-            wsize1.size[wsize1.ndims-1] = wsize1.size[wsize1.ndims-2] = C0;
-            wsize1.size[0] = (wsize1.size[0] + C0 - 1)/C0;
-            wsize1.size[1] = (wsize1.size[1] + C0 - 1)/C0;
-            weights.fit(wsize1, wtype);
+            wshape1.ndims += 2;
+            wshape1.size[wshape1.ndims-1] = wshape1.size[wshape1.ndims-2] = C0;
+            wshape1.size[0] = (wshape1.size[0] + C0 - 1)/C0;
+            wshape1.size[1] = (wshape1.size[1] + C0 - 1)/C0;
+            weights.fit(wshape1, wtype);
 
-            repackConvWeights(weights_.data(), wtype0, weights.data(), wtype, wsize0, C0);
+            repackConvWeights(weights_.data(), wtype0, weights.data(), wtype, wshape0, C0);
         }
 
         if (!bias_.empty()) {
-            CV_Assert(bias_.isContinuous() && bias_.total() == wsize0.size[0]);
+            CV_Assert(bias_.isContinuous() && bias_.total() == wshape0.size[0]);
             bias_.convertTo(bias, CV_32F);
         }
     }
 
-    void fuseBatchNormWeights()
+    void fuseBatchNormWeights(const Ptr<Layer>& bnlayer)
     {
-        BatchNormOp* bn = dynamic_cast<BatchNormOp*>(batchNorm.get());
+        BatchNormLayer* bn = dynamic_cast<BatchNormOp*>(bnlayer.get());
         CV_Assert(bn != nullptr);
         const Tensor &bn_scale = bn->scale, &bn_bias = bn->bias;
 
         CV_Assert(bn_scale.isContinuous() && bn_bias.isContinuous());
         CV_Assert(bn_scale.type() == CV_32F && bn_bias.type() == CV_32F);
         CV_Assert(bn_scale.total() == bn_bias.total());
-        int64_t K = bn_scale.total();
+        size_t K = bn_scale.total();
         CV_Assert(bias.empty() || (bias.type() == CV_32F && bias.total() == K));
         const float* bias_data = bias.ptr<float>();
 
@@ -614,7 +613,7 @@ public:
 
         // (sum(x*w) + bias)*bn_scale + bn_bias => sum(x*w)*fused_scale + fused_bias,
         // where fused_scale = bn_scale and fused_bias = bias*bn_scale + bn_bias.
-        for (int64_t i = 0; i < K; i++) {
+        for (size_t i = 0; i < K; i++) {
             fused_scale_data[i] = bn_scale_data[i];
             fused_bias_data[i] = (bias_data ? bn_scale_data[i]*bias_data[i] : 0.f) + bn_bias_data[i];
         }
@@ -645,8 +644,8 @@ public:
         CV_Assert(outputs.size() == 1);
         // probably, there should be a coefficient in the case of complex reduction functions
         MatShape inpsize = inputs[0].size, wsize = inputs[1].size;
-        int64_t C = inpsize.size[1]*inpsize.size[inpsize.ndims-1];
-        int64_t ksize = (int64_t)wsize.total();
+        int C = inpsize.size[1]*inpsize.size[inpsize.ndims-1];
+        size_t ksize = wsize.total();
         return (int64_t)((inputs[0].size.total()/C)*ksize/params.ngroups);
     }
 
@@ -661,8 +660,7 @@ public:
         CV_Assert((int)inptypes.size() == ninputs);
         CV_Assert(noutputs == 1);
 
-        outtypes.resize(1);
-        outtypes[0] = inferType(inptypes[0]);
+        outtypes.assign(1, inferType(inptypes[0]));
     }
 
     virtual void inferShapes(Net2& net, const Graph& graph,
@@ -680,7 +678,7 @@ public:
             ninputs--;
 
         const MatShape& inpsize = inpshapes[0];
-        MatShape wsize = ninputs > 1 ? inpshapes[1] : wsize0;
+        MatShape wsize = ninputs > 1 ? inpshapes[1] : wshape0;
 
         outshapes[0] = convInferShape(net, inpsize, params, wsize, symbolic);
     }
@@ -712,7 +710,7 @@ public:
                        inpsize.size[inpsize.ndims-1], net.getAccuracy());
         }
 
-        MatShape outsize = convInferShape(net, inpsize, params, wsize0);
+        MatShape outsize = convInferShape(net, inpsize, params, wshape0);
         int outtype = inferType(inptype);
         outputs.resize(1);
         Tensor& out = outputs[0];
@@ -726,7 +724,7 @@ public:
 
         CV_Assert(inpsize.layout == DATA_LAYOUT_BLOCK);
         int nspatialdims = inpsize.ndims - 3;
-        CV_Assert(wsize0.ndims == nspatialdims+2);
+        CV_Assert(wshape0.ndims == nspatialdims+2);
 
         if (inp.empty())
             return;
@@ -737,12 +735,12 @@ public:
 
         int64_t ksize = 1;
         for (int i = 0; i < nspatialdims; i++)
-            ksize *= wsize0.size[wsize0.ndims - nspatialdims + i];
+            ksize *= wshape0.size[wshape0.ndims - nspatialdims + i];
         AutoBuffer<int64_t> buf(ksize*2);
         int64_t* ofstab = buf.data();
         int* yxtab = (int*)(ofstab + ksize);
 
-        ConvState cs = initConvState(net, inpsize, wsize0, params, activ, yxtab, ofstab);
+        ConvState cs = initConvState(net, inpsize, wshape0, params, activ, yxtab, ofstab);
         bool conv1x1 = cs.Hk == 1 && cs.Wk == 1;
         bool depthwise = cs.ngroups == cs.C;
         const float* bias_data = bias.ptr<float>();
@@ -782,16 +780,18 @@ public:
         }
     }
 
+    Ptr<Layer> activ;
     Mat weights, bias, fused_scale, fused_bias;
-    MatShape wsize0;
+    MatShape wshape0;
     ConvState prev_cs;
     std::vector<int32_t> ofsbuf;
     std::vector<int32_t> ofs0;
     std::vector<int32_t*> ofsptrs;
     std::vector<uint8_t> mask;
+    bool fused_batch_norm;
 };
 
-Op ConvOp::create(const ConvParams& params)
+Ptr<ConvLayer> ConvOp::create(const LayerParams& params)
 {
     return std::make_shared<ConvOpImpl>(params);
 }
