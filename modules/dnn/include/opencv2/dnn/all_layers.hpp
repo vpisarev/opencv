@@ -1355,6 +1355,14 @@ CV__DNN_INLINE_NS_BEGIN
         static Ptr<Tile2Layer> create(const LayerParams& params);
     };
 
+    class CV_EXPORTS TransformLayoutLayer : public Layer
+    {
+    public:
+        DataLayout layout;
+        int C0;
+        static Ptr<TransformLayoutLayer> create(const LayerParams& params);
+    };
+
     class CV_EXPORTS LayerNormLayer : public Layer
     {
     public:
