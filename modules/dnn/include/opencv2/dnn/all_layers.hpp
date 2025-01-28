@@ -413,6 +413,8 @@ CV__DNN_INLINE_NS_BEGIN
     {
     public:
         static Ptr<ConvLayer> create(const LayerParams& params);
+        virtual void setWeights(InputArray weights, InputArray bias,
+                                int C0, int accuracy) = 0;
         virtual bool fuseAddBias(const Ptr<Layer>& addbias) = 0;
         virtual bool fuseBatchNorm(const Ptr<Layer>& bn) = 0;
         virtual bool fuseActivation(const Ptr<Layer>& activ) = 0;
@@ -1132,8 +1134,11 @@ CV__DNN_INLINE_NS_BEGIN
     {
     public:
         float epsilon;
-        Mat scale, bias;
-
+        virtual bool freezeScaleBias() = 0;
+        virtual void getScaleBias(OutputArray scale, OutputArray bias) const = 0;
+        static void getScaleBias(InputArray scale, InputArray bias,
+                                 InputArray mean, InputArray variance, float eps,
+                                 OutputArray outscale, OutputArray outbias);
         static Ptr<BatchNorm2Layer> create(const LayerParams &params);
     };
 
