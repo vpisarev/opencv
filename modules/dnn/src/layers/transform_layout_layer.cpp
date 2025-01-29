@@ -6,14 +6,13 @@
 #include "layers_common.hpp"
 #include "../net_impl.hpp"
 
-#if 0
 namespace cv
 {
 namespace dnn
 {
 
 template <typename _Tp>
-void transformLayout_(const _Tp* inp_, int istep, int istep0, int istep1,
+void transform_layout_(const _Tp* inp_, int istep, int istep0, int istep1,
                       _Tp* out_, int ostep, int ostep0, int ostep1,
                       int npix, int C0, int C1, int C)
 {
@@ -76,11 +75,11 @@ void transformLayout_(const _Tp* inp_, int istep, int istep0, int istep1,
 
 #undef CV_TRANSFORM_LAYOUT_IMPL
 #define CV_TRANSFORM_LAYOUT_IMPL(typ, suffix) \
-static void transformLayout_##suffix(const void* inp_, int istep, int istep0, int istep1, \
+static void transform_layout_##suffix(const void* inp_, int istep, int istep0, int istep1, \
                                       void* out_, int ostep, int ostep0, int ostep1, \
                                       int npix, int C0, int C1, int C) \
 { \
-    transformLayout_((const typ*)inp_, istep, istep0, istep1, \
+    transform_layout_((const typ*)inp_, istep, istep0, istep1, \
                      (typ*)out_, ostep, ostep0, ostep1, npix, C0, C1, C); \
 }
 
@@ -93,7 +92,7 @@ typedef void (*transform_layout_func_t)(const void* inp, int istep, int istep0, 
                                         void* out, int ostep, int ostep0, int ostep1,
                                         int npix, int C0, int C1, int C);
 
-static void transformLayout(const Mat& inp, Mat& out)
+static void transform_layout(const Mat& inp, Mat& out)
 {
     MatShape inpshape = inp.shape();
     MatShape outshape = out.shape();
@@ -124,7 +123,7 @@ static void transformLayout(const Mat& inp, Mat& out)
     int nblocks = (outtotal + BLOCK_SIZE - 1)/BLOCK_SIZE;
     nblocks = std::min(nblocks, allplanes);
 
-    size_t esz = CV_ELEM_SIZE(inptype);
+    size_t esz = inp.elemSize();
     int istep0, istep1, istep;
     int ostep0, ostep1, ostep;
     int C0_ = C, C1_ = 1;
@@ -166,10 +165,10 @@ static void transformLayout(const Mat& inp, Mat& out)
     char* outptr0 = (char*)out.data;
 
     transform_layout_func_t transform_layout_func =
-        esz == 1 ? transformLayout_8u :
-        esz == 2 ? transformLayout_16u :
-        esz == 4 ? transformLayout_32u :
-        esz == 8 ? transformLayout_64u : nullptr;
+        esz == 1 ? transform_layout_8u :
+        esz == 2 ? transform_layout_16u :
+        esz == 4 ? transform_layout_32u :
+        esz == 8 ? transform_layout_64u : nullptr;
 
     CV_Assert(transform_layout_func != nullptr);
 
@@ -212,11 +211,6 @@ public:
         return strm;
     }
 
-    int inferType(int inptype0) const
-    {
-        return inptype0;
-    }
-
     virtual bool alwaysSupportInplace() const CV_OVERRIDE
     {
         return false;
@@ -228,58 +222,55 @@ public:
         CV_Assert(inputs.size() == 1);
         CV_Assert(outputs.size() == 1);
         // probably, there should be a coefficient in the case of complex reduction functions
-        return (int64_t)std::max(inputs[0].size.total(), outputs[0].size.total());
+        return (int64_t)std::max(inputs[0].total(), outputs[0].total());
     }
 
-    virtual void inferTypes(const Net2& net, const Graph& graph,
-                            const std::vector<Arg>& inpargs,
-                            const std::vector<int>& inptypes,
-                            const std::vector<Arg>& outargs,
-                            std::vector<int>& outtypes) const CV_OVERRIDE
+    virtual void getTypes(const std::vector<MatType>& inptypes,
+                          const int, const int,
+                          std::vector<MatType>& outtypes,
+                          std::vector<MatType>& temptypes) const CV_OVERRIDE
     {
-        int ninputs = (int)inpargs.size(), noutputs = (int)outargs.size();
-        CV_Assert(minNumInputs() <= ninputs && ninputs <= maxNumInputs());
-        CV_Assert((int)inptypes.size() == ninputs);
-        CV_Assert(noutputs == 1);
+        int ninputs = (int)inptypes.size();
+        CV_Assert(ninputs == 1);
 
-        outtypes.resize(1);
-        outtypes[0] = inferType(inptypes[0]);
+        outtypes.assign(1, inptypes[0]);
+        temptypes.clear();
     }
 
-    MatShape inferShapes_(const MatShape& inpshape) const
+    MatShape inferShape(const MatShape& inpshape) const
     {
-        int ndims = inpshape.ndims;
-        TensorLayout inplayout = inpshape.layout;
-        CV_Assert(layout == LAYOUT_NCHWc || layout == LAYOUT_NCHW || layout == LAYOUT_NHWC);
-        CV_Assert(inplayout == LAYOUT_NCHWc || inplayout == LAYOUT_NCHW || inplayout == LAYOUT_NHWC);
+        int ndims = inpshape.dims;
+        DataLayout inplayout = inpshape.layout;
+        CV_Assert(layout == DATA_LAYOUT_BLOCK || layout == DATA_LAYOUT_NCHW || layout == DATA_LAYOUT_NHWC);
+        CV_Assert(inplayout == DATA_LAYOUT_BLOCK || inplayout == DATA_LAYOUT_NCHW || inplayout == DATA_LAYOUT_NHWC);
 
         if (layout == inplayout) {
             // identity
-            CV_Assert(layout != LAYOUT_NCHWc || C0 == inpshape[ndims-1]);
+            CV_Assert(layout != DATA_LAYOUT_BLOCK || C0 == inpshape[ndims-1]);
             return inpshape;
         }
 
         // non-block => block
-        if (layout == LAYOUT_NCHWc)
+        if (layout == DATA_LAYOUT_BLOCK)
             return inpshape.toBlock(C0);
 
         // block => non-block
-        if (inplayout == LAYOUT_NCHWc)
+        if (inplayout == DATA_LAYOUT_BLOCK)
             return inpshape.fromBlock(layout);
 
         MatShape outshape = inpshape;
         outshape.layout = layout;
 
         // NHWC => NCHW
-        if (layout == LAYOUT_NCHW) {
-            CV_Assert(inplayout == LAYOUT_NHWC);
+        if (layout == DATA_LAYOUT_NCHW) {
+            CV_Assert(inplayout == DATA_LAYOUT_NHWC);
             int C = inpshape[ndims-1];
             for (int i = 2; i < ndims; i++)
                 outshape[i] = inpshape[i-1];
             outshape[1] = C;
         } else {
             // NCHW => NHWC
-            CV_Assert(layout == LAYOUT_NHWC && inplayout == LAYOUT_NCHW);
+            CV_Assert(layout == DATA_LAYOUT_NHWC && inplayout == DATA_LAYOUT_NCHW);
             int C = inpshape[1];
             for (int i = 2; i < ndims; i++)
                 outshape[i-1] = inpshape[i];
@@ -288,46 +279,64 @@ public:
         return outshape;
     }
 
-    virtual void inferShapes(Net2& net, const Graph& graph,
-                             const std::vector<Arg>& inpargs,
-                             const std::vector<MatShape>& inpshapes,
-                             const std::vector<Arg>& outargs,
-                             std::vector<MatShape>& outshapes,
-                             bool symbolic) const CV_OVERRIDE
+    virtual bool getMemoryShapes(const std::vector<MatShape>& inpshapes,
+                                 const int,
+                                 std::vector<MatShape> &outshapes,
+                                 std::vector<MatShape> &tempshapes) const CV_OVERRIDE
     {
-        int ninputs = (int)inpargs.size(), noutputs = (int)outargs.size();
-        CV_Assert(minNumInputs() <= ninputs && ninputs <= maxNumInputs());
-        CV_Assert(noutputs == 1);
-        outshapes.resize(1);
+        size_t ninputs = inpshapes.size();
+        CV_Assert(ninputs == 1);
 
-        const MatShape& inpshape = inpshapes[0];
-        outshapes[0] = inferShapes_(inpshape);
+        outshapes.assign(1, inferShape(inpshapes[0]));
+        tempshapes.clear();
+        return true;
     }
 
-    virtual void forward(Net2& net, Graph& graph,
-                        const std::vector<Tensor>& inputs,
-                        std::vector<Tensor>& outputs,
-                        std::vector<Buffer>& tempbufs) CV_OVERRIDE
+    void finalize(InputArrayOfArrays, OutputArrayOfArrays outputs_arr) CV_OVERRIDE
     {
-        size_t ninputs = inputs.size();
-        CV_Assert(minNumInputs() <= ninputs && ninputs <= maxNumInputs());
-        const Tensor& inp = inputs[0];
-        CV_Assert(inp.isContinuous());
+    }
 
-        int inptype = inp.type(), outtype = inferType(inptype);
-        MatShape inpshape = inp.size();
-        MatShape outshape = inferShapes_(inpshape);
-        outputs.resize(1);
-        Tensor& out = outputs[0];
-        out.fitSameDevice(inp, outshape, outtype);
-        CV_Assert(out.isContinuous());
+    void forward(InputArrayOfArrays inputs_arr,
+                 OutputArrayOfArrays outputs_arr,
+                 OutputArrayOfArrays) CV_OVERRIDE
+    {
+        size_t ninputs = inputs_arr.total();
+        CV_Assert(ninputs == 1);
+
+        int inptype = inputs_arr.type(0);
+        MatShape inpshape = inputs_arr.shape(0);
+        MatShape outshape = inferShape(inpshape);
+        int outKind = outputs_arr.kind();
+        CV_Assert(outKind == _InputArray::STD_VECTOR_MAT ||
+                  outKind == _InputArray::STD_VECTOR_UMAT);
+
+        if (outKind == _InputArray::STD_VECTOR_MAT) {
+            Mat inp = inputs_arr.getMat(0);
+            std::vector<Mat>& outs = outputs_arr.getMatVecRef();
+            outs.resize(1);
+            outs[0].fit(outshape, inptype);
+            runOp(inp, outs[0]);
+        } else {
+            // [TODO] more efficient OpenCL implementation
+            Mat inp = inputs_arr.getMat(0);
+            std::vector<UMat>& outs = outputs_arr.getUMatVecRef();
+            outs.resize(1);
+            outs[0].fit(outshape, inptype);
+            Mat temp(outshape, inptype);
+            runOp(inp, temp);
+            temp.copyTo(outs[0]);
+        }
+    }
+
+    void runOp(const Mat& inp, Mat& out)
+    {
+        transform_layout(inp, out);
     }
 };
 
 Ptr<TransformLayoutLayer> TransformLayoutLayer::create(const LayerParams& params)
 {
-    return std::make_shared<TransformLayoutLayerImpl>(params);
+    return Ptr<TransformLayoutLayer>(new TransformLayoutLayerImpl(params));
 }
 
 }}
-#endif
