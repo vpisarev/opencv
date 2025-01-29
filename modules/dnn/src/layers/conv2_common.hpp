@@ -57,6 +57,17 @@ struct ConvState
 
 AutoPadding getAutoPadding(const LayerParams& params);
 
+void initConvState(const MatShape& inpshape,
+                   const MatShape& wshape,
+                   const MatShape& outshape,
+                   const Ptr<Layer>& activ,
+                   int ngroups,
+                   const std::vector<int>& strides,
+                   const std::vector<int>& dilations,
+                   const std::vector<int>& pads,
+                   AutoPadding auto_pad, bool ceil_mode,
+                   ConvState& cs);
+
 // initializes the structure of parameters for 1D/2D/3D
 // depth-wise convolution, max pooling or average pooling
 void initPoolingState(const MatShape& inpshape, const MatShape& outshape,

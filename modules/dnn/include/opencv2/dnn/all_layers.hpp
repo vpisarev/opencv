@@ -409,16 +409,16 @@ CV__DNN_INLINE_NS_BEGIN
         static Ptr<GatherElementsLayer> create(const LayerParams& params);
     };
 
-    class CV_EXPORTS ConvLayer : public Layer
+    class CV_EXPORTS Conv2Layer : public Layer
     {
     public:
-        static Ptr<ConvLayer> create(const LayerParams& params);
+        static Ptr<Conv2Layer> create(const LayerParams& params);
         virtual void setWeights(InputArray weights, InputArray bias,
                                 int C0, int accuracy) = 0;
-        virtual bool fuseAddBias(const Ptr<Layer>& addbias) = 0;
+        virtual bool fuseAddBias(InputArray bias) = 0;
         virtual bool fuseBatchNorm(const Ptr<Layer>& bn) = 0;
-        virtual bool fuseActivation(const Ptr<Layer>& activ) = 0;
-        virtual bool fuseAddResidual(const Ptr<Layer>& addres) = 0;
+        //virtual bool fuseActivation(const Ptr<Layer>& activ) = 0;
+        //virtual bool fuseAddResidual(const Ptr<Layer>& addres) = 0;
         
         std::vector<int> strides, dilations, pads;
         int ngroups;

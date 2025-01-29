@@ -8,7 +8,6 @@
 #include "conv2_common.hpp"
 #include "opencv2/core/hal/intrin.hpp"
 
-#if 0
 namespace cv
 {
 namespace dnn
@@ -468,16 +467,16 @@ static void conv2d_1x1_32f(const void* inp__, const void* residual__, void* out_
 }
 
 
-typedef void (*conv_func_t)(const void* inp, const void* residual, void* out,
-                            const ConvState& cs, const void* weights,
-                            const float* scale, const float* bias,
-                            const int32_t* ofs0, const int32_t** ofsptrs,
-                            const uint8_t* mask);
+typedef void (*conv2d_func_t)(const void* inp, const void* residual, void* out,
+                              const ConvState& cs, const void* weights,
+                              const float* scale, const float* bias,
+                              const int32_t* ofs0, const int32_t** ofsptrs,
+                              const uint8_t* mask);
 
-class ConvLayerImpl : public ConvLayer
+class Conv2LayerImpl : public Conv2Layer
 {
 public:
-    ConvLayerImpl(const LayerParams& params)
+    Conv2LayerImpl(const LayerParams& params)
     {
         setParamsFrom(params);
         auto_pad = getAutoPadding(params);
@@ -548,9 +547,11 @@ public:
         return input == 0 || (add_residual && input == ninputs-1) ? 1 : -1;
     }
 
-    virtual void setWeights(const Mat& weights_, const Mat& bias_,
+    virtual void setWeights(InputArray weights_arr, InputArray bias_arr,
                             int C0, int accuracy) CV_OVERRIDE
     {
+        Mat weights_ = weights_arr.getMat();
+        Mat bias_ = bias_arr.getMat();
         CV_Assert(!weights_.empty());
         int wtype0 = weights_.type();
         CV_Assert(wtype0 == CV_32F || wtype0 == CV_16F || wtype0 == CV_16BF);
@@ -587,21 +588,20 @@ public:
         }
     }
 
-    void fuseBatchNormWeights(const Ptr<Layer>& bnlayer)
+    void fuseBatchNormWeights(const BatchNorm2Layer* bn)
     {
-        BatchNormLayer* bn = dynamic_cast<BatchNormLayer*>(bnlayer.get());
-        CV_Assert(bn != nullptr);
-        const Tensor &bn_scale = bn->scale, &bn_bias = bn->bias;
+        Mat bn_scale, bn_bias;
+        bn->getScaleBias(bn_scale, bn_bias);
 
         CV_Assert(bn_scale.isContinuous() && bn_bias.isContinuous());
         CV_Assert(bn_scale.type() == CV_32F && bn_bias.type() == CV_32F);
         CV_Assert(bn_scale.total() == bn_bias.total());
-        size_t K = bn_scale.total();
-        CV_Assert(bias.empty() || (bias.type() == CV_32F && bias.total() == K));
-        const float* bias_data = bias.ptr<float>();
+        int K = (int)bn_scale.total();
+        CV_Assert(bias.empty() || (bias.type() == CV_32F && bias.total() == (size_t)K));
+        const float* bias_data = bias.data ? bias.ptr<float>() : nullptr;
 
-        fused_scale.fit(MatShape(1, &K), CV_32F);
-        fused_bias.fit(MatShape(1, &K), CV_32F);
+        fused_scale.fit(1, &K, CV_32F);
+        fused_bias.fit(1, &K, CV_32F);
 
         const float* bn_scale_data = bn_scale.ptr<float>();
         const float* bn_bias_data = bn_bias.ptr<float>();
@@ -618,156 +618,186 @@ public:
 
     virtual bool fuseBatchNorm(const Ptr<Layer>& bnlayer) override
     {
-        BatchNormLayer* bn = dynamic_cast<BatchNormLayer*>(bnlayer.get());
-        if (!bn)
+        BatchNorm2Layer* bn = dynamic_cast<BatchNorm2Layer*>(bnlayer.get());
+        if (fused_batch_norm || !bn || bn->inputs.size() > 1)
             return false;
-        Mat bn_scale
-        batchNorm = op;
+        fuseBatchNormWeights(bn);
+        fused_batch_norm = true;
         return true;
     }
 
-    virtual bool fuseActivation(const Op& op) override
+    virtual bool fuseAddBias(InputArray arr) CV_OVERRIDE
+    {
+        if (inputs.size() > 1 || fused_batch_norm || add_residual)
+            return false;
+        Mat new_bias = arr.getMat();
+        CV_Assert(new_bias.isContinuous() && new_bias.dims == 1);
+        if (new_bias.type() != CV_32F) {
+            Mat temp;
+            new_bias.convertTo(temp, CV_32F);
+            new_bias = temp;
+            CV_Assert(new_bias.type() == CV_32F);
+        }
+        if (!bias.empty()) {
+            CV_Assert(bias.shape() == new_bias.shape());
+            add(bias, new_bias, bias);
+        } else {
+            new_bias.copyTo(bias);
+        }
+        return true;
+    }
+
+    /*virtual bool fuseActivation(const Ptr<layer>& activ) override
     {
         ElemwiseOp* activ_ptr = dynamic_cast<ElemwiseOp*>(op.get());
         if (activ || activ_ptr->maxNumInputs() != 1 || !activ_ptr || !activ_ptr->getActivation(CV_32F))
             return false;
         activ = op;
         return true;
-    }
+    }*/
 
-    virtual int64_t getFLOPS(const std::vector<SizeType> &inputs,
-                             const std::vector<SizeType> &outputs) const CV_OVERRIDE
+    virtual int64_t getFLOPS(const std::vector<MatShape>& inputs,
+                             const std::vector<MatShape>& outputs) const CV_OVERRIDE
     {
-        CV_Assert(inputs.size() >= 2);
+        CV_Assert(inputs.size() >= 1);
         CV_Assert(outputs.size() == 1);
         // probably, there should be a coefficient in the case of complex reduction functions
-        MatShape inpsize = inputs[0].size, wsize = inputs[1].size;
-        int C = inpsize.size[1]*inpsize.size[inpsize.ndims-1];
-        size_t ksize = wsize.total();
-        return (int64_t)((inputs[0].size.total()/C)*ksize/params.ngroups);
+        MatShape inpshape = inputs[0], wshape = inputs.size() > 1 ? inputs[1] : wshape0;
+        int C = inpshape[1]*inpshape.back();
+        size_t ksize = wshape.total();
+        return (int64_t)((inputs[0].total()/C)*ksize/ngroups);
     }
 
-    virtual void getTypes(const Net2& net, const Graph& graph,
-                            const std::vector<Arg>& inpargs,
-                            const std::vector<int>& inptypes,
-                            const std::vector<Arg>& outargs,
-                            std::vector<int>& outtypes) const CV_OVERRIDE
+    virtual void getTypes(const std::vector<MatType>& inptypes,
+                          const int, const int,
+                          std::vector<MatType>& outtypes,
+                          std::vector<MatType>& temptypes) const CV_OVERRIDE
     {
-        int ninputs = (int)inpargs.size(), noutputs = (int)outargs.size();
-        CV_Assert(minNumInputs() <= ninputs && ninputs <= maxNumInputs());
-        CV_Assert((int)inptypes.size() == ninputs);
-        CV_Assert(noutputs == 1);
+        int ninputs = (int)inptypes.size();
+        CV_Assert(ninputs == 1);
 
         outtypes.assign(1, inferType(inptypes[0]));
+        temptypes.clear();
     }
 
-    virtual void inferShapes(Net2& net, const Graph& graph,
-                             const std::vector<Arg>& inpargs,
-                             const std::vector<MatShape>& inpshapes,
-                             const std::vector<Arg>& outargs,
-                             std::vector<MatShape>& outshapes,
-                             bool symbolic) const CV_OVERRIDE
+    virtual bool getMemoryShapes(const std::vector<MatShape>& inpshapes,
+                                 const int,
+                                 std::vector<MatShape> &outshapes,
+                                 std::vector<MatShape> &tempshapes) const CV_OVERRIDE
     {
-        int ninputs = (int)inpargs.size(), noutputs = (int)outargs.size();
-        CV_Assert(minNumInputs() <= ninputs && ninputs <= maxNumInputs());
-        CV_Assert(noutputs == 1);
-        outshapes.resize(1);
-        if (add_residual)
-            ninputs--;
+        size_t ninputs = inpshapes.size();
+        CV_Assert(ninputs >= 1);
 
-        const MatShape& inpsize = inpshapes[0];
-        MatShape wsize = ninputs > 1 ? inpshapes[1] : wshape0;
-
-        outshapes[0] = convInferShape(net, inpsize, params, wsize, symbolic);
+        MatShape wshape = ninputs > 1 ? inpshapes[1] : wshape0;
+        outshapes.assign(1, convInferShape(inpshapes[0], wshape, empty_kernel_shape,
+                                           ngroups, strides, dilations,
+                                           pads, auto_pad, ceil_mode));
+        tempshapes.clear();
+        return true;
     }
 
-    virtual void forward(Net2& net, Graph& graph,
-                        const std::vector<Tensor>& inputs,
-                        std::vector<Tensor>& outputs,
-                        std::vector<Buffer>& tempbufs) CV_OVERRIDE
+    void finalize(InputArrayOfArrays, OutputArrayOfArrays outputs_arr) CV_OVERRIDE
     {
-        size_t ninputs = inputs.size();
-        CV_Assert(minNumInputs() <= ninputs && ninputs <= maxNumInputs());
-        const Tensor& inp = inputs[0];
-        const Tensor* residual = nullptr;
+    }
+
+    void forward(InputArrayOfArrays inputs_arr,
+                 OutputArrayOfArrays outputs_arr,
+                 OutputArrayOfArrays) CV_OVERRIDE
+    {
+        auto* netimpl_ = getNetImpl(this);
+        int ninputs = (int)inputs_arr.total();
+        CV_Assert(ninputs >= 1);
+        const Mat& inp = inputs_arr.getMat(0);
+        Mat residual;
         const void* resptr = nullptr;
         int inptype = inp.type();
-        MatShape inpsize = inp.size();
-        CV_Assert(inpsize.layout == DATA_LAYOUT_BLOCK);
+        MatShape inpshape = inp.shape();
+        CV_Assert(inpshape.layout == DATA_LAYOUT_BLOCK);
         CV_Assert(inp.isContinuous());
 
         if (add_residual) {
-            residual = &inputs[ninputs-1];
-            resptr = residual->data();
+            residual = inputs_arr.getMat(ninputs-1);
+            resptr = residual.data;
             ninputs--;
         }
 
         bool dynamic_weights = ninputs > 1;
         if (dynamic_weights) {
-            setWeights(inputs[1], ninputs > 2 ? inputs[2] : Tensor(),
-                       inpsize.size[inpsize.ndims-1], net.getAccuracy());
+            setWeights(inputs_arr.getMat(1), ninputs > 2 ? inputs_arr.getMat(2) : Mat(),
+                       inpshape.back(), netimpl_->accuracy);
         }
 
-        MatShape outsize = convInferShape(net, inpsize, params, wshape0);
+        MatShape outshape = convInferShape(inpshape, wshape0, empty_kernel_shape,
+                                           ngroups, strides, dilations,
+                                           pads, auto_pad, ceil_mode);
         int outtype = inferType(inptype);
-        outputs.resize(1);
-        Tensor& out = outputs[0];
-        out.fitSameDevice(inp, outsize, outtype);
-        CV_Assert(out.isContinuous());
+        int outkind = outputs_arr.kind();
+        CV_Assert(outkind == _InputArray::STD_VECTOR_MAT ||
+                  outkind == _InputArray::STD_VECTOR_UMAT);
 
         if (add_residual) {
-            CV_Assert(outsize == residual->size());
-            CV_Assert(outtype == residual->type());
+            CV_Assert(outshape == residual.shape());
+            CV_Assert(outtype == residual.type());
         }
 
-        CV_Assert(inpsize.layout == DATA_LAYOUT_BLOCK);
-        int nspatialdims = inpsize.ndims - 3;
-        CV_Assert(wshape0.ndims == nspatialdims+2);
+        int nspatialdims = inpshape.dims - 3;
+        CV_Assert(wshape0.dims == nspatialdims+2);
 
-        if (inp.empty())
-            return;
+        initConvState(inpshape, wshape0, outshape, activ, ngroups,
+                      strides, dilations, pads, auto_pad, ceil_mode, cs);
+        bool conv1x1 = cs.kshape[0]*cs.kshape[1]*cs.kshape[2] == 1;
+        bool depthwise = ngroups == cs.inpshape.C;
 
-        const void* inptr = inp.data();
-        void* outptr = out.data();
-        const void* wptr = weights.data();
-
-        int64_t ksize = 1;
-        for (int i = 0; i < nspatialdims; i++)
-            ksize *= wshape0.size[wshape0.ndims - nspatialdims + i];
-        AutoBuffer<int64_t> buf(ksize*2);
-        int64_t* ofstab = buf.data();
-        int* yxtab = (int*)(ofstab + ksize);
-
-        ConvState cs = initConvState(net, inpsize, wshape0, params, activ, yxtab, ofstab);
-        bool conv1x1 = cs.Hk == 1 && cs.Wk == 1;
-        bool depthwise = cs.ngroups == cs.C;
+        const float* scale_data = nullptr;
         const float* bias_data = bias.ptr<float>();
 
-        if (batchNorm) {
-            fuseBatchNormWeights();
+        if (fused_batch_norm) {
+            scale_data = fused_scale.ptr<float>();
             bias_data = fused_bias.ptr<float>();
         }
 
+        std::vector<Mat>* outs = nullptr;
+        std::vector<UMat>* uouts = nullptr;
+        Mat out;
+
+        if (outkind == _InputArray::STD_VECTOR_MAT) {
+            outs = &outputs_arr.getMatVecRef();
+            outs->resize(1);
+            outs->at(0).fit(outshape, outtype);
+            out = outs->at(0);
+        } else {
+            uouts = &outputs_arr.getUMatVecRef();
+            uouts->resize(1);
+            uouts->at(0).fit(outshape, outtype);
+            out.fit(outshape, outtype);
+        }
+
+        const void* inptr = inp.data;
+        void* outptr = out.data;
+        const void* wptr = weights.data;
+
         if (depthwise) {
-            depthwise_conv2d_t func = getDepthwiseConv2DFunc(inptype);
+            depthwise_conv2d_func_t func = getDepthwiseConv2DFunc(inptype);
             CV_Assert(func != nullptr);
 
-            func(inptr, resptr, outptr, cs, wptr,
-                 fused_scale.ptr<float>(), bias_data);
+            func(inptr, resptr, outptr, cs, wptr, scale_data, bias_data);
         } else {
             if (!conv1x1 && (ofs0.empty() || !cs.sameShape(prev_cs))) {
-                conv2d_init_tables(cs, ofsbuf, ofs0, ofsptrs, mask);
+                initConv2DTables(cs, ofsbuf, ofs0, ofsptrs, mask);
                 prev_cs = cs;
             }
 
-            conv_func_t func = conv1x1 ?
+            conv2d_func_t func = conv1x1 ?
                 (inptype == CV_32F ? conv2d_1x1_32f : nullptr) :
                 (inptype == CV_32F ? conv2d_32f : nullptr);
             CV_Assert(func != nullptr);
 
-            func(inptr, resptr, outptr, cs, wptr,
-                 fused_scale.ptr<float>(), bias_data, ofs0.data(),
-                 (const int32_t**)ofsptrs.data(), mask.data());
+            func(inptr, resptr, outptr, cs, wptr, scale_data, bias_data,
+                 ofs0.data(), (const int32_t**)ofsptrs.data(), mask.data());
+        }
+
+        if (uouts) {
+            out.copyTo(uouts->at(0));
         }
 
         if (dynamic_weights) {
@@ -778,10 +808,11 @@ public:
         }
     }
 
-    Ptr<Layer> activ;
+    std::vector<int> empty_kernel_shape;
+    Ptr<Layer> activ, batchNorm;
     Mat weights, bias, fused_scale, fused_bias;
     MatShape wshape0;
-    ConvState prev_cs;
+    ConvState cs, prev_cs;
     std::vector<int32_t> ofsbuf;
     std::vector<int32_t> ofs0;
     std::vector<int32_t*> ofsptrs;
@@ -789,10 +820,9 @@ public:
     bool fused_batch_norm;
 };
 
-Ptr<ConvLayer> ConvOp::create(const LayerParams& params)
+Ptr<Conv2Layer> Conv2Layer::create(const LayerParams& params)
 {
-    return std::make_shared<ConvOpImpl>(params);
+    return Ptr<Conv2Layer>(new Conv2LayerImpl(params));
 }
 
 }}
-#endif

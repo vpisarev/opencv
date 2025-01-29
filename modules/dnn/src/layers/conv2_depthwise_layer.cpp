@@ -55,7 +55,7 @@ void repackDepthwiseConvWeights(const void* inpw__, int inptype_, void* outw__, 
     });
 }
 
-static void conv2d_depthwise_32f(const void* inp__, const void* residual__, void* out__, const ConvState& cs,
+static void depthwise_conv2d_32f(const void* inp__, const void* residual__, void* out__, const ConvState& cs,
                                  const void* weights__, const float* scale__, const float* bias__)
 {
     int nlanes_ = VTraits<v_float32>::vlanes();
@@ -89,10 +89,10 @@ static void conv2d_depthwise_32f(const void* inp__, const void* residual__, void
 
         FastActivation fastActivation = cs.fastActivation;
         const float* activParams = cs.activParams;
-        ElemwiseOp::activ_t activation = cs.activation;
-        float maxval = fastActivation == ACTIV_CLIP ? activParams[1] : FLT_MAX;
-        float alpha = fastActivation == ACTIV_LEAKY_RELU ? activParams[0] :
-                    fastActivation == ACTIV_NONE ? 1.f : 0.f;
+        activation_func_t activation = cs.activation;
+        float maxval = fastActivation == FAST_ACTIV_CLIP ? activParams[1] : FLT_MAX;
+        float alpha = fastActivation == FAST_ACTIV_LEAKY_RELU ? activParams[0] :
+                    fastActivation == FAST_ACTIV_NONE ? 1.f : 0.f;
         v_float32 v_maxval = vx_setall_f32(maxval);
         v_float32 v_alpha = vx_setall_f32(alpha);
 
@@ -274,9 +274,9 @@ static void conv2d_depthwise_32f(const void* inp__, const void* residual__, void
     });
 }
 
-depthwise_conv2d_t getDepthwiseConv2DFunc(int depth)
+depthwise_conv2d_func_t getDepthwiseConv2DFunc(int depth)
 {
-    depthwise_conv2d_t func = depth == CV_32F ? conv2d_depthwise_32f : nullptr;
+    depthwise_conv2d_func_t func = depth == CV_32F ? depthwise_conv2d_32f : nullptr;
     return func;
 }
 
