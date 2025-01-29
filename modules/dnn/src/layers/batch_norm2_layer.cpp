@@ -33,7 +33,7 @@ static void batchnorm(const Mat& inp, Mat& out, const Mat& scale, const Mat& bia
     CV_Assert_N(scale.type() == CV_32F, bias.type() == CV_32F);
 
     MatShape shape = inp.shape();
-    int layout = shape.layout;
+    DataLayout layout = shape.layout;
     CV_Assert(layout == DATA_LAYOUT_BLOCK ||
               layout == DATA_LAYOUT_NCHW ||
               layout == DATA_LAYOUT_NHWC);
@@ -47,11 +47,11 @@ static void batchnorm(const Mat& inp, Mat& out, const Mat& scale, const Mat& bia
     CV_SIMD_ONLY(int vlanes_ = VTraits<v_float32>::vlanes());
 
     size_t esz = inp.elemSize();
-    CV_Assert(shape == out.shape());
 
     CV_Assert(type_ == CV_32F || type_ == CV_16F || type_ == CV_16BF);
+
+    CV_Assert(inp.shape() == out.shape());
     CV_Assert(inp.isContinuous());
-    out.fit(shape, type_);
     CV_Assert(out.isContinuous());
 
     int planesize_ = 1;
@@ -421,21 +421,19 @@ public:
                   outKind == _InputArray::STD_VECTOR_UMAT);
 
         if (outKind == _InputArray::STD_VECTOR_MAT) {
-            std::vector<Mat> inps;
-            inputs_arr.getMatVector(inps);
+            Mat inp = inputs_arr.getMat(0);
             std::vector<Mat>& outs = outputs_arr.getMatVecRef();
             outs.resize(1);
             outs[0].fit(outShape, inpType);
-            runOp(inps[0], outs[0]);
+            runOp(inp, outs[0]);
         } else {
             // [TODO] more efficient OpenCL implementation
-            std::vector<Mat> inps;
-            inputs_arr.getMatVector(inps);
+            Mat inp = inputs_arr.getMat(0);
             std::vector<UMat>& outs = outputs_arr.getUMatVecRef();
             outs.resize(1);
             outs[0].fit(outShape, inpType);
             Mat temp(outShape, inpType);
-            runOp(inps[0], temp);
+            runOp(inp, temp);
             temp.copyTo(outs[0]);
         }
     }

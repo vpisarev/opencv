@@ -8,6 +8,7 @@
 #include "conv2_common.hpp"
 #include "opencv2/core/hal/intrin.hpp"
 
+#if 0
 namespace cv
 {
 namespace dnn
@@ -30,7 +31,7 @@ static void initConv2DTables(const ConvState& cs,
     int DY_ = cs.dilations[0], DX_ = cs.dilations[1];
     int pad_y0 = cs.pads[0], pad_x0 = cs.pads[1];
     int Hi_ = cs.inpshape[2], Wi_ = cs.inpshape[3], H = cs.outshape[2], W = cs.outshape[3];
-    int C0_ = cs.inpshape.back(), C1_ = cs.inpshape[1], K1 = cs.outshape[1];
+    int C0_ = cs.inpshape.back(), C1_ = cs.inpshape[1];
     int ngroups = cs.ngroups, C1g = C1_/ngroups;
     int inner_y0 = cs.inner[0], inner_y1 = cs.inner[1];
     int inner_x0 = cs.inner[cs.nspatialdims], inner_x1 = cs.inner[cs.nspatialdims + 1];
@@ -136,8 +137,9 @@ repackConv2DWeights_(const _InpT* inpw_, _OutT* outw_,
 
 // K x (C/ngroups) x Hk x Wk => K1 x C1/ngroups x Hk x Wk x C0 x K0,
 // where K0 == C0
-static void repackConv2DWeights(const void* inpw__, int inptype_, void* outw__, int outtype_,
-                                  const MatShape& wshape, int C0_)
+static void repackConv2DWeights(const void* inpw__, int inptype_,
+                                void* outw__, int outtype_,
+                                const MatShape& wshape, int C0_)
 {
     CV_Assert(inptype_ == CV_32F || inptype_ == CV_16F);
     CV_Assert(outtype_ == CV_32F || outtype_ == CV_16F);
@@ -502,22 +504,22 @@ public:
         prindent(strm, indent);
         strm << "dilations: [";
         for (size_t k = 0; k < dilations.size(); k++)
-            strm << (k > 0 ? ", " : "") << params.dilations[k];
+            strm << (k > 0 ? ", " : "") << dilations[k];
         strm << "],\n";
 
         prindent(strm, indent);
         strm << "pads: [";
         for (size_t k = 0; k < pads.size(); k++)
-            strm << (k > 0 ? ", " : "") << params.pads[k];
+            strm << (k > 0 ? ", " : "") << pads[k];
         strm << "],\n";
 
         prindent(strm, indent);
         strm << "strides: [";
         for (size_t k = 0; k < strides.size(); k++)
-            strm << (k > 0 ? ", " : "") << params.strides[k];
+            strm << (k > 0 ? ", " : "") << strides[k];
         strm << "],\n";
 
-        if (batchNorm) {
+        if (fused_batch_norm) {
             prindent(strm, indent);
             strm << "batch_norm: true,\n";
         }
@@ -529,7 +531,7 @@ public:
 
         if (activ) {
             prindent(strm, indent);
-            strm << "activation: " << activ->name() << ",\n";
+            strm << "activation: " << activ->name << ",\n";
         }
 
         return strm;
@@ -538,11 +540,6 @@ public:
     int inferType(int inptype0) const
     {
         return inptype0;
-    }
-
-    virtual bool supportType(int, int depth) const CV_OVERRIDE
-    {
-        return depth == CV_32F;
     }
 
     virtual int supportBlockLayout(int input) const CV_OVERRIDE
@@ -560,39 +557,39 @@ public:
         CV_Assert(accuracy == -1 || accuracy == CV_32F);
         int wtype = accuracy < 0 ? CV_32F : accuracy;
 
-        wshape0 = weights_.size();
+        wshape0 = weights_.shape();
         MatShape wshape1 = wshape0;
         bool depthwise = ngroups == wshape0[0] && wshape0[1] == 1;
 
         if (depthwise) {
             wshape1.layout = DATA_LAYOUT_BLOCK;
-            wshape1.C = wshape1.size[0];
-            wshape1.size[0] = (wshape1.size[0] + C0 - 1)/C0;
-            for (int i = 2; i < wshape1.ndims; i++)
-                wshape1.size[i-1] = wshape1.size[i];
-            wshape1.size[wshape1.ndims-1] = C0;
+            wshape1.C = wshape1[0];
+            wshape1[0] = (wshape1[0] + C0 - 1)/C0;
+            for (int i = 2; i < wshape1.dims; i++)
+                wshape1[i-1] = wshape1[i];
+            wshape1[wshape1.dims-1] = C0;
             weights.fit(wshape1, wtype);
 
-            repackDepthwiseConvWeights(weights_.data(), wtype0, weights.data(), wtype, wshape0, C0);
+            repackDepthwiseConvWeights(weights_.data, wtype0, weights.data, wtype, wshape0, C0);
         } else {
-            wshape1.ndims += 2;
-            wshape1.size[wshape1.ndims-1] = wshape1.size[wshape1.ndims-2] = C0;
-            wshape1.size[0] = (wshape1.size[0] + C0 - 1)/C0;
-            wshape1.size[1] = (wshape1.size[1] + C0 - 1)/C0;
+            wshape1.dims += 2;
+            wshape1[wshape1.dims-1] = wshape1[wshape1.dims-2] = C0;
+            wshape1[0] = (wshape1[0] + C0 - 1)/C0;
+            wshape1[1] = (wshape1[1] + C0 - 1)/C0;
             weights.fit(wshape1, wtype);
 
-            repackConvWeights(weights_.data(), wtype0, weights.data(), wtype, wshape0, C0);
+            repackConv2DWeights(weights_.data, wtype0, weights.data, wtype, wshape0, C0);
         }
 
         if (!bias_.empty()) {
-            CV_Assert(bias_.isContinuous() && bias_.total() == wshape0.size[0]);
+            CV_Assert(bias_.isContinuous() && bias_.total() == wshape0[0]);
             bias_.convertTo(bias, CV_32F);
         }
     }
 
     void fuseBatchNormWeights(const Ptr<Layer>& bnlayer)
     {
-        BatchNormLayer* bn = dynamic_cast<BatchNormOp*>(bnlayer.get());
+        BatchNormLayer* bn = dynamic_cast<BatchNormLayer*>(bnlayer.get());
         CV_Assert(bn != nullptr);
         const Tensor &bn_scale = bn->scale, &bn_bias = bn->bias;
 
@@ -619,11 +616,12 @@ public:
         }
     }
 
-    virtual bool fuseBatchNorm(const Op& op) override
+    virtual bool fuseBatchNorm(const Ptr<Layer>& bnlayer) override
     {
-        BatchNormOp* bn = dynamic_cast<BatchNormOp*>(op.get());
-        if (batchNorm || !bn)
+        BatchNormLayer* bn = dynamic_cast<BatchNormLayer*>(bnlayer.get());
+        if (!bn)
             return false;
+        Mat bn_scale
         batchNorm = op;
         return true;
     }
@@ -797,3 +795,4 @@ Ptr<ConvLayer> ConvOp::create(const LayerParams& params)
 }
 
 }}
+#endif
