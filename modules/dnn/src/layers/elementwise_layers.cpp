@@ -2810,6 +2810,14 @@ struct ReciprocalFunctor : public BaseDefaultFunctor<ReciprocalFunctor>
 template<>
 const char* const ReciprocalFunctor::BaseDefaultFunctor<ReciprocalFunctor>::ocl_kernel_name = "ReciprocalForward";
 
+void ActivationLayer::getLayouts(const std::vector<DataLayout>& actualInputs,
+                                 std::vector<DataLayout>& desiredInputs,
+                                 const int requiredOutputs,
+                                 std::vector<DataLayout>& outputs) const
+{
+    desiredInputs = actualInputs;
+    outputs.assign(requiredOutputs, actualInputs[0]);
+}
 
 Ptr<ReLULayer> ReLULayer::create(const LayerParams& params)
 {

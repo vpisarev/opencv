@@ -386,6 +386,25 @@ public:
             outputs.assign(requiredOutputs, inputs[0]);
     }
 
+    void getLayouts(const std::vector<DataLayout>& actualInputs,
+                    std::vector<DataLayout>& desiredInputs,
+                    const int requiredOutputs,
+                    std::vector<DataLayout>& outputs) const CV_OVERRIDE
+    {
+        bool haveBlockLayout = false;
+        for (DataLayout layout: actualInputs) {
+            if (layout == DATA_LAYOUT_BLOCK)
+                haveBlockLayout = true;
+        }
+        if (haveBlockLayout) {
+            desiredInputs.assign(actualInputs.size(), DATA_LAYOUT_BLOCK);
+            outputs.assign(requiredOutputs, DATA_LAYOUT_BLOCK);
+        } else {
+            desiredInputs = actualInputs;
+            outputs.assign(requiredOutputs,
+                           (actualInputs.empty() ? DATA_LAYOUT_UNKNOWN : actualInputs[0]));
+        }
+    }
 
     template <typename T, typename RESULT_T, typename Functor>
     void binary_forward_impl(const Functor& op, int ndims, const std::vector<int>& shape,

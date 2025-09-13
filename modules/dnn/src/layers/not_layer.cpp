@@ -34,6 +34,15 @@ public:
         return true;
     }
 
+    void getLayouts(const std::vector<DataLayout>& actualInputs,
+                    std::vector<DataLayout>& desiredInputs,
+                    const int requiredOutputs,
+                    std::vector<DataLayout>& outputs) const CV_OVERRIDE
+    {
+        desiredInputs = actualInputs;
+        outputs.assign(requiredOutputs, actualInputs[0]);
+    }
+
     virtual  void getTypes(const std::vector<MatType>& inputs,
         const int requiredOutputs,
         const int requiredInternals,

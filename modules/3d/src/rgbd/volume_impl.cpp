@@ -16,7 +16,13 @@ namespace cv
 Volume::Impl::Impl(const VolumeSettings& _settings) :
     settings(_settings)
 #ifdef HAVE_OPENCL
-    , useGPU(ocl::useOpenCL())
+    , useGPU(
+#ifdef __APPLE__
+             false
+#else
+             ocl::useOpenCL()
+#endif
+             )
 #endif
 {}
 
