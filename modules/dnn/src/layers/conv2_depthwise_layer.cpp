@@ -55,8 +55,8 @@ void repackDepthwiseConvWeights(const void* inpw__, int inptype_, void* outw__, 
     });
 }
 
-static void depthwise_conv2d_32f(const void* inp__, const void* residual__, void* out__, const ConvState& cs,
-                                 const void* weights__, const float* scale__, const float* bias__)
+static void depthwiseConv2D(const void* inp__, const void* residual__, void* out__, const ConvState& cs,
+                            const void* weights__, const float* scale__, const float* bias__)
 {
     int nlanes_ = VTraits<v_float32>::vlanes();
     int C0_ = cs.inpshape.back(), C1_ = cs.inpshape[1];

@@ -21,7 +21,7 @@ MatShape convInferShape(const MatShape& inpshape, const MatShape& wshape,
                         const std::vector<int>& strides,
                         const std::vector<int>& dilations,
                         const std::vector<int>& pads,
-                        AutoPadding auto_pad, bool ceil_mode);
+                        AutoPadding autoPad, bool ceilMode);
 
 enum FastActivation {
     FAST_ACTIV_NONE=0,
@@ -84,7 +84,9 @@ typedef void (*depthwise_conv2d_func_t)(const void* inp, const void* residual,
                                         const float* scale,
                                         const float* bias);
 
-depthwise_conv2d_func_t getDepthwiseConv2DFunc(int depth);
+void depthwiseConv2DFunc(const Mat& inp, const Mat& residual, Mat& out,
+                         const ConvState& cs, const Mat& weights,
+                         
 
 void repackDepthwiseConvWeights(const void* inpw, int inptype,
                                 void* outw, int outtype,

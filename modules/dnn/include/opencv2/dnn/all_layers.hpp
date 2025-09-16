@@ -430,10 +430,10 @@ CV__DNN_INLINE_NS_BEGIN
     class CV_EXPORTS AveragePoolLayer : public Layer
     {
     public:
-        std::vector<int> kernel_shape, strides, dilations, pads;
-        AutoPadding auto_pad;
-        bool ceil_mode;
-        bool count_include_pad;
+        std::vector<int> kernelShape, strides, dilations, pads;
+        AutoPadding autoPad;
+        bool ceilMode;
+        bool countIncludePad;
 
         static Ptr<AveragePoolLayer> create(const LayerParams& params);
     };
@@ -441,10 +441,10 @@ CV__DNN_INLINE_NS_BEGIN
     class CV_EXPORTS MaxPoolLayer : public Layer
     {
     public:
-        std::vector<int> kernel_shape, strides, dilations, pads;
-        AutoPadding auto_pad;
-        bool ceil_mode;
-        int storage_order;
+        std::vector<int> kernelShape, strides, dilations, pads;
+        AutoPadding autoPad;
+        bool ceilMode;
+        int storageOrder;
 
         static Ptr<MaxPoolLayer> create(const LayerParams& params);
     };
