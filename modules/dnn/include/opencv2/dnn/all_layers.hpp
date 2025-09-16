@@ -345,6 +345,32 @@ CV__DNN_INLINE_NS_BEGIN
     public:
         static Ptr<BaseConvolutionLayer> create(const LayerParams& params);
     };
+    
+    enum AutoPadding
+    {
+        AUTO_PAD_NONE = 0,
+        AUTO_PAD_SAME_UPPER = 1,
+        AUTO_PAD_SAME_LOWER = 2,
+        AUTO_PAD_VALID = 3
+    };
+
+    class CV_EXPORTS Conv2Layer : public Layer
+    {
+    public:
+        static Ptr<Conv2Layer> create(const LayerParams& params);
+        virtual void setWeights(InputArray weights, InputArray bias,
+                                int C0, int accuracy) = 0;
+        virtual bool fuseAddBias(InputArray bias) = 0;
+        virtual bool fuseBatchNorm(const Ptr<Layer>& bn) = 0;
+        //virtual bool fuseActivation(const Ptr<Layer>& activ) = 0;
+        //virtual bool fuseAddResidual(const Ptr<Layer>& addres) = 0;
+
+        std::vector<int> strides, dilations, pads;
+        int ngroups;
+        AutoPadding auto_pad;
+        bool ceil_mode;
+        bool add_residual;
+    };
 
     class CV_EXPORTS LRNLayer : public Layer
     {
@@ -431,6 +457,34 @@ CV__DNN_INLINE_NS_BEGIN
         int input_zp, output_zp;
         float input_sc, output_sc;
         static Ptr<PoolingLayerInt8> create(const LayerParams& params);
+    };
+    
+    class CV_EXPORTS AveragePoolLayer : public Layer
+    {
+    public:
+        std::vector<int> kernel_shape, strides, dilations, pads;
+        AutoPadding auto_pad;
+        bool ceil_mode;
+        bool count_include_pad;
+
+        static Ptr<AveragePoolLayer> create(const LayerParams& params);
+    };
+
+    class CV_EXPORTS MaxPoolLayer : public Layer
+    {
+    public:
+        std::vector<int> kernel_shape, strides, dilations, pads;
+        AutoPadding auto_pad;
+        bool ceil_mode;
+        int storage_order;
+
+        static Ptr<MaxPoolLayer> create(const LayerParams& params);
+    };
+
+    class CV_EXPORTS GlobalAveragePoolLayer : public Layer
+    {
+    public:
+        static Ptr<GlobalAveragePoolLayer> create(const LayerParams& params);
     };
 
     class CV_EXPORTS ReduceLayer : public Layer
@@ -782,6 +836,10 @@ CV__DNN_INLINE_NS_BEGIN
     class CV_EXPORTS ActivationLayer : public Layer
     {
     public:
+        virtual void getLayouts(const std::vector<DataLayout>& actualInputs,
+                                std::vector<DataLayout>& desiredInputs,
+                                const int requiredOutputs,
+                                std::vector<DataLayout>& outputs) const CV_OVERRIDE;
         virtual void forwardSlice(const float* src, float* dst, int len,
                                   size_t outPlaneSize, int cn0, int cn1) const {}
         virtual void forwardSlice(const int* src, const int* lut, int* dst, int len,
@@ -1119,6 +1177,18 @@ CV__DNN_INLINE_NS_BEGIN
         int input_zp, output_zp;
         static Ptr<BatchNormLayerInt8> create(const LayerParams &params);
     };
+    
+    class CV_EXPORTS BatchNorm2Layer : public Layer
+    {
+    public:
+        float epsilon;
+        virtual bool freezeScaleBias() = 0;
+        virtual void getScaleBias(OutputArray scale, OutputArray bias) const = 0;
+        static void getScaleBias(InputArray scale, InputArray bias,
+                                 InputArray mean, InputArray variance, float eps,
+                                 OutputArray outscale, OutputArray outbias);
+        static Ptr<BatchNorm2Layer> create(const LayerParams &params);
+    };
 
     class CV_EXPORTS MaxUnpoolLayer : public Layer
     {
@@ -1335,6 +1405,14 @@ CV__DNN_INLINE_NS_BEGIN
     {
     public:
         static Ptr<Tile2Layer> create(const LayerParams& params);
+    };
+    
+    class CV_EXPORTS TransformLayoutLayer : public Layer
+    {
+    public:
+        DataLayout layout;
+        int C0;
+        static Ptr<TransformLayoutLayer> create(const LayerParams& params);
     };
 
     class CV_EXPORTS LayerNormLayer : public Layer
