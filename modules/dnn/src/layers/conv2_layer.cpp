@@ -541,12 +541,6 @@ public:
         return inptype0;
     }
 
-    virtual int supportBlockLayout(int input) const CV_OVERRIDE
-    {
-        int ninputs = (int)inputs.size();
-        return input == 0 || (add_residual && input == ninputs-1) ? 1 : -1;
-    }
-
     virtual void setWeights(InputArray weights_arr, InputArray bias_arr,
                             int C0, int accuracy) CV_OVERRIDE
     {
@@ -694,6 +688,20 @@ public:
                                            pads, auto_pad, ceil_mode));
         tempshapes.clear();
         return true;
+    }
+
+    void getLayouts(const std::vector<DataLayout>& actualInputs,
+                    std::vector<DataLayout>& desiredInputs,
+                    const int requiredOutputs,
+                    std::vector<DataLayout>& outputs) const CV_OVERRIDE
+    {
+        size_t ninputs = actualInputs.size();
+        CV_Assert(ninputs >= 1u && requiredOutputs == 1u);
+        desiredInputs = actualInputs;
+        desiredInputs[0] = DATA_LAYOUT_BLOCK;
+        for (size_t i = 1; i < ninputs; i++)
+            desiredInputs[i] = DATA_LAYOUT_UNKNOWN;
+        outputs.assign(requiredOutputs, DATA_LAYOUT_BLOCK);
     }
 
     void finalize(InputArrayOfArrays, OutputArrayOfArrays outputs_arr) CV_OVERRIDE

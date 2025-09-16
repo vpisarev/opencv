@@ -308,11 +308,6 @@ public:
         return backendId == DNN_BACKEND_OPENCV;
     }
 
-    virtual int supportBlockLayout(int) const CV_OVERRIDE
-    {
-        return 1;
-    }
-
     virtual int64_t getFLOPS(const std::vector<MatShape> &inputs,
                            const std::vector<MatShape> &outputs) const CV_OVERRIDE
     {
@@ -353,6 +348,16 @@ public:
                                            pads, auto_pad, ceil_mode));
         tempshapes.clear();
         return true;
+    }
+
+    void getLayouts(const std::vector<DataLayout>& actualInputs,
+                    std::vector<DataLayout>& desiredInputs,
+                    const int requiredOutputs,
+                    std::vector<DataLayout>& outputs) const CV_OVERRIDE
+    {
+        CV_Assert(actualInputs.size() == 1u);
+        desiredInputs.assign(1, DATA_LAYOUT_BLOCK);
+        outputs.assign(requiredOutputs, DATA_LAYOUT_BLOCK);
     }
 
     void finalize(InputArrayOfArrays, OutputArrayOfArrays outputs_arr) CV_OVERRIDE

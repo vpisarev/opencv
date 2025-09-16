@@ -19,7 +19,7 @@ static void avgpool2d_32f(const void* inp_, void* out_, const ConvState& cs, boo
     int NC = cs.inpshape[0]*cs.inpshape[1];
     int nlanes_ = VTraits<v_float32>::vlanes();
 
-    CV_Assert(C0_ == nlanes_ || C0_ == nlanes_*2 || C0_ % (nlanes_*4) == 0);
+    CV_Assert(C0_ == nlanes_ || C0_ == nlanes_*2);
     CV_Assert(cs.nspatialdims == 2);
 
     parallel_for_(Range(0, NC), [&](const Range& r) {
@@ -47,6 +47,7 @@ static void avgpool2d_32f(const void* inp_, void* out_, const ConvState& cs, boo
                 int x0 = 0, x1 = y0 >= inner_y0 && y0 < inner_y1 ? inner_x0 : W;
                 int yi_ = y0*SY - pad_y0;
                 for(;;) {
+                    
                     if (nlanes == C0) {
                         for (; x0 < x1; x0++) {
                             int xi_ = x0*SX - pad_x0;
@@ -335,11 +336,6 @@ public:
         ceil_mode = params.get<bool>("ceil_mode", false);
     }
 
-    virtual int supportBlockLayout(int) const CV_OVERRIDE
-    {
-        return 1;
-    }
-
     virtual int64_t getFLOPS(const std::vector<MatShape> &inputs,
                              const std::vector<MatShape> &outputs) const CV_OVERRIDE
     {
@@ -375,6 +371,16 @@ public:
                                            pads, auto_pad, ceil_mode));
         tempshapes.clear();
         return true;
+    }
+
+    void getLayouts(const std::vector<DataLayout>& actualInputs,
+                    std::vector<DataLayout>& desiredInputs,
+                    const int requiredOutputs,
+                    std::vector<DataLayout>& outputs) const CV_OVERRIDE
+    {
+        CV_Assert(actualInputs.size() == 1u);
+        desiredInputs.assign(1, DATA_LAYOUT_BLOCK);
+        outputs.assign(requiredOutputs, DATA_LAYOUT_BLOCK);
     }
 
     void finalize(InputArrayOfArrays, OutputArrayOfArrays outputs_arr) CV_OVERRIDE
