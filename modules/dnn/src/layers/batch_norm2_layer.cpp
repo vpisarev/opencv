@@ -386,7 +386,7 @@ public:
         internals.clear();
     }
 
-    void getLayouts(const std::vector<DataLayout>& actualInputs,
+    int getLayouts(const std::vector<DataLayout>& actualInputs,
                     std::vector<DataLayout>& desiredInputs,
                     const int requiredOutputs,
                     std::vector<DataLayout>& outputs) const CV_OVERRIDE
@@ -396,6 +396,7 @@ public:
         desiredInputs.assign(ninputs, DATA_LAYOUT_UNKNOWN);
         desiredInputs[0] = actualInputs[0];
         outputs.assign(requiredOutputs, actualInputs[0]);
+        return 0;
     }
 
     virtual void finalize(InputArrayOfArrays, OutputArrayOfArrays outputs_arr) CV_OVERRIDE
