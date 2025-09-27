@@ -117,8 +117,11 @@ void initializeLayerFactory()
     CV_DNN_REGISTER_LAYER_CLASS(GridSample,     GridSampleLayer);
 
     CV_DNN_REGISTER_LAYER_CLASS(Convolution,    ConvolutionLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Conv2,          Conv2Layer);
     CV_DNN_REGISTER_LAYER_CLASS(Deconvolution,  DeconvolutionLayer);
     CV_DNN_REGISTER_LAYER_CLASS(Pooling,        PoolingLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(MaxPool,        MaxPoolLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(AveragePool,    AveragePoolLayer);
     CV_DNN_REGISTER_LAYER_CLASS(ROIPooling,     PoolingLayer);
     CV_DNN_REGISTER_LAYER_CLASS(PSROIPooling,   PoolingLayer);
     CV_DNN_REGISTER_LAYER_CLASS(Reduce,         ReduceLayer);
@@ -174,6 +177,7 @@ void initializeLayerFactory()
     CV_DNN_REGISTER_LAYER_CLASS(Gelu,           GeluLayer);
     CV_DNN_REGISTER_LAYER_CLASS(GeluApproximation, GeluApproximationLayer);
     CV_DNN_REGISTER_LAYER_CLASS(BatchNorm,      BatchNormLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(BatchNorm2,     BatchNorm2Layer);
     CV_DNN_REGISTER_LAYER_CLASS(MaxUnpool,      MaxUnpoolLayer);
     CV_DNN_REGISTER_LAYER_CLASS(Dropout,        BlankLayer);
     CV_DNN_REGISTER_LAYER_CLASS(Identity,       BlankLayer);

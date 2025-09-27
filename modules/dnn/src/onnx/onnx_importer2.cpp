@@ -1009,19 +1009,13 @@ void ONNXImporter2::parseMaxUnpool(LayerParams& layerParams, const opencv_onnx::
 
 void ONNXImporter2::parseMaxPool(LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto)
 {
-    int depth = layerParams.get<int>("depth", CV_32F);
-    layerParams.type = (depth == CV_8S) ? "PoolingInt8" : "Pooling";
-    layerParams.set("pool", "MAX");
-    setCeilMode(layerParams);
+    layerParams.type = "MaxPool";
     addLayer(layerParams, node_proto);
 }
 
 void ONNXImporter2::parseAveragePool(LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto)
 {
-    layerParams.type = "Pooling";
-    layerParams.set("pool", "AVE");
-    setCeilMode(layerParams);
-    layerParams.set("ave_pool_padded_area", framework_name == "pytorch");
+    layerParams.type = "AveragePool";
     addLayer(layerParams, node_proto);
 }
 
@@ -1280,39 +1274,8 @@ void ONNXImporter2::parseInstanceNormalization(LayerParams& layerParams, const o
 
 void ONNXImporter2::parseBatchNormalization(LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto)
 {
-    if (node_proto.input_size() != 5)
-        CV_Error(Error::StsNotImplemented,
-                 "Expected input, scale, bias, mean and var");
-
-    layerParams.type = "BatchNorm";
-    replaceLayerParam(layerParams, "epsilon", "eps");
-    replaceLayerParam(layerParams, "spatial", "use_global_stats");
-
-    CV_Assert(net.isConstArg(node_inputs[3]));
-    CV_Assert(net.isConstArg(node_inputs[4]));
-
-    Mat meanData = net.argTensor(node_inputs[3]);
-    Mat stdData =  net.argTensor(node_inputs[4]);
-
-    layerParams.blobs.push_back(meanData);
-    layerParams.blobs.push_back(stdData);
-
-    if (!node_proto.input(1).empty()) {
-        layerParams.set("has_weight", true);
-        CV_Assert(net.isConstArg(node_inputs[1]));
-        layerParams.blobs.push_back(net.argTensor(node_inputs[1]));  // weightData
-    } else {
-        layerParams.set("has_weight", false);
-    }
-
-    if (!node_proto.input(2).empty()) {
-        layerParams.set("has_bias", true);
-        CV_Assert(net.isConstArg(node_inputs[1]));
-        layerParams.blobs.push_back(net.argTensor(node_inputs[2]));  // biasData
-    } else {
-        layerParams.set("has_bias", false);
-    }
-    addLayer(layerParams, node_proto, 1);
+    layerParams.type = "BatchNorm2";
+    addLayer(layerParams, node_proto);
 }
 
 void ONNXImporter2::parseGemm(LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto)
@@ -1354,18 +1317,8 @@ void ONNXImporter2::parseConv(LayerParams& layerParams, const opencv_onnx::NodeP
 {
     int n_inputs = node_proto.input_size();
     CV_Assert(2 <= n_inputs && n_inputs <= 3);
-    layerParams.type = "Convolution";
-
-    if (net.isConstArg(node_inputs[1]) && (n_inputs == 2 || net.isConstArg(node_inputs[2]))) {
-        Mat weights = net.argTensor(node_inputs[1]);
-        layerParams.blobs.push_back(weights);
-        if (n_inputs > 2) {
-            Mat bias = net.argTensor(node_inputs[2]);
-            layerParams.blobs.push_back(bias);
-        }
-        n_inputs = 1;
-    }
-    addLayer(layerParams, node_proto, n_inputs);
+    layerParams.type = "Conv2";
+    addLayer(layerParams, node_proto);
 }
 
 void ONNXImporter2::parseConvTranspose(LayerParams& layerParams, const opencv_onnx::NodeProto& node_proto)
