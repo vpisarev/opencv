@@ -294,8 +294,7 @@ void Net::Impl::prepareForInference()
         //constArgs();
         //inferShapes(true);
         //fuse();
-        //useBlockLayout();
-        //inferShapes(true);
+        useBlockLayout();
         assignBuffers();
         totalLayers = updateGraphOfs(mainGraph, 0, true);
         prepared = true;
@@ -368,7 +367,7 @@ void Net::Impl::forwardMainGraph(InputArrayOfArrays inputs, OutputArrayOfArrays 
         CV_Error(Error::StsNullPtr, "the model was not loaded");
     }
     // ************ uncomment one of the lines below for debugging **********
-    //tracingMode = DNN_TRACE_OP;
+    tracingMode = DNN_TRACE_OP;
     //tracingMode = DNN_TRACE_ALL;
     // [TODO] initialize profile, tracer, symbolic shapes etc.
     size_t nsymdims = dimnames_vec.size();
