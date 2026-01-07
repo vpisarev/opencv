@@ -461,10 +461,10 @@ public:
         size_t ninputs = inputs.size();
         if (ninputs != 5)
             return false;
-        if (netimpl_->isConstArg(inputs[1]) ||
-            netimpl_->isConstArg(inputs[2]) ||
-            netimpl_->isConstArg(inputs[3]) ||
-            netimpl_->isConstArg(inputs[4]))
+        if (!netimpl_->isConstArg(inputs[1]) ||
+            !netimpl_->isConstArg(inputs[2]) ||
+            !netimpl_->isConstArg(inputs[3]) ||
+            !netimpl_->isConstArg(inputs[4]))
             return false;
         Mat scale_ = netimpl_->argTensor(inputs[1]);
         Mat bias_ = netimpl_->argTensor(inputs[2]);
