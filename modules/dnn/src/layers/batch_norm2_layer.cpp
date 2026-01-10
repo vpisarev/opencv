@@ -93,13 +93,13 @@ static void batchnorm(const Mat& inp, Mat& out, const Mat& scale,
                 if (type == CV_32F) {
                     const float* inptr = (const float*)inptr_;
                     float* outptr = (float*)outptr_;
-                    CV_SIMD_ONLY(for (; i < planesize_C0 - vlanes*2; i += vlanes*2) {
+                    CV_SIMD_ONLY(for (; i <= planesize_C0 - vlanes*2; i += vlanes*2) {
                         v_float32 x0 = vx_load(inptr + i);
                         v_float32 x1 = vx_load(inptr + i + vlanes);
                         x0 = v_fma(x0, vscale_c, vbias_c);
                         x1 = v_fma(x1, vscale_c, vbias_c);
                         v_store(outptr + i, x0);
-                        v_store(outptr + i, x1);
+                        v_store(outptr + i + vlanes, x1);
                     });
                     for (; i < planesize_C0; i++) {
                         outptr[i] = inptr[i]*scale_c + bias_c;
@@ -107,13 +107,13 @@ static void batchnorm(const Mat& inp, Mat& out, const Mat& scale,
                 } else if (type == CV_16F) {
                     const hfloat* inptr = (const hfloat*)inptr_;
                     hfloat* outptr = (hfloat*)outptr_;
-                    CV_SIMD_ONLY(for (; i < planesize_C0 - vlanes*2; i += vlanes*2) {
+                    CV_SIMD_ONLY(for (; i <= planesize_C0 - vlanes*2; i += vlanes*2) {
                         v_float32 x0 = vx_load_expand(inptr + i);
                         v_float32 x1 = vx_load_expand(inptr + i + vlanes);
                         x0 = v_fma(x0, vscale_c, vbias_c);
                         x1 = v_fma(x1, vscale_c, vbias_c);
                         v_pack_store(outptr + i, x0);
-                        v_pack_store(outptr + i, x1);
+                        v_pack_store(outptr + i + vlanes, x1);
                     });
                     for (; i < planesize_C0; i++) {
                         outptr[i] = hfloat(float(inptr[i])*scale_c + bias_c);
@@ -121,13 +121,13 @@ static void batchnorm(const Mat& inp, Mat& out, const Mat& scale,
                 } else if (type == CV_16BF) {
                     const bfloat* inptr = (const bfloat*)inptr_;
                     bfloat* outptr = (bfloat*)outptr_;
-                    CV_SIMD_ONLY(for (; i < planesize_C0 - vlanes*2; i += vlanes*2) {
+                    CV_SIMD_ONLY(for (; i <= planesize_C0 - vlanes*2; i += vlanes*2) {
                         v_float32 x0 = vx_load_expand(inptr + i);
                         v_float32 x1 = vx_load_expand(inptr + i + vlanes);
                         x0 = v_fma(x0, vscale_c, vbias_c);
                         x1 = v_fma(x1, vscale_c, vbias_c);
                         v_pack_store(outptr + i, x0);
-                        v_pack_store(outptr + i, x1);
+                        v_pack_store(outptr + i + vlanes, x1);
                     });
                     for (; i < planesize_C0; i++) {
                         outptr[i] = bfloat(float(inptr[i])*scale_c + bias_c);
