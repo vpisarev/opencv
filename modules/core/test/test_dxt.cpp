@@ -1404,7 +1404,9 @@ TEST(Core_DFT, sweep_1d)
                 EXPECT_LE(dxtRelDiff(y, out), thresh) << "R2C in-place";
                 cv::dft(y, y, DFT_INVERSE | DFT_SCALE);
                 if (!sc)
+                {
                     EXPECT_LE(dxtRelDiff(y, xr), thresh) << "C2R in-place";
+                }
 
                 // column vectors
                 Mat xcol = x.t(), refcol;

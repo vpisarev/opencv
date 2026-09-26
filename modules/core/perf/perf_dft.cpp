@@ -89,7 +89,7 @@ PERF_TEST_P(Len_MatType_Flags_Col, dft1d, testing::Combine(
 
     declare.in(src, WARMUP_RNG).time(20);
 
-    TEST_CYCLE_N(100) dft(src, dst, flags);
+    TEST_CYCLE() dft(src, dst, flags);
 
     SANITY_CHECK_NOTHING();
 }
@@ -111,7 +111,7 @@ PERF_TEST_P(Len_MatType_Flag, dct1d, testing::Combine(
 
     declare.in(src, WARMUP_RNG).time(20);
 
-    TEST_CYCLE_N(100) dct(src, dst, flags);
+    TEST_CYCLE() dct(src, dst, flags);
 
     SANITY_CHECK_NOTHING();
 }

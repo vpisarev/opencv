@@ -55,8 +55,11 @@ template<typename T> const T DftConst<T>::sin45  = (T)0.707106781186547524400844
 
 #if (CV_SIMD || CV_SIMD_SCALABLE)
 inline v_float32 v_setall_(float x) { return vx_setall_f32(x); }
+// all-lanes sign-bit mask (when neg) or zero: x ^ mask negates x when neg, keeps it otherwise
+inline v_float32 v_signmask_(bool neg, float) { return v_reinterpret_as_f32(vx_setall_u32(neg ? 0x80000000u : 0u)); }
 #if (CV_SIMD_64F || CV_SIMD_SCALABLE_64F)
 inline v_float64 v_setall_(double x) { return vx_setall_f64(x); }
+inline v_float64 v_signmask_(bool neg, double) { return v_reinterpret_as_f64(vx_setall_u64(neg ? 0x8000000000000000ULL : 0ULL)); }
 #endif
 #endif
 
@@ -160,10 +163,11 @@ static inline void firstStage8_scalar(const T* x, int M, int j, T* re, T* im, T 
         X1r = v_add(_t1r, _t3i); X1i = v_sub(_t1i, _t3r); X3r = v_sub(_t1r, _t3i); X3i = v_add(_t1i, _t3r); \
     }
 
-// loads leg q of lanes j..j+VL-1: x[(j + q*M)*2 ...], optionally conjugated
+// loads leg q of lanes j..j+VL-1: x[(j + q*M)*2 ...]; imsign (all sign bits or zero, computed
+// once per call) conjugates the value without a branch
 #define DFT_LOAD_LEG(q, xr, xi) \
     v_load_deinterleave(x + (j + (q)*M)*2, xr, xi); \
-    if (conj) xi = v_sub(zero, xi);
+    xi = v_xor(xi, imsign);
 
 // scatters the r0 outputs of every lane: buf holds them lane-major (r0 consecutive values per lane)
 template<typename T, int R0>
@@ -181,7 +185,7 @@ template<typename T, typename VT>
 static void firstStage2_vec(const T* x, int M, const int* gtab, T* re, T* im, bool conj)
 {
     const int VL = VTraits<VT>::vlanes();
-    const VT zero = v_setall_((T)0);
+    const VT imsign = v_signmask_(conj, (T)0);
     T bufr[2*VTraits<VT>::max_nlanes], bufi[2*VTraits<VT>::max_nlanes];
     int j = 0;
     for (; j + VL <= M; j += VL)
@@ -202,7 +206,7 @@ template<typename T, typename VT>
 static void firstStage4_vec(const T* x, int M, const int* gtab, T* re, T* im, bool conj)
 {
     const int VL = VTraits<VT>::vlanes();
-    const VT zero = v_setall_((T)0);
+    const VT imsign = v_signmask_(conj, (T)0);
     T bufr[4*VTraits<VT>::max_nlanes], bufi[4*VTraits<VT>::max_nlanes];
     int j = 0;
     for (; j + VL <= M; j += VL)
@@ -226,7 +230,7 @@ template<typename T, typename VT>
 static void firstStage8_vec(const T* x, int M, const int* gtab, T* re, T* im, bool conj)
 {
     const int VL = VTraits<VT>::vlanes();
-    const VT zero = v_setall_((T)0);
+    const VT zero = v_setall_((T)0), imsign = v_signmask_(conj, (T)0);
     const VT c = v_setall_((T)DftConst<T>::sin45);
     T bufr[8*VTraits<VT>::max_nlanes], bufi[8*VTraits<VT>::max_nlanes];
     int j = 0;
@@ -282,14 +286,14 @@ void preprocRadix2_(const DftPlan& plan, const void* _src, size_t sstep, void* _
     int M = plan.nc/2;
 #if (CV_SIMD || CV_SIMD_SCALABLE)
     if constexpr (haveSIMD)
-    {
         firstStage2_vec<T, VT>(x, M, gtab, re, im, conj);
-        return;
-    }
+    else
 #endif
-    T conjsign = conj ? (T)-1 : (T)1;
-    for (int j = 0; j < M; j++)
-        firstStage2_scalar(x, M, j, re + gtab[j], im + gtab[j], conjsign);
+    {
+        T conjsign = conj ? (T)-1 : (T)1;
+        for (int j = 0; j < M; j++)
+            firstStage2_scalar(x, M, j, re + gtab[j], im + gtab[j], conjsign);
+    }
 }
 
 template<typename T, typename VT, bool haveSIMD>
@@ -302,14 +306,14 @@ void preprocRadix4_(const DftPlan& plan, const void* _src, size_t sstep, void* _
     int M = plan.nc/4;
 #if (CV_SIMD || CV_SIMD_SCALABLE)
     if constexpr (haveSIMD)
-    {
         firstStage4_vec<T, VT>(x, M, gtab, re, im, conj);
-        return;
-    }
+    else
 #endif
-    T conjsign = conj ? (T)-1 : (T)1;
-    for (int j = 0; j < M; j++)
-        firstStage4_scalar(x, M, j, re + gtab[j], im + gtab[j], conjsign);
+    {
+        T conjsign = conj ? (T)-1 : (T)1;
+        for (int j = 0; j < M; j++)
+            firstStage4_scalar(x, M, j, re + gtab[j], im + gtab[j], conjsign);
+    }
 }
 
 template<typename T, typename VT, bool haveSIMD>
@@ -322,14 +326,14 @@ void preprocRadix8_(const DftPlan& plan, const void* _src, size_t sstep, void* _
     int M = plan.nc/8;
 #if (CV_SIMD || CV_SIMD_SCALABLE)
     if constexpr (haveSIMD)
-    {
         firstStage8_vec<T, VT>(x, M, gtab, re, im, conj);
-        return;
-    }
+    else
 #endif
-    T conjsign = conj ? (T)-1 : (T)1;
-    for (int j = 0; j < M; j++)
-        firstStage8_scalar(x, M, j, re + gtab[j], im + gtab[j], conjsign);
+    {
+        T conjsign = conj ? (T)-1 : (T)1;
+        for (int j = 0; j < M; j++)
+            firstStage8_scalar(x, M, j, re + gtab[j], im + gtab[j], conjsign);
+    }
 }
 
 // DCT input permutation (Makhoul): v[j] = x[2j], v[n-1-j] = x[2j+1], j in [0, n/2), into the temp
@@ -792,10 +796,13 @@ template<typename T, typename VT, bool haveSIMD>
 void radix3_(const DftStage& st, const void* sre, const void* sim, void* dre, void* dim, void*)
 {
 #if (CV_SIMD || CV_SIMD_SCALABLE)
-    if (haveSIMD && st.mode == DFT_STAGE_FULL)
+    if constexpr (haveSIMD)
     {
-        radix3_vec<T, VT>(st, (const T*)sre, (const T*)sim, (T*)dre, (T*)dim);
-        return;
+        if (st.mode == DFT_STAGE_FULL)
+        {
+            radix3_vec<T, VT>(st, (const T*)sre, (const T*)sim, (T*)dre, (T*)dim);
+            return;
+        }
     }
 #endif
     radix3_scalar<T>(st, (const T*)sre, (const T*)sim, (T*)dre, (T*)dim);
@@ -805,10 +812,13 @@ template<typename T, typename VT, bool haveSIMD>
 void radix4_(const DftStage& st, const void* sre, const void* sim, void* dre, void* dim, void*)
 {
 #if (CV_SIMD || CV_SIMD_SCALABLE)
-    if (haveSIMD && st.mode == DFT_STAGE_FULL)
+    if constexpr (haveSIMD)
     {
-        radix4_vec<T, VT>(st, (const T*)sre, (const T*)sim, (T*)dre, (T*)dim);
-        return;
+        if (st.mode == DFT_STAGE_FULL)
+        {
+            radix4_vec<T, VT>(st, (const T*)sre, (const T*)sim, (T*)dre, (T*)dim);
+            return;
+        }
     }
 #endif
     radix4_scalar<T>(st, (const T*)sre, (const T*)sim, (T*)dre, (T*)dim);
@@ -818,10 +828,13 @@ template<typename T, typename VT, bool haveSIMD>
 void radix5_(const DftStage& st, const void* sre, const void* sim, void* dre, void* dim, void*)
 {
 #if (CV_SIMD || CV_SIMD_SCALABLE)
-    if (haveSIMD && st.mode == DFT_STAGE_FULL)
+    if constexpr (haveSIMD)
     {
-        radix5_vec<T, VT>(st, (const T*)sre, (const T*)sim, (T*)dre, (T*)dim);
-        return;
+        if (st.mode == DFT_STAGE_FULL)
+        {
+            radix5_vec<T, VT>(st, (const T*)sre, (const T*)sim, (T*)dre, (T*)dim);
+            return;
+        }
     }
 #endif
     radix5_scalar<T>(st, (const T*)sre, (const T*)sim, (T*)dre, (T*)dim);
@@ -832,10 +845,13 @@ template<typename T, typename VT, bool haveSIMD>
 void radixOdd_(const DftStage& st, const void* sre, const void* sim, void* dre, void* dim, void* scratch)
 {
 #if (CV_SIMD || CV_SIMD_SCALABLE)
-    if (haveSIMD && st.mode == DFT_STAGE_FULL)
+    if constexpr (haveSIMD)
     {
-        radixOdd_vec<T, VT>(st, (const T*)sre, (const T*)sim, (T*)dre, (T*)dim, (T*)scratch);
-        return;
+        if (st.mode == DFT_STAGE_FULL)
+        {
+            radixOdd_vec<T, VT>(st, (const T*)sre, (const T*)sim, (T*)dre, (T*)dim, (T*)scratch);
+            return;
+        }
     }
 #endif
     radixOdd_scalar<T>(st, (const T*)sre, (const T*)sim, (T*)dre, (T*)dim, (T*)scratch);
@@ -1073,13 +1089,20 @@ void postprocIDCT_(const DftPlan& plan, const void* _re, const void* _im, void* 
         }
     }
 #endif
-    for (; j < nc; j++)
+    // j even: out[j] = re[j/2], out[n-1-j] = -im[(n-1-j)/2]; j odd: out[j] = -im[j/2], out[n-1-j] = re[(n-1-j)/2]
+    for (; j + 1 < nc; j += 2)
     {
-        int q = n - 1 - j;
-        T oj = (j & 1) ? -im[j >> 1] : re[j >> 1];
-        T oq = (q & 1) ? -im[q >> 1] : re[q >> 1];
-        dst[(2*j)*dstep] = oj;
-        dst[(2*j+1)*dstep] = oq;
+        int m = j >> 1, q = (n - 1 - j) >> 1;
+        dst[(2*j)*dstep] = re[m];
+        dst[(2*j+1)*dstep] = -im[q];
+        dst[(2*j+2)*dstep] = -im[m];
+        dst[(2*j+3)*dstep] = re[q];
+    }
+    if (j < nc)     // nc odd: the last j is even
+    {
+        int m = j >> 1, q = (n - 1 - j) >> 1;
+        dst[(2*j)*dstep] = re[m];
+        dst[(2*j+1)*dstep] = -im[q];
     }
 }
 
@@ -1105,7 +1128,10 @@ DFTKernels makeKernels()
     k.postprocReal = postprocReal_<T, VT, haveSIMD>;
     k.postprocDCT = postprocDCT_<T, VT, haveSIMD>;
     k.postprocIDCT = postprocIDCT_<T, VT, haveSIMD>;
-    k.vlanes = haveSIMD ? VTraits<VT>::vlanes() : 1;
+    if constexpr (haveSIMD)
+        k.vlanes = VTraits<VT>::vlanes();
+    else
+        k.vlanes = 1;
     return k;
 }
 

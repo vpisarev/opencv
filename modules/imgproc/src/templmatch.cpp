@@ -576,7 +576,7 @@ void crossCorr( const Mat& img, const Mat& _templ, Mat& corr,
 
     Mat dftTempl( dftsize.height*tcn, dftsize.width, maxDepth );
 
-    int k, bufSize = 0;
+    int bufSize = 0;
     if( tcn > 1 && tdepth != maxDepth )
         bufSize = templ.cols*templ.rows*CV_ELEM_SIZE(tdepth);
 
@@ -592,7 +592,7 @@ void crossCorr( const Mat& img, const Mat& _templ, Mat& corr,
         Ptr<hal::DFT2D> c = hal::DFT2D::create(dftsize.width, dftsize.height, dftTempl.depth(), 1, 1, CV_HAL_DFT_IS_INPLACE, templ.rows);
 
         // compute DFT of each template plane
-        for( k = 0; k < tcn; k++ )
+        for( int k = 0; k < tcn; k++ )
         {
             int yofs = k*dftsize.height;
             Mat src = templ;

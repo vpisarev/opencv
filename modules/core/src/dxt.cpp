@@ -253,18 +253,18 @@ struct DftTwiddleGen
     // recurrence is re-seeded with exact sin/cos every 16 entries
     static void fillTable(double* re, double* im, int count, double wr, double wi, double stepAngle)
     {
-        double cr = 1, ci = 0;
-        for (int i = 0; i < count; i++)
+        for (int i0 = 0; i0 < count; i0 += 16)
         {
-            if ((i & 15) == 0 && i > 0)
+            double t0 = stepAngle*i0;
+            double cr = i0 == 0 ? 1 : cos(t0), ci = i0 == 0 ? 0 : sin(t0);
+            int i1 = std::min(i0 + 16, count);
+            for (int i = i0; i < i1; i++)
             {
-                double t = stepAngle*i;
-                cr = cos(t); ci = sin(t);
+                re[i] = cr; im[i] = ci;
+                double t = cr*wr - ci*wi;
+                ci = cr*wi + ci*wr;
+                cr = t;
             }
-            re[i] = cr; im[i] = ci;
-            double t = cr*wr - ci*wi;
-            ci = cr*wi + ci*wr;
-            cr = t;
         }
     }
 
@@ -325,21 +325,20 @@ void DftPlan::fillTables(size_t ntw, bool need_rtw, bool need_dct)
             constexpr int K = 8;
             double cr[K], ci[K], wr, wi;
             gen.get(K*step, wr, wi);
-            for (int k = 0; k < K; k++)
-                gen.get(std::min(k, L - 1)*step, cr[k], ci[k]);
             double* t1r = twd; double* t1i = twd + L;      // leg 1 kept in double for the products
-            for (int j = 0; j < L; j += K)
+            for (int j0 = 0; j0 < L; j0 += 16*K)           // blocks of 16 steps per chain
             {
-                if ((j & (16*K - 1)) == 0 && j > 0)
-                    for (int k = 0; k < K; k++)
-                        gen.get(std::min(j + k, L - 1)*step, cr[k], ci[k]);
-                for (int k = 0; k < K && j + k < L; k++)
-                {
-                    t1r[j+k] = cr[k]; t1i[j+k] = ci[k];
-                    double t = cr[k]*wr - ci[k]*wi;
-                    ci[k] = cr[k]*wi + ci[k]*wr;
-                    cr[k] = t;
-                }
+                for (int k = 0; k < K; k++)
+                    gen.get(std::min(j0 + k, L - 1)*step, cr[k], ci[k]);
+                int j1 = std::min(j0 + 16*K, L);
+                for (int j = j0; j < j1; j += K)
+                    for (int k = 0; k < K && j + k < L; k++)
+                    {
+                        t1r[j+k] = cr[k]; t1i[j+k] = ci[k];
+                        double t = cr[k]*wr - ci[k]*wi;
+                        ci[k] = cr[k]*wi + ci[k]*wr;
+                        cr[k] = t;
+                    }
             }
             for (int j = 0; j < L; j++)     // separate pass: vectorizes, the recurrence loop does not
             {
@@ -2024,11 +2023,15 @@ public:
 #ifdef USE_IPP_DFT
     AutoBuffer<uchar> ippbuf;
     AutoBuffer<uchar> ippworkbuf;
+    size_t ipp_worksize;
 #endif
 
 public:
     OcvDftBasicImpl()
     {
+#ifdef USE_IPP_DFT
+        ipp_worksize = 0;
+#endif
     }
     void init(int len, int count, int depth, int flags, bool *needBuffer)
     {
@@ -2085,6 +2088,7 @@ public:
                 opt.ipp_spec = alignPtr(&ippbuf[0], 32);
                 ippworkbuf.allocate(worksize + 32);
                 opt.ipp_work = alignPtr(&ippworkbuf[0], 32);
+                ipp_worksize = (size_t)worksize;
                 uchar* initbuf = alignPtr((uchar*)opt.ipp_spec + specsize, 32);
                 if( initFunc(opt.n, ipp_norm_flag, ippAlgHintNone, opt.ipp_spec, initbuf) >= 0 )
                     opt.useIpp = true;
@@ -2150,15 +2154,30 @@ public:
         opt.dft_func(opt, src, dst);
     }
 
-    // size of a private workspace for applyWithWorkspace() (0 when the IPP path is used)
-    size_t workspaceSize() const { return opt.plan ? plan.ws_bytes : 0; }
+    // Size of a private workspace for applyWithWorkspace(). It covers both the engine workspace
+    // and, when IPP is used, the IPP work buffer (only one of them is touched per call).
+    size_t workspaceSize() const
+    {
+        size_t sz = opt.plan ? plan.ws_bytes : 0;
+#ifdef USE_IPP_DFT
+        if (opt.useIpp)
+            sz = std::max(sz, ipp_worksize + 64);
+#endif
+        return sz;
+    }
 
     // Same as apply(), but with a caller-provided workspace: several threads may run the same
-    // transform (the plan is immutable) as long as each of them uses its own workspace.
+    // transform as long as each of them uses its own workspace. The plan is immutable and the
+    // IPP spec is read-only after init, so both are shared; the IPP work buffer is per call and
+    // must therefore be private to the thread, too.
     void applyWithWorkspace(const uchar *src, uchar *dst, uchar* workspace) const
     {
         OcvDftOptions opt_ = opt;
         opt_.workspace = workspace;
+#ifdef USE_IPP_DFT
+        if (opt_.useIpp)
+            opt_.ipp_work = alignPtr(workspace, 32);
+#endif
         opt_.dft_func(opt_, src, dst);
     }
 
