@@ -495,7 +495,6 @@ MACRO(ocv_check_compiler_flag LANG FLAG RESULT)
       else()
         set(__msg "")
       endif()
-      MESSAGE(STATUS "Performing Test ${RESULT}${__msg}")
       # Fast path: direct compiler invocation (see cmake/OpenCVCompilerProbe.cmake);
       # legacy path: try_compile() of a nested project.
       ocv_probe_select_mode("${LANG}" "${FLAG}" "${_fname}" "${RESULT}" __ocv_probe_mode __ocv_probe_lang)
@@ -514,6 +513,7 @@ MACRO(ocv_check_compiler_flag LANG FLAG RESULT)
           endif()
         endif()
       endif()
+      MESSAGE(STATUS "Performing Test ${RESULT}${__msg}")
       if(__ocv_probe_mode AND NOT __ocv_probe_mode STREQUAL "BATCH")
         ocv_probe_run("${__ocv_probe_lang}" "${__ocv_probe_mode}" "${_fname}" __ocv_probe_rc OUTPUT
                       FLAGS "${FLAG}" LINK_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES})

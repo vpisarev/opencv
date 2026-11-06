@@ -106,7 +106,7 @@ function(ocv_probe_compute_cache_key outvar)
       CMAKE_C_COMPILER_ID CMAKE_CXX_COMPILER_ID CMAKE_C_COMPILER_VERSION CMAKE_CXX_COMPILER_VERSION
       CMAKE_C_SIMULATE_ID CMAKE_CXX_SIMULATE_ID
       CMAKE_BUILD_TYPE CMAKE_CONFIGURATION_TYPES CMAKE_CXX_STANDARD CMAKE_CXX_EXTENSIONS
-      CMAKE_OSX_SYSROOT CMAKE_OSX_ARCHITECTURES CMAKE_OSX_DEPLOYMENT_TARGET
+      CMAKE_OSX_SYSROOT _CMAKE_OSX_SYSROOT_PATH CMAKE_OSX_ARCHITECTURES CMAKE_OSX_DEPLOYMENT_TARGET
       CMAKE_SYSROOT CMAKE_SYSROOT_COMPILE CMAKE_C_COMPILER_TARGET CMAKE_CXX_COMPILER_TARGET
       CMAKE_C_COMPILER_EXTERNAL_TOOLCHAIN CMAKE_CXX_COMPILER_EXTERNAL_TOOLCHAIN
       CMAKE_TRY_COMPILE_TARGET_TYPE CMAKE_GENERATOR CMAKE_CROSSCOMPILING CMAKE_TOOLCHAIN_FILE
@@ -187,8 +187,13 @@ function(ocv_probe_compiler_base_command lang outvar reasonvar)
     list(APPEND __cmd "${CMAKE_${lang}_COMPILE_OPTIONS_SYSROOT}${__sysroot}")
   endif()
   if(APPLE OR CMAKE_SYSTEM_NAME MATCHES "^(Darwin|iOS|tvOS|watchOS|visionOS)$")
+    # CMAKE_OSX_SYSROOT may be a path, an SDK name (Xcode generator: "macosx", "iphoneos")
+    # or empty. When it is empty CMake relies on the toolchain default and records the
+    # SDK it resolved via xcrun in _CMAKE_OSX_SYSROOT_PATH (Darwin-Initialize.cmake); the
+    # /usr/bin/cc wrappers find that SDK by themselves, but the compiler inside Xcode.app
+    # (picked by the Xcode generator) needs it on the command line.
+    set(__sdk "")
     if(CMAKE_OSX_SYSROOT)
-      set(__sdk "")
       if(IS_DIRECTORY "${CMAKE_OSX_SYSROOT}")
         set(__sdk "${CMAKE_OSX_SYSROOT}")
       elseif(_CMAKE_OSX_SYSROOT_PATH AND IS_DIRECTORY "${_CMAKE_OSX_SYSROOT_PATH}")
@@ -201,6 +206,10 @@ function(ocv_probe_compiler_base_command lang outvar reasonvar)
           return()
         endif()
       endif()
+    elseif(_CMAKE_OSX_SYSROOT_PATH AND IS_DIRECTORY "${_CMAKE_OSX_SYSROOT_PATH}")
+      set(__sdk "${_CMAKE_OSX_SYSROOT_PATH}")
+    endif()
+    if(__sdk)
       set(__sysroot_flag "${CMAKE_${lang}_SYSROOT_FLAG}")
       if(NOT __sysroot_flag)
         set(__sysroot_flag "-isysroot")
@@ -675,6 +684,21 @@ function(ocv_probe_selftest lang reasonvar)
   if(NOT __rc EQUAL 0)
     string(REGEX REPLACE "\n.*" "" __first "${__out}")
     set(${reasonvar} "trivial source does not compile with the composed command line (rc=${__rc}: ${__first})" PARENT_SCOPE)
+    return()
+  endif()
+  # (a2) standard headers must be visible: a missing/wrong sysroot does not break (a)
+  #      but silently turns every header, symbol and SIMD check into "not found"
+  if(lang STREQUAL "C")
+    set(__hdr "${OPENCV_PROBE_DIR}/selftest_hdr.c")
+    file(WRITE "${__hdr}" "#include <stddef.h>\n#include <string.h>\nint main(void) { return (int)strlen(\"\"); }\n")
+  else()
+    set(__hdr "${OPENCV_PROBE_DIR}/selftest_hdr.cxx")
+    file(WRITE "${__hdr}" "#include <stddef.h>\n#include <string.h>\n#include <cstring>\nint main() { return (int)std::strlen(\"\"); }\n")
+  endif()
+  ocv_probe_run(${lang} SYNTAX "${__hdr}" __rc __out)
+  if(NOT __rc EQUAL 0)
+    string(REGEX REPLACE "\n.*" "" __first "${__out}")
+    set(${reasonvar} "standard headers are not found with the composed command line (rc=${__rc}: ${__first})" PARENT_SCOPE)
     return()
   endif()
   # (b) known-good flag
