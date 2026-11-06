@@ -678,6 +678,10 @@ endif()
 # ----------------------------------------------------------------------------
 #       CHECK FOR SYSTEM LIBRARIES, OPTIONS, ETC..
 # ----------------------------------------------------------------------------
+# answer the header/symbol/type-size checks below and in 3rdparty/ with one compiler run
+# (see cmake/OpenCVCompilerProbe.cmake); the CMake check_*() modules skip predefined results
+ocv_probe_seed_system_checks()
+
 if(UNIX OR MINGW)
   if(NOT APPLE_FRAMEWORK OR OPENCV_ENABLE_PKG_CONFIG)
     if(CMAKE_CROSSCOMPILING AND NOT DEFINED ENV{PKG_CONFIG_LIBDIR} AND NOT DEFINED ENV{PKG_CONFIG_SYSROOT_DIR}
