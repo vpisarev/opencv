@@ -480,6 +480,10 @@ OCV_OPTION(INSTALL_TESTS            "Install accuracy and performance test binar
 # ===================================================
 OCV_OPTION(ENABLE_CCACHE              "Use ccache"                                               (UNIX AND (CMAKE_GENERATOR MATCHES "Makefile" OR CMAKE_GENERATOR MATCHES "Ninja" OR CMAKE_GENERATOR MATCHES "Xcode")) )
 OCV_OPTION(OPENCV_FAST_COMPILER_PROBES "Run compiler feature checks by invoking the compiler directly instead of try_compile() where the toolchain is supported" ON)
+OCV_OPTION(OPENCV_FAST_TRY_COMPILE    "Serve simple try_compile() calls (CMake Check* modules, 3rdparty, contrib) by invoking the compiler directly" ON IF OPENCV_FAST_COMPILER_PROBES)
+if(OPENCV_FAST_TRY_COMPILE)
+  ocv_probe_enable_try_compile_interception()
+endif()
 OCV_OPTION(ENABLE_PRECOMPILED_HEADERS "Use precompiled headers"                                  MSVC IF (MSVC OR (NOT IOS AND NOT XROS AND NOT CMAKE_CROSSCOMPILING) ) )
 OCV_OPTION(ENABLE_DELAYLOAD           "Enable delayed loading of OpenCV DLLs"                    OFF VISIBLE_IF MSVC AND BUILD_SHARED_LIBS)
 OCV_OPTION(ENABLE_SOLUTION_FOLDERS    "Solution folder in Visual Studio or in other IDEs"        (MSVC_IDE OR CMAKE_GENERATOR MATCHES Xcode) )
