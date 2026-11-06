@@ -77,13 +77,32 @@ endif()
 #==================================
 
 if(HAVE_FFMPEG AND NOT HAVE_FFMPEG_WRAPPER AND NOT OPENCV_FFMPEG_SKIP_BUILD_CHECK)
-  try_compile(__VALID_FFMPEG
-      "${OpenCV_BINARY_DIR}"
-      "${OpenCV_SOURCE_DIR}/cmake/checks/ffmpeg_test.cpp"
-      CMAKE_FLAGS "-DINCLUDE_DIRECTORIES:STRING=${FFMPEG_INCLUDE_DIRS}"
-                  "-DLINK_LIBRARIES:STRING=${FFMPEG_LIBRARIES}"
-      OUTPUT_VARIABLE TRY_OUT
-  )
+  # direct compiler/linker invocation (cmake/OpenCVCompilerProbe.cmake), try_compile() otherwise
+  set(__ffmpeg_direct "")
+  ocv_probe_try_link(CXX "${OpenCV_SOURCE_DIR}/cmake/checks/ffmpeg_test.cpp" __ffmpeg_direct TRY_OUT
+      INCLUDE_DIRS ${FFMPEG_INCLUDE_DIRS}
+      LINK_LIBRARIES ${FFMPEG_LIBRARIES})
+  if(NOT "x${__ffmpeg_direct}" STREQUAL "x" AND NOT OPENCV_VERIFY_FAST_PROBES)
+    set(__VALID_FFMPEG ${__ffmpeg_direct})
+  else()
+    try_compile(__VALID_FFMPEG
+        "${OpenCV_BINARY_DIR}"
+        "${OpenCV_SOURCE_DIR}/cmake/checks/ffmpeg_test.cpp"
+        CMAKE_FLAGS "-DINCLUDE_DIRECTORIES:STRING=${FFMPEG_INCLUDE_DIRS}"
+                    "-DLINK_LIBRARIES:STRING=${FFMPEG_LIBRARIES}"
+        OUTPUT_VARIABLE TRY_OUT
+    )
+    if(NOT "x${__ffmpeg_direct}" STREQUAL "x")
+      if(__VALID_FFMPEG)
+        set(__ffmpeg_legacy 1)
+      else()
+        set(__ffmpeg_legacy 0)
+      endif()
+      if(NOT __ffmpeg_direct EQUAL __ffmpeg_legacy)
+        ocv_probe_report_mismatch("FFMPEG build check" ${__ffmpeg_direct} ${__ffmpeg_legacy})
+      endif()
+    endif()
+  endif()
   if(NOT __VALID_FFMPEG)
     # message(FATAL_ERROR "FFMPEG: test check build log:\n${TRY_OUT}")
     message(STATUS "WARNING: Can't build ffmpeg test code")

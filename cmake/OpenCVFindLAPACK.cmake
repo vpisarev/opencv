@@ -25,7 +25,18 @@ macro(_find_header_file_in_dirs VAR NAME)
   unset(${VAR})
   unset(${VAR} CACHE)
   if(" ${ARGN}" STREQUAL " ")
-    check_include_file("${NAME}" HAVE_${VAR})
+    # the same header is asked about for every LAPACK implementation: check it once
+    string(MAKE_C_IDENTIFIER "${NAME}" __ocv_hdr_id)
+    if(NOT DEFINED HAVE_${VAR})
+      if(DEFINED OPENCV_PROBE_HAVE_INCLUDE_${__ocv_hdr_id})
+        set(HAVE_${VAR} "${OPENCV_PROBE_HAVE_INCLUDE_${__ocv_hdr_id}}" CACHE INTERNAL "Have include ${NAME}")
+      else()
+        ocv_probe_check_include_file("${NAME}" HAVE_${VAR})
+        set(OPENCV_PROBE_HAVE_INCLUDE_${__ocv_hdr_id} "${HAVE_${VAR}}" CACHE INTERNAL "Have include ${NAME}")
+        ocv_probe_record(OPENCV_PROBE_HAVE_INCLUDE_${__ocv_hdr_id})
+      endif()
+      ocv_probe_record(HAVE_${VAR})
+    endif()
     if(HAVE_${VAR})
       set(${VAR} "${NAME}") # fallback
     else()
@@ -151,15 +162,36 @@ macro(ocv_lapack_check)
     endif()
 
     if(NOT LAPACK_SKIP_BUILD)
-      try_compile(__VALID_LAPACK
-          "${OpenCV_BINARY_DIR}"
-          "${OpenCV_SOURCE_DIR}/cmake/checks/lapack_check.cpp"
-          CMAKE_FLAGS "-DINCLUDE_DIRECTORIES:STRING=${LAPACK_INCLUDE_DIR}\;${CMAKE_BINARY_DIR}"
-                      "-DLINK_DIRECTORIES:STRING=${__link_directories}"
-          COMPILE_DEFINITIONS ${LAPACK_TRY_COMPILE_DEF}
-          LINK_LIBRARIES ${LAPACK_LIBRARIES}
-          OUTPUT_VARIABLE TRY_OUT
-      )
+      # direct compiler/linker invocation (cmake/OpenCVCompilerProbe.cmake), try_compile() otherwise
+      set(__lapack_direct "")
+      ocv_probe_try_link(CXX "${OpenCV_SOURCE_DIR}/cmake/checks/lapack_check.cpp" __lapack_direct TRY_OUT
+          FLAGS ${LAPACK_TRY_COMPILE_DEF}
+          INCLUDE_DIRS ${LAPACK_INCLUDE_DIR} ${CMAKE_BINARY_DIR}
+          LINK_DIRS ${__link_directories}
+          LINK_LIBRARIES ${LAPACK_LIBRARIES})
+      if(NOT "x${__lapack_direct}" STREQUAL "x" AND NOT OPENCV_VERIFY_FAST_PROBES)
+        set(__VALID_LAPACK ${__lapack_direct})
+      else()
+        try_compile(__VALID_LAPACK
+            "${OpenCV_BINARY_DIR}"
+            "${OpenCV_SOURCE_DIR}/cmake/checks/lapack_check.cpp"
+            CMAKE_FLAGS "-DINCLUDE_DIRECTORIES:STRING=${LAPACK_INCLUDE_DIR}\;${CMAKE_BINARY_DIR}"
+                        "-DLINK_DIRECTORIES:STRING=${__link_directories}"
+            COMPILE_DEFINITIONS ${LAPACK_TRY_COMPILE_DEF}
+            LINK_LIBRARIES ${LAPACK_LIBRARIES}
+            OUTPUT_VARIABLE TRY_OUT
+        )
+        if(NOT "x${__lapack_direct}" STREQUAL "x")
+          if(__VALID_LAPACK)
+            set(__lapack_legacy 1)
+          else()
+            set(__lapack_legacy 0)
+          endif()
+          if(NOT __lapack_direct EQUAL __lapack_legacy)
+            ocv_probe_report_mismatch("LAPACK(${LAPACK_IMPL}) build check" ${__lapack_direct} ${__lapack_legacy})
+          endif()
+        endif()
+      endif()
       if(NOT __VALID_LAPACK)
         file(APPEND ${CMAKE_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/CMakeError.log
             "\nLAPACK(${LAPACK_IMPL}) check FAILED:\n"
