@@ -452,9 +452,16 @@ set(OCV_COMPILER_FAIL_REGEX
     "WARNING: unknown flag:"                    # Open64
   )
 
+include("${CMAKE_CURRENT_LIST_DIR}/OpenCVCompilerProbe.cmake")
+
 MACRO(ocv_check_compiler_flag LANG FLAG RESULT)
   set(_fname "${ARGN}")
   if(NOT DEFINED ${RESULT})
+    # initialize the fast probe path first: its self-test may run try_compile(), which
+    # wipes CMakeFiles/CMakeTmp where the probe source is written below
+    if("x${LANG}" STREQUAL "xCXX" OR "x${LANG}" STREQUAL "xC")
+      ocv_probe_init(${LANG})
+    endif()
     if(_fname)
       # nothing
     elseif("_${LANG}_" MATCHES "_CXX_")
@@ -488,35 +495,45 @@ MACRO(ocv_check_compiler_flag LANG FLAG RESULT)
       else()
         set(__msg "")
       endif()
-      if(CMAKE_REQUIRED_LIBRARIES)
-        set(__link_libs LINK_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES})
-      else()
-        set(__link_libs)
-      endif()
-      set(__cmake_flags "")
-      if(CMAKE_EXE_LINKER_FLAGS)  # CMP0056 do this on new CMake
-        list(APPEND __cmake_flags "-DCMAKE_EXE_LINKER_FLAGS=${CMAKE_EXE_LINKER_FLAGS}")
-      endif()
-
-      # CMP0067 do this on new CMake
-      if(DEFINED CMAKE_CXX_STANDARD)
-        list(APPEND __cmake_flags "-DCMAKE_CXX_STANDARD=${CMAKE_CXX_STANDARD}")
-      endif()
-      if(DEFINED CMAKE_CXX_STANDARD_REQUIRED)
-        list(APPEND __cmake_flags "-DCMAKE_CXX_STANDARD_REQUIRED=${CMAKE_CXX_STANDARD_REQUIRED}")
-      endif()
-      if(DEFINED CMAKE_CXX_EXTENSIONS)
-        list(APPEND __cmake_flags "-DCMAKE_CXX_EXTENSIONS=${CMAKE_CXX_EXTENSIONS}")
-      endif()
-
       MESSAGE(STATUS "Performing Test ${RESULT}${__msg}")
-      TRY_COMPILE(${RESULT}
-        "${CMAKE_BINARY_DIR}"
-        "${_fname}"
-        CMAKE_FLAGS ${__cmake_flags}
-        COMPILE_DEFINITIONS "${FLAG}"
-        ${__link_libs}
-        OUTPUT_VARIABLE OUTPUT)
+      # Fast path: direct compiler invocation (see cmake/OpenCVCompilerProbe.cmake);
+      # legacy path: try_compile() of a nested project.
+      ocv_probe_select_mode("${LANG}" "${FLAG}" "${_fname}" "${RESULT}" __ocv_probe_mode __ocv_probe_lang)
+      if(__ocv_probe_mode)
+        ocv_probe_run("${__ocv_probe_lang}" "${__ocv_probe_mode}" "${_fname}" __ocv_probe_rc OUTPUT
+                      FLAGS "${FLAG}" LINK_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES})
+        if("${__ocv_probe_rc}" STREQUAL "NOTRUN")
+          set(__ocv_probe_mode "")  # could not be expressed as a direct command: legacy
+        elseif(__ocv_probe_rc EQUAL 0)
+          set(${RESULT} 1)
+        else()
+          set(${RESULT} 0)
+        endif()
+      endif()
+      if(NOT __ocv_probe_mode)
+        __ocv_probe_legacy_try_compile("${LANG}" "${FLAG}" ${RESULT} "${_fname}" OUTPUT)
+      elseif(OPENCV_VERIFY_FAST_PROBES)
+        __ocv_probe_legacy_try_compile("${LANG}" "${FLAG}" __ocv_verify_result "${_fname}" __ocv_verify_output)
+        ocv_probe_output_has_failure("${__ocv_verify_output}" __ocv_verify_fail)
+        if(__ocv_verify_result AND NOT __ocv_verify_fail)
+          set(__ocv_verify_result 1)
+        else()
+          set(__ocv_verify_result 0)
+        endif()
+        ocv_probe_output_has_failure("${OUTPUT}" __ocv_direct_fail)
+        if(${RESULT} AND NOT __ocv_direct_fail)
+          set(__ocv_direct_result 1)
+        else()
+          set(__ocv_direct_result 0)
+        endif()
+        if(NOT __ocv_direct_result EQUAL __ocv_verify_result)
+          ocv_probe_report_mismatch("${RESULT} (${__ocv_probe_lang} '${FLAG}' ${_fname})" ${__ocv_direct_result} ${__ocv_verify_result})
+        endif()
+        unset(__ocv_verify_result CACHE)
+      endif()
+      if(__ocv_probe_mode)
+        ocv_probe_record("${RESULT}")
+      endif()
 
       if(${RESULT})
         string(REPLACE ";" "," OUTPUT_LINES "${OUTPUT}")

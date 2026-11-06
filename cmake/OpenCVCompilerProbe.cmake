@@ -1,0 +1,596 @@
+# ----------------------------------------------------------------------------
+#  Fast compiler probes
+#
+#  OpenCV configure runs a few hundred compiler feature checks. Each one that goes
+#  through try_compile() configures and builds a nested CMake project (80-200 ms
+#  even for an empty source file, 1-2 s with the Xcode generator), while the
+#  compiler itself needs 15-40 ms. This module runs the same checks by invoking
+#  the compiler directly, with a command line composed from the same variables
+#  CMake uses for try_compile(), and keeps the exact result variable names and
+#  values, so every consumer (including unmodified 3rdparty CMake code and
+#  pre-seeded caches passed with `cmake -C`) keeps working.
+#
+#  Safety: the fast path is used only when all three levels agree, otherwise
+#  the unchanged try_compile() path is taken:
+#    1. static whitelist (ocv_probe_init): GCC/Clang-style drivers only
+#       (GNU, Clang, AppleClang, IntelLLVM on UNIX), no Visual Studio generator,
+#       all implicit toolchain flags (target, sysroot, OSX sysroot/arch/deployment
+#       target) must be expressible; cross-compiling toolchains (Android NDK,
+#       iOS, Emscripten, Linux cross) are supported for compile-only probes;
+#    2. runtime self-test (ocv_probe_selftest): the composed command must compile
+#       a trivial source, accept a known-good flag, name two known-bad flags in
+#       its diagnostics, agree with reference try_compile() results, and its
+#       preprocessor must report the pointer size CMake detected;
+#    3. per probe: link-level probes while cross-compiling, probes whose
+#       arguments cannot be expressed on a plain command line, or outputs that
+#       cannot be parsed deterministically fall back for that probe only.
+#
+#  Controls:
+#    OPENCV_FAST_COMPILER_PROBES=OFF (or env OPENCV_SKIP_FAST_COMPILER_PROBES=1)
+#        disable the fast path entirely;
+#    OPENCV_VERIFY_FAST_PROBES=ON|STRICT
+#        run both paths for every probe and report mismatches (STRICT: fatal);
+#    OPENCV_PROBE_VERBOSE=ON
+#        print the composed command for every probe.
+#  Full log of every direct compiler invocation: <build>/CMakeFiles/OpenCVProbe.log
+# ----------------------------------------------------------------------------
+
+set(OPENCV_PROBE_FORMAT_VERSION 1)
+set(OPENCV_PROBE_DIR "${CMAKE_BINARY_DIR}/CMakeFiles/OpenCVProbe")
+set(OPENCV_PROBE_LOG "${CMAKE_BINARY_DIR}/CMakeFiles/OpenCVProbe.log")
+
+# Diagnostics that name an unsupported flag. The first capture group that is not a
+# quote character holds the flag (or a `-Wfoo=` prefix). Quotes: ASCII and the
+# UTF-8 typographic quotes GCC uses outside the C locale.
+set(OCV_PROBE_REJECTED_FLAG_REGEX
+    "unknown warning option ['‘\"]([^'’\"]+)['’\"]"            # Clang (warning, or error with -Werror)
+    "unknown argument: ['‘\"]([^'’\"]+)['’\"]"                  # Clang driver
+    "unsupported option ['‘\"]([^'’\"]+)['’\"]"                 # Clang driver
+    "unrecognized command[- ]line option ['‘\"]([^'’\"]+)['’\"]" # GCC driver error, cc1plus note for -Wno-*
+    "unrecognized argument in option ['‘\"]([^'’\"]+)['’\"]"    # GCC: -march=foo
+    "command[- ]line option ['‘\"]([^'’\"]+)['’\"] is valid for" # GCC: C-only flag passed to C++
+    "argument to ['‘\"]([^'’\"]+)['’\"] is not valid"           # GCC: -Wfoo=<bad value>
+    "ignoring unknown option ['‘\"]([^'’\"]+)['’\"]"            # MSVC D9002
+)
+
+function(ocv_probe_log text)
+  file(APPEND "${OPENCV_PROBE_LOG}" "${text}\n")
+endfunction()
+
+# Remember a cache variable produced by the fast path, so that it can be
+# invalidated when the compiler/toolchain configuration changes.
+function(ocv_probe_record var)
+  set(__list "${OPENCV_PROBE_RESULT_VARS}")
+  list(APPEND __list "${var}")
+  set(OPENCV_PROBE_RESULT_VARS "${__list}" CACHE INTERNAL "Cache variables produced by fast compiler probes")
+endfunction()
+
+function(ocv_probe_compute_cache_key outvar)
+  set(__key "format=${OPENCV_PROBE_FORMAT_VERSION}")
+  foreach(v
+      CMAKE_C_COMPILER CMAKE_CXX_COMPILER CMAKE_C_COMPILER_ARG1 CMAKE_CXX_COMPILER_ARG1
+      CMAKE_C_COMPILER_ID CMAKE_CXX_COMPILER_ID CMAKE_C_COMPILER_VERSION CMAKE_CXX_COMPILER_VERSION
+      CMAKE_C_SIMULATE_ID CMAKE_CXX_SIMULATE_ID
+      CMAKE_BUILD_TYPE CMAKE_CONFIGURATION_TYPES CMAKE_CXX_STANDARD CMAKE_CXX_EXTENSIONS
+      CMAKE_OSX_SYSROOT CMAKE_OSX_ARCHITECTURES CMAKE_OSX_DEPLOYMENT_TARGET
+      CMAKE_SYSROOT CMAKE_SYSROOT_COMPILE CMAKE_C_COMPILER_TARGET CMAKE_CXX_COMPILER_TARGET
+      CMAKE_C_COMPILER_EXTERNAL_TOOLCHAIN CMAKE_CXX_COMPILER_EXTERNAL_TOOLCHAIN
+      CMAKE_TRY_COMPILE_TARGET_TYPE CMAKE_GENERATOR CMAKE_CROSSCOMPILING CMAKE_TOOLCHAIN_FILE
+      CMAKE_SYSTEM_NAME CMAKE_SYSTEM_PROCESSOR
+      OPENCV_FAST_COMPILER_PROBES OPENCV_VERIFY_FAST_PROBES)
+    set(__key "${__key};${v}=${${v}}")
+  endforeach()
+  foreach(v CMAKE_C_FLAGS CMAKE_CXX_FLAGS CMAKE_EXE_LINKER_FLAGS)
+    get_property(__cv CACHE ${v} PROPERTY VALUE)
+    set(__key "${__key};${v}=${__cv}")
+  endforeach()
+  string(SHA1 __key "${__key}")
+  set(${outvar} "${__key}" PARENT_SCOPE)
+endfunction()
+
+# Once per configure: truncate the log; if the toolchain configuration changed
+# since the cached results were produced, drop them.
+function(ocv_probe_check_cache_key)
+  get_property(__done GLOBAL PROPERTY OCV_PROBE_CACHE_KEY_CHECKED)
+  if(__done)
+    return()
+  endif()
+  set_property(GLOBAL PROPERTY OCV_PROBE_CACHE_KEY_CHECKED 1)
+  file(MAKE_DIRECTORY "${OPENCV_PROBE_DIR}")
+  string(TIMESTAMP __now)
+  file(WRITE "${OPENCV_PROBE_LOG}" "# OpenCV fast compiler probes log (${__now})\n")
+  ocv_probe_compute_cache_key(__key)
+  if(NOT "${OPENCV_PROBE_CACHE_KEY}" STREQUAL "${__key}")
+    if(DEFINED OPENCV_PROBE_CACHE_KEY)
+      message(STATUS "OpenCV: compiler/toolchain configuration changed, re-running compiler probes")
+      foreach(v ${OPENCV_PROBE_RESULT_VARS})
+        unset(${v} CACHE)
+      endforeach()
+    endif()
+    foreach(lang C CXX)
+      unset(OPENCV_FAST_PROBE_AVAILABLE_${lang} CACHE)
+      unset(OPENCV_FAST_PROBE_REASON_${lang} CACHE)
+      unset(OPENCV_PROBE_BASE_COMMAND_${lang} CACHE)
+    endforeach()
+    set(OPENCV_PROBE_RESULT_VARS "" CACHE INTERNAL "Cache variables produced by fast compiler probes")
+    set(OPENCV_PROBE_CACHE_KEY "${__key}" CACHE INTERNAL "Toolchain fingerprint of the cached compiler probe results")
+  endif()
+endfunction()
+
+# Compose the part of the compiler command line that does not depend on the
+# current CMAKE_<LANG>_FLAGS: compiler, target, sysroot, Apple SDK/arch/deployment target.
+# Sets ${outvar} to the list, or to "" with ${reasonvar} explaining why it cannot be composed.
+function(ocv_probe_compiler_base_command lang outvar reasonvar)
+  set(${outvar} "" PARENT_SCOPE)
+  set(__cmd "${CMAKE_${lang}_COMPILER}")
+  if(CMAKE_${lang}_COMPILER_ARG1)
+    separate_arguments(__arg1 NATIVE_COMMAND "${CMAKE_${lang}_COMPILER_ARG1}")
+    list(APPEND __cmd ${__arg1})
+  endif()
+  if(CMAKE_${lang}_COMPILER_TARGET)
+    if(NOT CMAKE_${lang}_COMPILE_OPTIONS_TARGET)
+      set(${reasonvar} "CMAKE_${lang}_COMPILER_TARGET is set but CMAKE_${lang}_COMPILE_OPTIONS_TARGET is not" PARENT_SCOPE)
+      return()
+    endif()
+    list(APPEND __cmd "${CMAKE_${lang}_COMPILE_OPTIONS_TARGET}${CMAKE_${lang}_COMPILER_TARGET}")
+  endif()
+  if(CMAKE_${lang}_COMPILER_EXTERNAL_TOOLCHAIN)
+    if(NOT CMAKE_${lang}_COMPILE_OPTIONS_EXTERNAL_TOOLCHAIN)
+      set(${reasonvar} "CMAKE_${lang}_COMPILER_EXTERNAL_TOOLCHAIN is set but CMAKE_${lang}_COMPILE_OPTIONS_EXTERNAL_TOOLCHAIN is not" PARENT_SCOPE)
+      return()
+    endif()
+    list(APPEND __cmd "${CMAKE_${lang}_COMPILE_OPTIONS_EXTERNAL_TOOLCHAIN}${CMAKE_${lang}_COMPILER_EXTERNAL_TOOLCHAIN}")
+  endif()
+  set(__sysroot "${CMAKE_SYSROOT_COMPILE}")
+  if(NOT __sysroot)
+    set(__sysroot "${CMAKE_SYSROOT}")
+  endif()
+  if(__sysroot)
+    if(NOT CMAKE_${lang}_COMPILE_OPTIONS_SYSROOT)
+      set(${reasonvar} "CMAKE_SYSROOT is set but CMAKE_${lang}_COMPILE_OPTIONS_SYSROOT is not" PARENT_SCOPE)
+      return()
+    endif()
+    list(APPEND __cmd "${CMAKE_${lang}_COMPILE_OPTIONS_SYSROOT}${__sysroot}")
+  endif()
+  if(APPLE OR CMAKE_SYSTEM_NAME MATCHES "^(Darwin|iOS|tvOS|watchOS|visionOS)$")
+    if(CMAKE_OSX_SYSROOT)
+      set(__sdk "")
+      if(IS_DIRECTORY "${CMAKE_OSX_SYSROOT}")
+        set(__sdk "${CMAKE_OSX_SYSROOT}")
+      elseif(_CMAKE_OSX_SYSROOT_PATH AND IS_DIRECTORY "${_CMAKE_OSX_SYSROOT_PATH}")
+        set(__sdk "${_CMAKE_OSX_SYSROOT_PATH}")
+      else()
+        execute_process(COMMAND xcrun --sdk "${CMAKE_OSX_SYSROOT}" --show-sdk-path
+                        OUTPUT_VARIABLE __sdk ERROR_QUIET RESULT_VARIABLE __rc OUTPUT_STRIP_TRAILING_WHITESPACE)
+        if(NOT __rc EQUAL 0 OR NOT IS_DIRECTORY "${__sdk}")
+          set(${reasonvar} "cannot resolve CMAKE_OSX_SYSROOT='${CMAKE_OSX_SYSROOT}' to an SDK path" PARENT_SCOPE)
+          return()
+        endif()
+      endif()
+      set(__sysroot_flag "${CMAKE_${lang}_SYSROOT_FLAG}")
+      if(NOT __sysroot_flag)
+        set(__sysroot_flag "-isysroot")
+      endif()
+      list(APPEND __cmd "${__sysroot_flag}" "${__sdk}")
+    endif()
+    if(CMAKE_OSX_DEPLOYMENT_TARGET)
+      set(__dt_flag "${CMAKE_${lang}_OSX_DEPLOYMENT_TARGET_FLAG}")
+      if(NOT __dt_flag OR __dt_flag MATCHES "<")
+        set(${reasonvar} "cannot express CMAKE_OSX_DEPLOYMENT_TARGET with CMAKE_${lang}_OSX_DEPLOYMENT_TARGET_FLAG='${__dt_flag}'" PARENT_SCOPE)
+        return()
+      endif()
+      list(APPEND __cmd "${__dt_flag}${CMAKE_OSX_DEPLOYMENT_TARGET}")
+    endif()
+    set(__archs "${CMAKE_TRY_COMPILE_OSX_ARCHITECTURES}")
+    if(NOT __archs)
+      set(__archs "${CMAKE_OSX_ARCHITECTURES}")
+    endif()
+    foreach(__arch ${__archs})
+      list(APPEND __cmd "-arch" "${__arch}")
+    endforeach()
+  endif()
+  set(${outvar} "${__cmd}" PARENT_SCOPE)
+endfunction()
+
+# Run the compiler directly.
+#   ocv_probe_run(<lang> <SYNTAX|OBJECT|LINK|PREPROCESS> <source> <rc-var> <output-var>
+#                 [FLAGS ...] [INCLUDE_DIRS ...] [LINK_DIRS ...] [LINK_LIBRARIES ...])
+# Sets <rc-var> to the exit code (or "NOTRUN" when the command cannot be composed)
+# and <output-var> to stdout+stderr (PREPROCESS: stdout only).
+function(ocv_probe_run lang mode src rcvar outvar)
+  cmake_parse_arguments(P "" "" "FLAGS;INCLUDE_DIRS;LINK_DIRS;LINK_LIBRARIES" ${ARGN})
+  set(${rcvar} "NOTRUN" PARENT_SCOPE)
+  set(${outvar} "" PARENT_SCOPE)
+  set(__cmd "${OPENCV_PROBE_BASE_COMMAND_${lang}}")
+  if(NOT __cmd)
+    return()
+  endif()
+  # Order mirrors CMake's compile line: <DEFINES=probe flags> <FLAGS> <std> <mode> <source>
+  foreach(__f ${P_FLAGS})
+    separate_arguments(__fa NATIVE_COMMAND "${__f}")
+    list(APPEND __cmd ${__fa})
+  endforeach()
+  foreach(__d ${P_INCLUDE_DIRS})
+    list(APPEND __cmd "-I${__d}")
+  endforeach()
+  separate_arguments(__flags NATIVE_COMMAND "${CMAKE_${lang}_FLAGS}")
+  list(APPEND __cmd ${__flags})
+  set(__cfg "${CMAKE_TRY_COMPILE_CONFIGURATION}")
+  if(NOT __cfg)
+    set(__cfg "${CMAKE_BUILD_TYPE}")
+  endif()
+  if(NOT __cfg AND CMAKE_CONFIGURATION_TYPES)
+    set(__cfg "DEBUG")  # try_compile() builds the Debug configuration by default
+  endif()
+  if(__cfg)
+    string(TOUPPER "${__cfg}" __cfg)
+    separate_arguments(__flags NATIVE_COMMAND "${CMAKE_${lang}_FLAGS_${__cfg}}")
+    list(APPEND __cmd ${__flags})
+  endif()
+  if(DEFINED CMAKE_${lang}_STANDARD AND CMAKE_${lang}_STANDARD)
+    if(DEFINED CMAKE_${lang}_EXTENSIONS AND NOT CMAKE_${lang}_EXTENSIONS)
+      set(__std_opt "${CMAKE_${lang}${CMAKE_${lang}_STANDARD}_STANDARD_COMPILE_OPTION}")
+    else()
+      set(__std_opt "${CMAKE_${lang}${CMAKE_${lang}_STANDARD}_EXTENSION_COMPILE_OPTION}")
+    endif()
+    list(APPEND __cmd ${__std_opt})
+  endif()
+  if(CMAKE_${lang}_COMPILER_ID STREQUAL "GNU")
+    list(APPEND __cmd -fdiagnostics-color=never -fmax-errors=0)
+  else()
+    list(APPEND __cmd -fno-color-diagnostics -ferror-limit=0)
+  endif()
+  get_property(__n GLOBAL PROPERTY OCV_PROBE_COUNTER)
+  if(NOT __n)
+    set(__n 0)
+  endif()
+  math(EXPR __n "${__n} + 1")
+  set_property(GLOBAL PROPERTY OCV_PROBE_COUNTER ${__n})
+  set(__merge_streams 1)
+  if(mode STREQUAL "SYNTAX")
+    list(APPEND __cmd -fsyntax-only "${src}")
+  elseif(mode STREQUAL "OBJECT")
+    list(APPEND __cmd -c "${src}" -o "${OPENCV_PROBE_DIR}/probe_${__n}.o")
+  elseif(mode STREQUAL "LINK")
+    list(APPEND __cmd "${src}" -o "${OPENCV_PROBE_DIR}/probe_${__n}.exe")
+    separate_arguments(__lflags NATIVE_COMMAND "${CMAKE_EXE_LINKER_FLAGS}")
+    list(APPEND __cmd ${__lflags})
+    if(__cfg)
+      separate_arguments(__lflags NATIVE_COMMAND "${CMAKE_EXE_LINKER_FLAGS_${__cfg}}")
+      list(APPEND __cmd ${__lflags})
+    endif()
+    foreach(__d ${P_LINK_DIRS})
+      list(APPEND __cmd "-L${__d}")
+    endforeach()
+    foreach(__lib ${P_LINK_LIBRARIES})
+      if(TARGET "${__lib}")
+        ocv_probe_log("# cannot link against CMake target '${__lib}' directly, probe not run")
+        return()
+      elseif(__lib MATCHES "^-" OR IS_ABSOLUTE "${__lib}")
+        separate_arguments(__la NATIVE_COMMAND "${__lib}")
+        list(APPEND __cmd ${__la})
+      else()
+        list(APPEND __cmd "-l${__lib}")
+      endif()
+    endforeach()
+  elseif(mode STREQUAL "PREPROCESS")
+    if(lang STREQUAL "CXX")
+      list(APPEND __cmd -x c++)
+    else()
+      list(APPEND __cmd -x c)
+    endif()
+    list(APPEND __cmd -E -P "${src}")
+    set(__merge_streams 0)
+  else()
+    message(FATAL_ERROR "ocv_probe_run: unknown mode '${mode}'")
+  endif()
+  if(OPENCV_PROBE_VERBOSE)
+    message(STATUS "probe[${__n}]: ${__cmd}")
+  endif()
+  if(__merge_streams)
+    execute_process(COMMAND ${CMAKE_COMMAND} -E env LC_ALL=C LANG=C LC_MESSAGES=C ${__cmd}
+                    WORKING_DIRECTORY "${OPENCV_PROBE_DIR}"
+                    RESULT_VARIABLE __rc OUTPUT_VARIABLE __out ERROR_VARIABLE __out TIMEOUT 120)
+  else()
+    execute_process(COMMAND ${CMAKE_COMMAND} -E env LC_ALL=C LANG=C LC_MESSAGES=C ${__cmd}
+                    WORKING_DIRECTORY "${OPENCV_PROBE_DIR}"
+                    RESULT_VARIABLE __rc OUTPUT_VARIABLE __out ERROR_VARIABLE __err TIMEOUT 120)
+  endif()
+  string(REPLACE ";" " " __cmd_str "${__cmd}")
+  ocv_probe_log("\n=== probe ${__n} (${lang} ${mode}) rc=${__rc}\n${__cmd_str}\n--- output:\n${__out}${__err}--- end")
+  set(${rcvar} "${__rc}" PARENT_SCOPE)
+  set(${outvar} "${__out}" PARENT_SCOPE)
+endfunction()
+
+# Does the compiler output contain a line matching OCV_COMPILER_FAIL_REGEX? -> ${outvar} = 1/0
+function(ocv_probe_output_has_failure output outvar)
+  set(${outvar} 0 PARENT_SCOPE)
+  string(REPLACE ";" "," __lines "${output}")
+  string(REPLACE "\n" ";" __lines "${__lines}")
+  foreach(__regex ${OCV_COMPILER_FAIL_REGEX})
+    foreach(__line ${__lines})
+      if("${__line}" MATCHES "${__regex}")
+        set(${outvar} 1 PARENT_SCOPE)
+        return()
+      endif()
+    endforeach()
+  endforeach()
+endfunction()
+
+# Flags named in "unknown/unrecognized option" diagnostics -> ${outvar} (list).
+function(ocv_probe_parse_rejected_flags output outvar)
+  set(__found "")
+  string(REPLACE ";" "," __lines "${output}")
+  string(REPLACE "\n" ";" __lines "${__lines}")
+  foreach(__line ${__lines})
+    foreach(__regex ${OCV_PROBE_REJECTED_FLAG_REGEX})
+      if("${__line}" MATCHES "${__regex}")
+        list(APPEND __found "${CMAKE_MATCH_1}")
+      endif()
+    endforeach()
+  endforeach()
+  if(__found)
+    list(REMOVE_DUPLICATES __found)
+  endif()
+  set(${outvar} "${__found}" PARENT_SCOPE)
+endfunction()
+
+# Which flags of ${flags} (list) are named in ${rejected} (list from ocv_probe_parse_rejected_flags)?
+# A rejected entry ending with '=' matches a flag by prefix (GCC: "argument to '-Wfoo=' is not valid").
+function(ocv_probe_match_rejected flags rejected outvar)
+  set(__res "")
+  foreach(__flag ${flags})
+    foreach(__r ${rejected})
+      if(__flag STREQUAL __r)
+        list(APPEND __res "${__flag}")
+      elseif(__r MATCHES "=$")
+        string(LENGTH "${__r}" __len)
+        string(SUBSTRING "${__flag}" 0 ${__len} __prefix)
+        if(__prefix STREQUAL __r)
+          list(APPEND __res "${__flag}")
+        endif()
+      endif()
+    endforeach()
+  endforeach()
+  if(__res)
+    list(REMOVE_DUPLICATES __res)
+  endif()
+  set(${outvar} "${__res}" PARENT_SCOPE)
+endfunction()
+
+# Reference check through the legacy try_compile() path (same call as in ocv_check_compiler_flag).
+# Result: ${result} = 1/0 (normal variable), ${outvar} = build output.
+macro(__ocv_probe_legacy_try_compile LANG FLAG RESULT FNAME OUTVAR)
+  if(CMAKE_REQUIRED_LIBRARIES)
+    set(__link_libs LINK_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES})
+  else()
+    set(__link_libs)
+  endif()
+  set(__cmake_flags "")
+  if(CMAKE_EXE_LINKER_FLAGS)  # CMP0056 do this on new CMake
+    list(APPEND __cmake_flags "-DCMAKE_EXE_LINKER_FLAGS=${CMAKE_EXE_LINKER_FLAGS}")
+  endif()
+  # CMP0067 do this on new CMake
+  if(DEFINED CMAKE_CXX_STANDARD)
+    list(APPEND __cmake_flags "-DCMAKE_CXX_STANDARD=${CMAKE_CXX_STANDARD}")
+  endif()
+  if(DEFINED CMAKE_CXX_STANDARD_REQUIRED)
+    list(APPEND __cmake_flags "-DCMAKE_CXX_STANDARD_REQUIRED=${CMAKE_CXX_STANDARD_REQUIRED}")
+  endif()
+  if(DEFINED CMAKE_CXX_EXTENSIONS)
+    list(APPEND __cmake_flags "-DCMAKE_CXX_EXTENSIONS=${CMAKE_CXX_EXTENSIONS}")
+  endif()
+  TRY_COMPILE(${RESULT}
+    "${CMAKE_BINARY_DIR}"
+    "${FNAME}"
+    CMAKE_FLAGS ${__cmake_flags}
+    COMPILE_DEFINITIONS "${FLAG}"
+    ${__link_libs}
+    OUTPUT_VARIABLE ${OUTVAR})
+endmacro()
+
+# Self-test of the composed command line for one language. Sets ${reasonvar} on failure.
+function(ocv_probe_selftest lang reasonvar)
+  set(CMAKE_REQUIRED_LIBRARIES "")
+  set(CMAKE_TRY_COMPILE_CONFIGURATION "${CMAKE_BUILD_TYPE}")
+  if(lang STREQUAL "C")
+    set(__src "${OPENCV_PROBE_DIR}/selftest.c")
+    file(WRITE "${__src}" "int main(void) { return 0; }\n")
+  else()
+    set(__src "${OPENCV_PROBE_DIR}/selftest.cxx")
+    file(WRITE "${__src}" "int main() { return 0; }\n")
+  endif()
+  # (a) trivial source
+  ocv_probe_run(${lang} SYNTAX "${__src}" __rc __out)
+  if(NOT __rc EQUAL 0)
+    string(REGEX REPLACE "\n.*" "" __first "${__out}")
+    set(${reasonvar} "trivial source does not compile with the composed command line (rc=${__rc}: ${__first})" PARENT_SCOPE)
+    return()
+  endif()
+  # (b) known-good flag
+  set(__good "-Wall")
+  ocv_probe_run(${lang} SYNTAX "${__src}" __rc __out FLAGS "${__good}")
+  ocv_probe_output_has_failure("${__out}" __fail)
+  if(NOT __rc EQUAL 0 OR __fail)
+    set(${reasonvar} "known-good flag ${__good} is rejected" PARENT_SCOPE)
+    return()
+  endif()
+  # (c) two known-bad flags must be named in the diagnostics (possibly over two runs: the
+  #     driver may stop at an unknown -f option before the front end reports the -W one)
+  set(__bad_w "-Wopencv-probe-no-such-warning")
+  set(__bad_f "-fopencv-probe-no-such-option")
+  set(__pending "${__bad_w};${__bad_f}")
+  foreach(__pass 1 2 3)
+    if(NOT __pending)
+      break()
+    endif()
+    ocv_probe_run(${lang} SYNTAX "${__src}" __rc __out FLAGS "${__pending}")
+    ocv_probe_parse_rejected_flags("${__out}" __rejected)
+    ocv_probe_match_rejected("${__pending}" "${__rejected}" __named)
+    if(NOT __named)
+      break()
+    endif()
+    list(REMOVE_ITEM __pending ${__named})
+  endforeach()
+  if(__pending)
+    set(${reasonvar} "cannot attribute diagnostics to unsupported flags (${__pending})" PARENT_SCOPE)
+    return()
+  endif()
+  # (d) agreement with the legacy try_compile() path
+  ocv_probe_run(${lang} SYNTAX "${__src}" __rc __out FLAGS "${__bad_w}")
+  ocv_probe_output_has_failure("${__out}" __fail)
+  if(__rc EQUAL 0 AND NOT __fail)
+    set(__direct_bad 1)
+  else()
+    set(__direct_bad 0)
+  endif()
+  __ocv_probe_legacy_try_compile(${lang} "${__good}" OPENCV_PROBE_REF_GOOD_${lang} "${__src}" __ref_out)
+  ocv_probe_output_has_failure("${__ref_out}" __fail)
+  if(OPENCV_PROBE_REF_GOOD_${lang} AND NOT __fail)
+    set(__ref_good 1)
+  else()
+    set(__ref_good 0)
+  endif()
+  __ocv_probe_legacy_try_compile(${lang} "${__bad_w}" OPENCV_PROBE_REF_BAD_${lang} "${__src}" __ref_out)
+  ocv_probe_output_has_failure("${__ref_out}" __fail)
+  if(OPENCV_PROBE_REF_BAD_${lang} AND NOT __fail)
+    set(__ref_bad 1)
+  else()
+    set(__ref_bad 0)
+  endif()
+  ocv_probe_record(OPENCV_PROBE_REF_GOOD_${lang})
+  ocv_probe_record(OPENCV_PROBE_REF_BAD_${lang})
+  if(NOT __ref_good EQUAL 1 OR NOT __direct_bad EQUAL __ref_bad)
+    set(${reasonvar} "direct results (good=1 bad=${__direct_bad}) differ from try_compile() results (good=${__ref_good} bad=${__ref_bad})" PARENT_SCOPE)
+    return()
+  endif()
+  # (e) preprocessor: pointer size must agree with CMake's ABI detection
+  set(__pp "${OPENCV_PROBE_DIR}/selftest_pp.c")
+  file(WRITE "${__pp}" "@@OCV_PROBE_OK=1\n#ifdef __SIZEOF_POINTER__\n@@SIZEOF_POINTER=__SIZEOF_POINTER__\n#endif\n")
+  ocv_probe_run(${lang} PREPROCESS "${__pp}" __rc __out)
+  if(NOT __rc EQUAL 0 OR NOT "${__out}" MATCHES "@@OCV_PROBE_OK=1")
+    set(${reasonvar} "preprocessor probe failed (rc=${__rc})" PARENT_SCOPE)
+    return()
+  endif()
+  if("${__out}" MATCHES "@@SIZEOF_POINTER=([0-9]+)" AND CMAKE_SIZEOF_VOID_P)
+    if(NOT "${CMAKE_MATCH_1}" STREQUAL "${CMAKE_SIZEOF_VOID_P}")
+      set(${reasonvar} "preprocessor reports sizeof(void*)=${CMAKE_MATCH_1}, CMake detected ${CMAKE_SIZEOF_VOID_P} (wrong target/sysroot?)" PARENT_SCOPE)
+      return()
+    endif()
+  endif()
+endfunction()
+
+# Decide once per language whether the fast path can be used.
+# Result: OPENCV_FAST_PROBE_AVAILABLE_<lang> (1/0) and OPENCV_FAST_PROBE_REASON_<lang> in the cache.
+function(ocv_probe_init lang)
+  ocv_probe_check_cache_key()
+  if(DEFINED OPENCV_FAST_PROBE_AVAILABLE_${lang})
+    return()
+  endif()
+  set(__reason "")
+  ocv_check_environment_variables(OPENCV_SKIP_FAST_COMPILER_PROBES)
+  if((DEFINED OPENCV_FAST_COMPILER_PROBES AND NOT OPENCV_FAST_COMPILER_PROBES) OR OPENCV_SKIP_FAST_COMPILER_PROBES)
+    set(__reason "disabled by OPENCV_FAST_COMPILER_PROBES=OFF")
+  elseif(CMAKE_GENERATOR MATCHES "Visual Studio")
+    set(__reason "Visual Studio generator (compiler environment is set up by MSBuild)")
+  elseif(NOT CMAKE_${lang}_COMPILER OR NOT DEFINED CMAKE_${lang}_COMPILER_ID)
+    set(__reason "${lang} compiler is not enabled")
+  elseif(CMAKE_${lang}_COMPILER_ID STREQUAL "MSVC" OR CMAKE_${lang}_SIMULATE_ID STREQUAL "MSVC" OR MSVC)
+    set(__reason "MSVC-style command line is not supported yet")
+  elseif(NOT CMAKE_${lang}_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang|IntelLLVM)$")
+    set(__reason "unsupported compiler ${CMAKE_${lang}_COMPILER_ID}")
+  elseif(NOT EXISTS "${CMAKE_${lang}_COMPILER}")
+    set(__reason "compiler '${CMAKE_${lang}_COMPILER}' is not a file")
+  endif()
+  if(NOT __reason)
+    ocv_probe_compiler_base_command(${lang} __base __reason)
+  endif()
+  if(NOT __reason)
+    set(OPENCV_PROBE_BASE_COMMAND_${lang} "${__base}" CACHE INTERNAL "Compiler command prefix for fast probes")
+    ocv_probe_selftest(${lang} __reason)
+  endif()
+  if(__reason)
+    set(OPENCV_FAST_PROBE_AVAILABLE_${lang} 0 CACHE INTERNAL "Fast compiler probes (${lang}) usable")
+    set(OPENCV_FAST_PROBE_REASON_${lang} "${__reason}" CACHE INTERNAL "")
+    unset(OPENCV_PROBE_BASE_COMMAND_${lang} CACHE)
+    message(STATUS "OpenCV: fast compiler probes (${lang}): disabled - ${__reason}")
+    ocv_probe_log("# ${lang}: fast probes disabled - ${__reason}")
+  else()
+    set(OPENCV_FAST_PROBE_AVAILABLE_${lang} 1 CACHE INTERNAL "Fast compiler probes (${lang}) usable")
+    set(OPENCV_FAST_PROBE_REASON_${lang} "" CACHE INTERNAL "")
+    message(STATUS "OpenCV: fast compiler probes (${lang}): enabled (${CMAKE_${lang}_COMPILER_ID} ${CMAKE_${lang}_COMPILER_VERSION})")
+  endif()
+endfunction()
+
+# Choose how ocv_check_compiler_flag() should run a probe.
+# ${outvar}: SYNTAX / OBJECT / LINK for the direct path, "" for the legacy try_compile() path.
+# ${langvar}: normalized language (C / CXX).
+function(ocv_probe_select_mode LANG FLAG SRC RESULT outvar langvar)
+  set(${outvar} "" PARENT_SCOPE)
+  if("x${LANG}" STREQUAL "xCXX")
+    set(__lang CXX)
+  elseif("x${LANG}" STREQUAL "xC")
+    set(__lang C)
+  else()
+    set(${langvar} "${LANG}" PARENT_SCOPE)
+    return()  # OBJCXX and anything else: legacy
+  endif()
+  set(${langvar} "${__lang}" PARENT_SCOPE)
+  ocv_probe_init(${__lang})
+  if(NOT OPENCV_FAST_PROBE_AVAILABLE_${__lang})
+    return()
+  endif()
+  set(__mode SYNTAX)
+  if(CMAKE_REQUIRED_LIBRARIES OR RESULT MATCHES "^HAVE_LINK_"
+      OR " ${FLAG} " MATCHES " -(pthread|pg|flto|fprofile[-a-z]*|fsanitize|static|fuse-ld|rdynamic|fstack-protector[-a-z]*|-coverage|coverage)")
+    set(__mode LINK)
+  elseif(SRC MATCHES "/cmake/checks/" OR " ${FLAG} " MATCHES " -(m|x|O)")
+    set(__mode OBJECT)  # custom sources (SIMD intrinsics etc.) need code generation, -fsyntax-only is not enough
+  endif()
+  if(__mode STREQUAL "LINK")
+    if(CMAKE_TRY_COMPILE_TARGET_TYPE STREQUAL "STATIC_LIBRARY")
+      set(__mode OBJECT)  # try_compile() does not link in this mode either
+    elseif(CMAKE_CROSSCOMPILING)
+      return()  # link line of a cross toolchain is composed by CMake internally: legacy
+    endif()
+  endif()
+  set(${outvar} "${__mode}" PARENT_SCOPE)
+endfunction()
+
+function(ocv_probe_report_mismatch what direct legacy)
+  set(__msg "fast probe mismatch: ${what}: direct=${direct} try_compile=${legacy}")
+  ocv_probe_log("# ${__msg}")
+  get_property(__list GLOBAL PROPERTY OCV_PROBE_MISMATCHES)
+  list(APPEND __list "${what}")
+  set_property(GLOBAL PROPERTY OCV_PROBE_MISMATCHES "${__list}")
+  if("${OPENCV_VERIFY_FAST_PROBES}" STREQUAL "STRICT")
+    message(FATAL_ERROR "${__msg}")
+  else()
+    message(WARNING "${__msg}")
+  endif()
+endfunction()
+
+# Summary for the configuration status dump.
+function(ocv_probe_status_summary outvar)
+  set(__s "")
+  foreach(lang C CXX)
+    if(DEFINED OPENCV_FAST_PROBE_AVAILABLE_${lang})
+      if(OPENCV_FAST_PROBE_AVAILABLE_${lang})
+        list(APPEND __s "${lang}: direct")
+      else()
+        list(APPEND __s "${lang}: try_compile (${OPENCV_FAST_PROBE_REASON_${lang}})")
+      endif()
+    endif()
+  endforeach()
+  get_property(__n GLOBAL PROPERTY OCV_PROBE_COUNTER)
+  if(__n)
+    list(APPEND __s "${__n} direct compiler runs")
+  endif()
+  if(OPENCV_VERIFY_FAST_PROBES)
+    get_property(__m GLOBAL PROPERTY OCV_PROBE_MISMATCHES)
+    list(LENGTH __m __mn)
+    list(APPEND __s "verify: ${__mn} mismatches")
+  endif()
+  string(REPLACE ";" ", " __s "${__s}")
+  set(${outvar} "${__s}" PARENT_SCOPE)
+endfunction()
