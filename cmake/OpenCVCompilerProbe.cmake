@@ -309,12 +309,22 @@ function(ocv_probe_run lang mode src rcvar outvar)
   if(OPENCV_PROBE_VERBOSE)
     message(STATUS "probe[${__n}]: ${__cmd}")
   endif()
+  set(__env LC_ALL=C LANG=C LC_MESSAGES=C)
+  if(CMAKE_GENERATOR STREQUAL "Xcode")
+    # xcodebuild takes the deployment target from the project (CMAKE_OSX_DEPLOYMENT_TARGET,
+    # handled above) and does not pass these environment variables to the compiler, while
+    # clang invoked directly would honour them (platforms/ios/build_framework.py exports
+    # IPHONEOS_DEPLOYMENT_TARGET). Hide them so that the results match try_compile().
+    foreach(__v IPHONEOS MACOSX TVOS WATCHOS XROS DRIVERKIT)
+      list(APPEND __env "--unset=${__v}_DEPLOYMENT_TARGET")
+    endforeach()
+  endif()
   if(__merge_streams)
-    execute_process(COMMAND ${CMAKE_COMMAND} -E env LC_ALL=C LANG=C LC_MESSAGES=C ${__cmd}
+    execute_process(COMMAND ${CMAKE_COMMAND} -E env ${__env} ${__cmd}
                     WORKING_DIRECTORY "${OPENCV_PROBE_DIR}"
                     RESULT_VARIABLE __rc OUTPUT_VARIABLE __out ERROR_VARIABLE __out TIMEOUT 120)
   else()
-    execute_process(COMMAND ${CMAKE_COMMAND} -E env LC_ALL=C LANG=C LC_MESSAGES=C ${__cmd}
+    execute_process(COMMAND ${CMAKE_COMMAND} -E env ${__env} ${__cmd}
                     WORKING_DIRECTORY "${OPENCV_PROBE_DIR}"
                     RESULT_VARIABLE __rc OUTPUT_VARIABLE __out ERROR_VARIABLE __err TIMEOUT 120)
   endif()
